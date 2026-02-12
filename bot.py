@@ -38,7 +38,7 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 CAPITAL = int(os.environ.get("CAPITAL", "250000"))
 FRED_API_KEY = os.environ.get("FRED_API_KEY")  # Optional, for better macro data
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # Optional, for AI follow-up Q&A
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")  # Optional, for AI follow-up Q&A
 USE_LIVE_DATA = os.environ.get("USE_LIVE_DATA", "true").lower() == "true"
 STATIC_DATA_PATH = os.environ.get("DATA_PATH", str(Path(__file__).parent / "data" / "default"))
 STATE_DIR = str(Path(__file__).parent / "state")
@@ -56,7 +56,7 @@ if not SLACK_APP_TOKEN:
 # Initialize the Slack app
 app = App(token=SLACK_BOT_TOKEN)
 
-# Thread cache for Gemini Q&A follow-up
+# Thread cache for AI Q&A follow-up
 CACHE_TTL_HOURS = 4
 CACHE_MAX_SIZE = 50
 _thread_cache = {}  # {thread_ts: {symbol, summary, v8_extended, timestamp, conversation_history}}
@@ -128,7 +128,7 @@ def handle_atlas_mention(event, say, client):
                 "  `@atlas help` — This message\n\n"
                 "Full report includes fundamentals, technicals, peers, news, macro, and more.\n"
                 "Data is pulled live from Yahoo Finance.\n\n"
-                "After a report, reply in the thread to ask follow-up questions (powered by Gemini AI)."
+                "After a report, reply in the thread to ask follow-up questions (AI-powered)."
             ),
             thread_ts=thread_ts
         )
@@ -171,8 +171,8 @@ def handle_atlas_mention(event, say, client):
         print(f"[BOT] Formatting V8 report for {symbol}...")
         v8_messages = format_v8_report(summary, v8_extended)
 
-        # Cache data for Gemini follow-up Q&A
-        if GEMINI_API_KEY:
+        # Cache data for AI follow-up Q&A
+        if GROQ_API_KEY:
             _thread_cache[thread_ts] = {
                 'symbol': symbol,
                 'summary': summary,
@@ -192,7 +192,7 @@ def handle_atlas_mention(event, say, client):
         # Final confirmation
         say(
             text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered"
-                + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GEMINI_API_KEY else ""),
+                + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GROQ_API_KEY else ""),
             thread_ts=thread_ts
         )
 
@@ -222,7 +222,7 @@ def handle_atlas_mention(event, say, client):
 @app.event("message")
 def handle_message_events(event, say, client, logger):
     """
-    Handle thread replies for Gemini AI follow-up Q&A.
+    Handle thread replies for AI follow-up Q&A.
     Also serves as catch-all for message events (required by slack-bolt).
     """
     # Filter: Ignore bot's own messages
@@ -239,8 +239,8 @@ def handle_message_events(event, say, client, logger):
     if not cache_entry:
         return
 
-    # Filter: Skip if Gemini not configured
-    if not GEMINI_API_KEY:
+    # Filter: Skip if Groq not configured
+    if not GROQ_API_KEY:
         return
 
     # Extract the question
@@ -277,7 +277,7 @@ def handle_message_events(event, say, client, logger):
     except Exception:
         pass
 
-    # Call Gemini
+    # Call Groq
     try:
         answer = gemini_qa.ask(
             question=question,
@@ -296,7 +296,7 @@ def handle_message_events(event, say, client, logger):
             cache_entry['conversation_history'] = cache_entry['conversation_history'][-12:]
 
     except Exception as e:
-        logger.error(f"Gemini Q&A error: {e}")
+        logger.error(f"Groq Q&A error: {e}")
         answer = f":x: Sorry, I couldn't process that question. Error: {str(e)[:200]}"
 
     # Delete thinking message, post answer
@@ -325,12 +325,12 @@ if __name__ == "__main__":
     print(f"Capital:    ${CAPITAL:,}")
     print(f"State dir:  {STATE_DIR}")
 
-    # Initialize Gemini AI (optional)
-    if GEMINI_API_KEY:
-        gemini_ok = gemini_qa.init_gemini(GEMINI_API_KEY)
-        print(f"Gemini AI:  {'Connected (follow-up Q&A enabled)' if gemini_ok else 'FAILED (Q&A disabled)'}")
+    # Initialize Groq AI (optional)
+    if GROQ_API_KEY:
+        groq_ok = gemini_qa.init_groq(GROQ_API_KEY)
+        print(f"Groq AI:    {'Connected (follow-up Q&A enabled)' if groq_ok else 'FAILED (Q&A disabled)'}")
     else:
-        print("Gemini AI:  Not configured (set GEMINI_API_KEY for follow-up Q&A)")
+        print("Groq AI:    Not configured (set GROQ_API_KEY for follow-up Q&A)")
     print()
 
     if not USE_LIVE_DATA:

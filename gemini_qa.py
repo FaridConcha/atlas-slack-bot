@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-ATLAS — Gemini AI Follow-Up Q&A Module
+ATLAS — Groq AI Follow-Up Q&A Module
 Handles conversational follow-up questions in ATLAS report threads
-using Google Gemini 2.0 Flash (free tier).
+using Groq (Llama 3.3 70B, free tier — 30 RPM).
 """
 
 import time
@@ -11,9 +11,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Module-level state
-_model = None
+_client = None
 _last_call_time = 0
-_MIN_CALL_INTERVAL = 5  # seconds between calls (free tier: ~10-15 RPM)
+_MIN_CALL_INTERVAL = 3  # seconds between calls (free tier: 30 RPM)
 _MAX_RETRIES = 2        # retry on 429 with backoff
 
 SYSTEM_PROMPT = """You are ATLAS AI, an expert financial analyst assistant embedded in a trading research platform. You answer follow-up questions about a specific stock analysis performed by the ATLAS quantitative engine.
@@ -31,17 +31,16 @@ RULES:
 """
 
 
-def init_gemini(api_key):
-    """Initialize Gemini client. Returns True if successful."""
-    global _model
+def init_groq(api_key):
+    """Initialize Groq client. Returns True if successful."""
+    global _client
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        _model = genai.GenerativeModel('gemini-2.0-flash')
+        from groq import Groq
+        _client = Groq(api_key=api_key)
         return True
     except Exception as e:
-        logger.error(f"Gemini init failed: {e}")
-        _model = None
+        logger.error(f"Groq init failed: {e}")
+        _client = None
         return False
 
 
@@ -74,7 +73,7 @@ def _fmt_mc(val):
 
 
 def build_context(symbol, summary, v8_extended):
-    """Build a structured context string from ATLAS data for Gemini."""
+    """Build a structured context string from ATLAS data for the AI."""
     s = summary or {}
     v = v8_extended or {}
     co = v.get('company', {})
@@ -290,7 +289,7 @@ def build_context(symbol, summary, v8_extended):
 
 def ask(question, symbol, summary, v8_extended, conversation_history=None):
     """
-    Ask Gemini a follow-up question using ATLAS data as context.
+    Ask Groq (Llama 3.3 70B) a follow-up question using ATLAS data as context.
 
     Args:
         question: User's natural language question
@@ -300,12 +299,12 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
         conversation_history: Optional list of (role, text) tuples for multi-turn
 
     Returns:
-        str: Gemini's response, formatted for Slack
+        str: AI response, formatted for Slack
     """
     global _last_call_time
 
-    if _model is None:
-        return ":warning: Gemini AI is not configured. Set `GEMINI_API_KEY` in your environment."
+    if _client is None:
+        return ":warning: Groq AI is not configured. Set `GROQ_API_KEY` in your environment."
 
     # Rate limiting
     elapsed = time.time() - _last_call_time
@@ -315,38 +314,37 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
     context = build_context(symbol, summary, v8_extended)
     system = SYSTEM_PROMPT.replace("{SYMBOL}", symbol)
 
-    # Build multi-turn conversation
-    first_msg = f"{system}\n\n--- ATLAS DATA ---\n{context}\n--- END DATA ---\n\nUser question: {question}"
+    # Build messages in OpenAI-compatible format
+    messages = [{"role": "system", "content": system}]
+
+    data_block = f"--- ATLAS DATA ---\n{context}\n--- END DATA ---"
 
     if conversation_history and len(conversation_history) >= 2:
         # Multi-turn: include prior exchanges
-        contents = []
-        # First exchange gets the system prompt + context
         first_q = conversation_history[0][1] if conversation_history else question
-        contents.append({"role": "user", "parts": [f"{system}\n\n--- ATLAS DATA ---\n{context}\n--- END DATA ---\n\nUser question: {first_q}"]})
+        messages.append({"role": "user", "content": f"{data_block}\n\nUser question: {first_q}"})
 
         for role, text in conversation_history[1:]:
-            genai_role = "model" if role == "model" else "user"
-            contents.append({"role": genai_role, "parts": [text]})
+            msg_role = "assistant" if role == "model" else "user"
+            messages.append({"role": msg_role, "content": text})
 
         # Current question
-        contents.append({"role": "user", "parts": [question]})
+        messages.append({"role": "user", "content": question})
     else:
-        contents = first_msg
+        messages.append({"role": "user", "content": f"{data_block}\n\nUser question: {question}"})
 
     last_error = None
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            response = _model.generate_content(
-                contents,
-                generation_config={
-                    "max_output_tokens": 1024,
-                    "temperature": 0.3,
-                },
+            response = _client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1024,
             )
             _last_call_time = time.time()
 
-            answer = response.text.strip()
+            answer = response.choices[0].message.content.strip()
 
             if len(answer) > 3800:
                 answer = answer[:3750] + "\n\n_[Response truncated]_"
@@ -356,24 +354,22 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
         except Exception as e:
             last_error = e
             error_str = str(e).lower()
-            print(f"[GEMINI] Attempt {attempt + 1}/{_MAX_RETRIES + 1} error: {e}")
+            print(f"[GROQ] Attempt {attempt + 1}/{_MAX_RETRIES + 1} error: {e}")
 
-            is_rate_limit = '429' in error_str or 'quota' in error_str or 'resource_exhausted' in error_str
+            is_rate_limit = '429' in error_str or 'quota' in error_str or 'rate_limit' in error_str
 
             # Retry on rate limit with exponential backoff
             if is_rate_limit and attempt < _MAX_RETRIES:
                 wait = 10 * (attempt + 1)  # 10s, 20s
-                print(f"[GEMINI] Rate limited. Waiting {wait}s before retry...")
+                print(f"[GROQ] Rate limited. Waiting {wait}s before retry...")
                 time.sleep(wait)
                 continue
 
             # Final failure
             if is_rate_limit:
-                return ":hourglass: Gemini is rate-limited right now. Wait ~30 seconds and try again."
-            elif 'safety' in error_str or 'blocked' in error_str:
-                return ":no_entry: I can't answer that question. Please rephrase or ask something about the ATLAS analysis."
+                return ":hourglass: AI is rate-limited right now. Wait ~30 seconds and try again."
             else:
-                logger.error(f"Gemini error: {e}")
+                logger.error(f"Groq error: {e}")
                 return f":x: AI error: {str(e)[:300]}"
 
     return f":x: AI error after retries: {str(last_error)[:300]}"
