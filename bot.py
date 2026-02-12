@@ -13,7 +13,9 @@ Usage:
 
 import os
 import re
+import threading
 import traceback
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -200,6 +202,20 @@ if __name__ == "__main__":
     print("Examples: @atlas AAPL, @atlas TSLA, @atlas SPY")
     print("Press Ctrl+C to stop.")
     print()
+
+    # Health check server for Render (keeps the service alive)
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ATLAS is running")
+        def log_message(self, format, *args):
+            pass  # Suppress logs
+
+    port = int(os.environ.get("PORT", 10000))
+    health_server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    threading.Thread(target=health_server.serve_forever, daemon=True).start()
+    print(f"Health check listening on port {port}")
 
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
