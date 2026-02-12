@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 # Module-level state
 _model = None
 _last_call_time = 0
-_MIN_CALL_INTERVAL = 4  # seconds between calls (free tier: 15 RPM)
+_MIN_CALL_INTERVAL = 5  # seconds between calls (free tier: ~10-15 RPM)
+_MAX_RETRIES = 2        # retry on 429 with backoff
 
 SYSTEM_PROMPT = """You are ATLAS AI, an expert financial analyst assistant embedded in a trading research platform. You answer follow-up questions about a specific stock analysis performed by the ATLAS quantitative engine.
 
@@ -333,30 +334,46 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
     else:
         contents = first_msg
 
-    try:
-        response = _model.generate_content(
-            contents,
-            generation_config={
-                "max_output_tokens": 1024,
-                "temperature": 0.3,
-            },
-        )
-        _last_call_time = time.time()
+    last_error = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = _model.generate_content(
+                contents,
+                generation_config={
+                    "max_output_tokens": 1024,
+                    "temperature": 0.3,
+                },
+            )
+            _last_call_time = time.time()
 
-        answer = response.text.strip()
+            answer = response.text.strip()
 
-        if len(answer) > 3800:
-            answer = answer[:3750] + "\n\n_[Response truncated]_"
+            if len(answer) > 3800:
+                answer = answer[:3750] + "\n\n_[Response truncated]_"
 
-        return answer
+            return answer
 
-    except Exception as e:
-        error_str = str(e).lower()
-        print(f"[GEMINI] Error: {e}")
-        if '429' in error_str or 'quota' in error_str or 'resource_exhausted' in error_str:
-            return ":hourglass: Rate limit reached. Please wait a moment and try again."
-        elif 'safety' in error_str or 'blocked' in error_str:
-            return ":no_entry: I can't answer that question. Please rephrase or ask something about the ATLAS analysis."
-        else:
-            logger.error(f"Gemini error: {e}")
-            return f":x: AI error: {str(e)[:300]}"
+        except Exception as e:
+            last_error = e
+            error_str = str(e).lower()
+            print(f"[GEMINI] Attempt {attempt + 1}/{_MAX_RETRIES + 1} error: {e}")
+
+            is_rate_limit = '429' in error_str or 'quota' in error_str or 'resource_exhausted' in error_str
+
+            # Retry on rate limit with exponential backoff
+            if is_rate_limit and attempt < _MAX_RETRIES:
+                wait = 10 * (attempt + 1)  # 10s, 20s
+                print(f"[GEMINI] Rate limited. Waiting {wait}s before retry...")
+                time.sleep(wait)
+                continue
+
+            # Final failure
+            if is_rate_limit:
+                return ":hourglass: Gemini is rate-limited right now. Wait ~30 seconds and try again."
+            elif 'safety' in error_str or 'blocked' in error_str:
+                return ":no_entry: I can't answer that question. Please rephrase or ask something about the ATLAS analysis."
+            else:
+                logger.error(f"Gemini error: {e}")
+                return f":x: AI error: {str(e)[:300]}"
+
+    return f":x: AI error after retries: {str(last_error)[:300]}"
