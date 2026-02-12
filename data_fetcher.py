@@ -17,11 +17,20 @@ import json
 import csv
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import yfinance as yf
 import numpy as np
+
+
+def _validate_symbol(symbol):
+    """Validate ticker symbol: 1-5 alphanumeric chars, letters and optional dots/hyphens."""
+    import re
+    if not symbol or not re.match(r'^[A-Z]{1,5}([.-][A-Z]{1,2})?$', symbol.upper()):
+        raise ValueError(f"Invalid ticker symbol: {symbol!r}")
+    return symbol.upper()
 
 
 def fetch_live_data(symbol, data_dir=None, fred_api_key=None):
@@ -36,36 +45,36 @@ def fetch_live_data(symbol, data_dir=None, fred_api_key=None):
     Returns:
         str: Path to the data directory containing all files
     """
+    symbol = _validate_symbol(symbol)
+
     if data_dir is None:
         data_dir = tempfile.mkdtemp(prefix=f"atlas_{symbol}_")
     else:
         os.makedirs(data_dir, exist_ok=True)
 
-    print(f"[ATLAS] Fetching live data for {symbol}...")
+    print(f"[ATLAS] Fetching live data for {symbol} (parallel)...")
 
     # Main ticker
     ticker = yf.Ticker(symbol)
 
-    # 1. OHLCV Price Data (1 year of daily bars)
-    _fetch_ohlcv(ticker, symbol, data_dir)
+    # Run all 7 data fetches in parallel for ~3x speedup
+    with ThreadPoolExecutor(max_workers=7) as executor:
+        futures = {
+            executor.submit(_fetch_ohlcv, ticker, symbol, data_dir): "ohlcv",
+            executor.submit(_fetch_fundamentals, ticker, symbol, data_dir): "fundamentals",
+            executor.submit(_fetch_consensus, ticker, symbol, data_dir): "consensus",
+            executor.submit(_fetch_volatility, data_dir): "volatility",
+            executor.submit(_fetch_macro, data_dir, fred_api_key): "macro",
+            executor.submit(_fetch_breadth, data_dir): "breadth",
+            executor.submit(_fetch_global_overnight, data_dir): "global",
+        }
 
-    # 2. Fundamentals
-    _fetch_fundamentals(ticker, symbol, data_dir)
-
-    # 3. Analyst Consensus
-    _fetch_consensus(ticker, symbol, data_dir)
-
-    # 4. Volatility (VIX data)
-    _fetch_volatility(data_dir)
-
-    # 5. Macro / Rates
-    _fetch_macro(data_dir, fred_api_key)
-
-    # 6. Breadth (approximated from SPY + sector data)
-    _fetch_breadth(data_dir)
-
-    # 7. Global Overnight
-    _fetch_global_overnight(data_dir)
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"[ATLAS]   CRITICAL ERROR in {name}: {e}")
 
     print(f"[ATLAS] All data saved to {data_dir}")
     return data_dir
@@ -75,12 +84,12 @@ def _fetch_ohlcv(ticker, symbol, data_dir):
     """Fetch 1 year of daily OHLCV data."""
     print(f"[ATLAS]   Fetching {symbol} price history...")
     try:
-        hist = ticker.history(period="1y", interval="1d")
+        hist = ticker.history(period="1y", interval="1d", timeout=30)
 
         if hist.empty:
             print(f"[ATLAS]   WARNING: No price data for {symbol}")
             # Write minimal data
-            hist = ticker.history(period="6mo", interval="1d")
+            hist = ticker.history(period="6mo", interval="1d", timeout=30)
 
         filepath = os.path.join(data_dir, "ohlcv.csv")
         with open(filepath, 'w', newline='') as f:
@@ -238,7 +247,7 @@ def _fetch_consensus(ticker, symbol, data_dir):
                 for _, row in earnings.tail(5).iterrows():
                     surprise = row.get('epsActual', 0) - row.get('epsEstimate', 0)
                     surprise_history.append(round(surprise, 2))
-        except:
+        except Exception:
             surprise_history = [0.02, 0.01, 0.03]  # Default mild beats
 
         # Revision approximation (yfinance doesn't have this directly)
@@ -285,13 +294,13 @@ def _fetch_volatility(data_dir):
     print(f"[ATLAS]   Fetching VIX data...")
     try:
         vix = yf.Ticker("^VIX")
-        vix_hist = vix.history(period="1y", interval="1d")
+        vix_hist = vix.history(period="1y", interval="1d", timeout=30)
 
         # VIX 3-month (VIX3M)
         try:
             vix3m = yf.Ticker("^VIX3M")
-            vix3m_hist = vix3m.history(period="1y", interval="1d")
-        except:
+            vix3m_hist = vix3m.history(period="1y", interval="1d", timeout=30)
+        except Exception:
             vix3m_hist = None
 
         filepath = os.path.join(data_dir, "volatility.csv")
@@ -337,13 +346,13 @@ def _fetch_macro(data_dir, fred_api_key=None):
         # Without FRED, use Treasury ETF proxies from yfinance
         # ^TNX = 10Y yield, ^FVX = 5Y yield
         tnx = yf.Ticker("^TNX")  # 10-year yield
-        tnx_hist = tnx.history(period="1y", interval="1d")
+        tnx_hist = tnx.history(period="1y", interval="1d", timeout=30)
 
         # 2Y yield not directly available, approximate from ^TWO or use offset
         try:
             irx = yf.Ticker("^IRX")  # 13-week T-bill
-            irx_hist = irx.history(period="1y", interval="1d")
-        except:
+            irx_hist = irx.history(period="1y", interval="1d", timeout=30)
+        except Exception:
             irx_hist = None
 
         filepath = os.path.join(data_dir, "macro_rates.csv")
@@ -400,7 +409,7 @@ def _fetch_macro_from_fred(data_dir, api_key):
         # HY spread: ICE BofA US High Yield
         try:
             hy = fred.get_series('BAMLH0A0HYM2', start, end)
-        except:
+        except Exception:
             hy = None
 
         filepath = os.path.join(data_dir, "macro_rates.csv")
@@ -440,7 +449,7 @@ def _fetch_breadth(data_dir):
     print(f"[ATLAS]   Fetching breadth data...")
     try:
         spy = yf.Ticker("SPY")
-        spy_hist = spy.history(period="1y", interval="1d")
+        spy_hist = spy.history(period="1y", interval="1d", timeout=30)
 
         # Use SPY returns to approximate advancing/declining
         filepath = os.path.join(data_dir, "breadth.csv")
@@ -509,7 +518,7 @@ def _fetch_global_overnight(data_dir):
         for name, sym in tickers.items():
             try:
                 t = yf.Ticker(sym)
-                hist = t.history(period="5d", interval="1d")
+                hist = t.history(period="5d", interval="1d", timeout=15)
                 if len(hist) >= 2:
                     prev = hist['Close'].iloc[-2]
                     curr = hist['Close'].iloc[-1]
@@ -517,50 +526,50 @@ def _fetch_global_overnight(data_dir):
                     global_data[f"{name}_return"] = round(ret, 2)
                 else:
                     global_data[f"{name}_return"] = 0.0
-            except:
+            except Exception:
                 global_data[f"{name}_return"] = 0.0
 
         # ES futures (use SPY as proxy)
         try:
             es = yf.Ticker("ES=F")
-            es_hist = es.history(period="5d", interval="1d")
+            es_hist = es.history(period="5d", interval="1d", timeout=15)
             if len(es_hist) >= 2:
                 global_data['es_overnight_return'] = round(
                     (es_hist['Close'].iloc[-1] - es_hist['Close'].iloc[-2]) / es_hist['Close'].iloc[-2] * 100, 2)
             else:
                 global_data['es_overnight_return'] = 0.0
-        except:
+        except Exception:
             global_data['es_overnight_return'] = 0.0
 
         # NQ futures
         try:
             nq = yf.Ticker("NQ=F")
-            nq_hist = nq.history(period="5d", interval="1d")
+            nq_hist = nq.history(period="5d", interval="1d", timeout=15)
             if len(nq_hist) >= 2:
                 global_data['nq_overnight_return'] = round(
                     (nq_hist['Close'].iloc[-1] - nq_hist['Close'].iloc[-2]) / nq_hist['Close'].iloc[-2] * 100, 2)
             else:
                 global_data['nq_overnight_return'] = 0.0
-        except:
+        except Exception:
             global_data['nq_overnight_return'] = 0.0
 
         # Currency
         try:
             usdjpy = yf.Ticker("JPY=X")
-            uj = usdjpy.history(period="5d", interval="1d")
+            uj = usdjpy.history(period="5d", interval="1d", timeout=15)
             if len(uj) >= 2:
                 global_data['usdjpy_change'] = round(
                     (uj['Close'].iloc[-1] - uj['Close'].iloc[-2]) / uj['Close'].iloc[-2] * 100, 2)
-        except:
+        except Exception:
             global_data['usdjpy_change'] = 0.0
 
         try:
             eurusd = yf.Ticker("EURUSD=X")
-            eu = eurusd.history(period="5d", interval="1d")
+            eu = eurusd.history(period="5d", interval="1d", timeout=15)
             if len(eu) >= 2:
                 global_data['eurusd_change'] = round(
                     (eu['Close'].iloc[-1] - eu['Close'].iloc[-2]) / eu['Close'].iloc[-2] * 100, 2)
-        except:
+        except Exception:
             global_data['eurusd_change'] = 0.0
 
         filepath = os.path.join(data_dir, "global_overnight.json")

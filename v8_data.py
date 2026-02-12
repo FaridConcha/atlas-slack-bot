@@ -309,7 +309,7 @@ def fetch_v8_data(symbol, fred_api_key=None):
 
     # Fetch OHLCV for technicals (1 year)
     try:
-        hist = ticker.history(period="1y", interval="1d")
+        hist = ticker.history(period="1y", interval="1d", timeout=30)
     except Exception:
         hist = None
 
@@ -794,7 +794,7 @@ def _build_sector(info):
 
     try:
         data = yf.download(etf_tickers, period="6mo", interval="1d",
-                           group_by='ticker', progress=False)
+                           group_by='ticker', progress=False, timeout=30)
 
         for etf in etf_tickers:
             try:
@@ -872,7 +872,7 @@ def _build_market_dashboard():
 
     try:
         data = yf.download(ticker_symbols, period="6mo", interval="1d",
-                           group_by='ticker', progress=False)
+                           group_by='ticker', progress=False, timeout=30)
 
         def _get_returns(sym):
             try:
@@ -968,7 +968,7 @@ def _build_economic(fred_api_key=None):
         # Try to get basic data from yfinance proxies
         try:
             tnx = yf.Ticker("^TNX")
-            tnx_hist = tnx.history(period="5d")
+            tnx_hist = tnx.history(period="5d", timeout=15)
             if not tnx_hist.empty:
                 rate_10y = float(tnx_hist['Close'].iloc[-1])
                 default['indicators'].append({
@@ -981,7 +981,7 @@ def _build_economic(fred_api_key=None):
 
         try:
             vix = yf.Ticker("^VIX")
-            vix_hist = vix.history(period="5d")
+            vix_hist = vix.history(period="5d", timeout=15)
             if not vix_hist.empty:
                 vix_val = float(vix_hist['Close'].iloc[-1])
                 default['indicators'].append({

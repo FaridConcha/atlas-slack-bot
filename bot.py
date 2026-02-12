@@ -14,6 +14,7 @@ Usage:
 
 import os
 import re
+import shutil
 import time
 import threading
 import traceback
@@ -57,17 +58,25 @@ app = App(token=SLACK_BOT_TOKEN)
 
 # Thread cache for Gemini Q&A follow-up
 CACHE_TTL_HOURS = 4
+CACHE_MAX_SIZE = 50
 _thread_cache = {}  # {thread_ts: {symbol, summary, v8_extended, timestamp, conversation_history}}
 
 
 def _cleanup_cache():
-    """Remove thread cache entries older than CACHE_TTL_HOURS."""
+    """Remove expired entries and enforce size limit."""
     cutoff = time.time() - (CACHE_TTL_HOURS * 3600)
     expired = [ts for ts, data in _thread_cache.items() if data['timestamp'] < cutoff]
     for ts in expired:
         del _thread_cache[ts]
+
+    # Evict oldest entries if over size limit
+    while len(_thread_cache) > CACHE_MAX_SIZE:
+        oldest_ts = min(_thread_cache, key=lambda ts: _thread_cache[ts]['timestamp'])
+        del _thread_cache[oldest_ts]
+        expired.append(oldest_ts)
+
     if expired:
-        print(f"[CACHE] Cleaned {len(expired)} expired thread(s). Active: {len(_thread_cache)}")
+        print(f"[CACHE] Cleaned {len(expired)} thread(s). Active: {len(_thread_cache)}")
 
 
 def parse_mention(text):
@@ -189,22 +198,23 @@ def handle_atlas_mention(event, say, client):
 
         # Clean up temp data directory
         if USE_LIVE_DATA and data_path != STATIC_DATA_PATH:
-            import shutil
             try:
                 shutil.rmtree(data_path)
-            except:
+            except OSError:
                 pass
 
     except ValueError as e:
         say(
-            text=f":warning: *Data Error for {symbol}:* {str(e)}\n\nCheck that `{symbol}` is a valid US ticker symbol.",
+            text=f":warning: *Data Error for {symbol}:* {str(e)[:300]}\n\nCheck that `{symbol}` is a valid US ticker symbol.",
             thread_ts=thread_ts
         )
     except Exception as e:
         error_msg = traceback.format_exc()
         print(f"[BOT] Error: {error_msg}")
+        # Sanitize: show only the final exception line, not full paths/traceback
+        error_summary = str(e)[:500]
         say(
-            text=f":x: *ATLAS Error for {symbol}:*\n```\n{error_msg[-1500:]}\n```",
+            text=f":x: *ATLAS Error for {symbol}:* {error_summary}\n\n_Check bot logs for full details._",
             thread_ts=thread_ts
         )
 
