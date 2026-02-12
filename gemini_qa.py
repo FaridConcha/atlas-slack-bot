@@ -315,8 +315,6 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
     system = SYSTEM_PROMPT.replace("{SYMBOL}", symbol)
 
     # Build multi-turn conversation
-    import google.generativeai as genai
-
     first_msg = f"{system}\n\n--- ATLAS DATA ---\n{context}\n--- END DATA ---\n\nUser question: {question}"
 
     if conversation_history and len(conversation_history) >= 2:
@@ -338,10 +336,10 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
     try:
         response = _model.generate_content(
             contents,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=1024,
-                temperature=0.3,
-            ),
+            generation_config={
+                "max_output_tokens": 1024,
+                "temperature": 0.3,
+            },
         )
         _last_call_time = time.time()
 
@@ -354,10 +352,11 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
 
     except Exception as e:
         error_str = str(e).lower()
-        if 'quota' in error_str or 'rate' in error_str or '429' in error_str:
+        print(f"[GEMINI] Error: {e}")
+        if '429' in error_str or 'quota' in error_str or 'resource_exhausted' in error_str:
             return ":hourglass: Rate limit reached. Please wait a moment and try again."
         elif 'safety' in error_str or 'blocked' in error_str:
             return ":no_entry: I can't answer that question. Please rephrase or ask something about the ATLAS analysis."
         else:
             logger.error(f"Gemini error: {e}")
-            return f":x: AI error: {str(e)[:200]}"
+            return f":x: AI error: {str(e)[:300]}"
