@@ -14,6 +14,7 @@ Usage:
 
 import os
 import re
+import time
 import threading
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -27,6 +28,7 @@ from atlas_engine import run_atlas
 from data_fetcher import fetch_live_data
 from v8_data import fetch_v8_data
 from v8_report import format_v8_report
+import gemini_qa
 
 # Load environment variables
 load_dotenv()
@@ -35,6 +37,7 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
 CAPITAL = int(os.environ.get("CAPITAL", "250000"))
 FRED_API_KEY = os.environ.get("FRED_API_KEY")  # Optional, for better macro data
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")  # Optional, for AI follow-up Q&A
 USE_LIVE_DATA = os.environ.get("USE_LIVE_DATA", "true").lower() == "true"
 STATIC_DATA_PATH = os.environ.get("DATA_PATH", str(Path(__file__).parent / "data" / "default"))
 STATE_DIR = str(Path(__file__).parent / "state")
@@ -51,6 +54,20 @@ if not SLACK_APP_TOKEN:
 
 # Initialize the Slack app
 app = App(token=SLACK_BOT_TOKEN)
+
+# Thread cache for Gemini Q&A follow-up
+CACHE_TTL_HOURS = 4
+_thread_cache = {}  # {thread_ts: {symbol, summary, v8_extended, timestamp, conversation_history}}
+
+
+def _cleanup_cache():
+    """Remove thread cache entries older than CACHE_TTL_HOURS."""
+    cutoff = time.time() - (CACHE_TTL_HOURS * 3600)
+    expired = [ts for ts, data in _thread_cache.items() if data['timestamp'] < cutoff]
+    for ts in expired:
+        del _thread_cache[ts]
+    if expired:
+        print(f"[CACHE] Cleaned {len(expired)} expired thread(s). Active: {len(_thread_cache)}")
 
 
 def parse_mention(text):
@@ -101,7 +118,8 @@ def handle_atlas_mention(event, say, client):
                 "  `@atlas` — Default (SPY)\n"
                 "  `@atlas help` — This message\n\n"
                 "Full report includes fundamentals, technicals, peers, news, macro, and more.\n"
-                "Data is pulled live from Yahoo Finance."
+                "Data is pulled live from Yahoo Finance.\n\n"
+                "After a report, reply in the thread to ask follow-up questions (powered by Gemini AI)."
             ),
             thread_ts=thread_ts
         )
@@ -144,6 +162,17 @@ def handle_atlas_mention(event, say, client):
         print(f"[BOT] Formatting V8 report for {symbol}...")
         v8_messages = format_v8_report(summary, v8_extended)
 
+        # Cache data for Gemini follow-up Q&A
+        if GEMINI_API_KEY:
+            _thread_cache[thread_ts] = {
+                'symbol': symbol,
+                'summary': summary,
+                'v8_extended': v8_extended,
+                'timestamp': time.time(),
+                'conversation_history': [],
+            }
+            _cleanup_cache()
+
         # Post each section as a threaded reply
         for msg in v8_messages:
             if isinstance(msg, dict):
@@ -153,7 +182,8 @@ def handle_atlas_mention(event, say, client):
 
         # Final confirmation
         say(
-            text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered",
+            text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered"
+                + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GEMINI_API_KEY else ""),
             thread_ts=thread_ts
         )
 
@@ -180,9 +210,93 @@ def handle_atlas_mention(event, say, client):
 
 
 @app.event("message")
-def handle_message_events(body, logger):
-    """Catch-all for message events (required by slack-bolt to avoid warnings)."""
-    pass
+def handle_message_events(event, say, client, logger):
+    """
+    Handle thread replies for Gemini AI follow-up Q&A.
+    Also serves as catch-all for message events (required by slack-bolt).
+    """
+    # Filter: Ignore bot's own messages
+    if event.get('bot_id') or event.get('subtype'):
+        return
+
+    # Filter: Only process thread replies
+    thread_ts = event.get('thread_ts')
+    if not thread_ts:
+        return
+
+    # Filter: Only process threads we have cached (ATLAS report threads)
+    cache_entry = _thread_cache.get(thread_ts)
+    if not cache_entry:
+        return
+
+    # Filter: Skip if Gemini not configured
+    if not GEMINI_API_KEY:
+        return
+
+    # Extract the question
+    question = event.get('text', '').strip()
+    if not question:
+        return
+
+    # Remove any @mentions from the question text
+    question = re.sub(r'<@[A-Z0-9]+>\s*', '', question).strip()
+    if not question:
+        return
+
+    # Check for bare ticker symbol → redirect
+    ticker_match = re.match(r'^[A-Z]{1,5}$', question.upper())
+    if ticker_match and question.upper() not in ('A', 'I', 'OK', 'NO', 'YES', 'WHY', 'HOW', 'WHAT'):
+        symbol = cache_entry['symbol']
+        say(
+            text=f"This thread covers *{symbol}*. To analyze *{question.upper()}*, mention `@atlas {question.upper()}` in any channel.",
+            thread_ts=thread_ts
+        )
+        return
+
+    channel = event['channel']
+    symbol = cache_entry['symbol']
+
+    # Post thinking indicator
+    thinking = None
+    try:
+        thinking = client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=f":brain: Thinking about your question on *{symbol}*..."
+        )
+    except Exception:
+        pass
+
+    # Call Gemini
+    try:
+        answer = gemini_qa.ask(
+            question=question,
+            symbol=symbol,
+            summary=cache_entry['summary'],
+            v8_extended=cache_entry['v8_extended'],
+            conversation_history=cache_entry.get('conversation_history', []),
+        )
+
+        # Store in conversation history for multi-turn
+        cache_entry['conversation_history'].append(('user', question))
+        cache_entry['conversation_history'].append(('model', answer))
+
+        # Cap conversation history at 12 entries (6 exchanges)
+        if len(cache_entry['conversation_history']) > 12:
+            cache_entry['conversation_history'] = cache_entry['conversation_history'][-12:]
+
+    except Exception as e:
+        logger.error(f"Gemini Q&A error: {e}")
+        answer = f":x: Sorry, I couldn't process that question. Error: {str(e)[:200]}"
+
+    # Delete thinking message, post answer
+    if thinking:
+        try:
+            client.chat_delete(channel=channel, ts=thinking['ts'])
+        except Exception:
+            pass
+
+    say(text=answer, thread_ts=thread_ts)
 
 
 # ============================================================================
@@ -200,6 +314,13 @@ if __name__ == "__main__":
     print(f"FRED API:   {'Connected' if FRED_API_KEY else 'Not configured (using yfinance for macro)'}")
     print(f"Capital:    ${CAPITAL:,}")
     print(f"State dir:  {STATE_DIR}")
+
+    # Initialize Gemini AI (optional)
+    if GEMINI_API_KEY:
+        gemini_ok = gemini_qa.init_gemini(GEMINI_API_KEY)
+        print(f"Gemini AI:  {'Connected (follow-up Q&A enabled)' if gemini_ok else 'FAILED (Q&A disabled)'}")
+    else:
+        print("Gemini AI:  Not configured (set GEMINI_API_KEY for follow-up Q&A)")
     print()
 
     if not USE_LIVE_DATA:
