@@ -13,6 +13,7 @@ Usage:
 """
 
 import os
+import sys
 import re
 import shutil
 import time
@@ -20,6 +21,11 @@ import threading
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+
+# Force unbuffered stdout/stderr so Render logs appear in real time
+if not sys.flags.unbuffered:
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
 
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -31,8 +37,8 @@ from v8_data import fetch_v8_data
 from v8_report import format_v8_report
 import gemini_qa
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (don't override existing — Render sets them via dashboard)
+load_dotenv(override=False)
 
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")

@@ -37,8 +37,10 @@ def init_groq(api_key):
     try:
         from groq import Groq
         _client = Groq(api_key=api_key)
+        print(f"[GROQ] Client initialized (key: {api_key[:8]}...)")
         return True
     except Exception as e:
+        print(f"[GROQ] Init FAILED: {e}")
         logger.error(f"Groq init failed: {e}")
         _client = None
         return False
