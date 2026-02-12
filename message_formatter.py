@@ -1,5 +1,5 @@
 """
-ATLAS — Trader Abstraction Layer (Layer 11)
+ATLAS — Trader Abstraction Layer (Layer 11) — V7
 Transforms quantitative engine output into trader-ready Slack messages.
 
 Design principles:
@@ -7,8 +7,8 @@ Design principles:
   - Every section uses human language, not data labels
   - Drivers are explained in context with actual price levels
   - Suppression rules prevent showing non-tradable artifacts
-  - One risk gate value throughout — zero contradictions
-  - Reads in under 30 seconds
+  - Full quantitative depth available without losing readability
+  - Reads in under 60 seconds
 """
 
 import numpy as np
@@ -158,7 +158,6 @@ def _build_narrative(s):
     elif consensus_score < -10:
         s4 = "Analyst momentum is slightly negative, with more estimate cuts than raises recently."
     else:
-        # No strong consensus signal — comment on valuation instead
         if val_score < -15:
             s4 = "Valuation is stretched relative to history — the stock needs strong earnings execution to justify current multiples."
         elif val_score > 15:
@@ -290,12 +289,10 @@ def _generate_triggers(s, verdict):
     scores = s.get('scores', {})
 
     if verdict in ('CASH', 'WAIT'):
-        # Price-based triggers
         if sma50 > 0 and price < sma50:
             triggers.append(f"Price reclaims the 50-day MA at ${sma50:.2f} with above-average volume — that would flip the short-term trend")
         if sma200 > 0 and price < sma200:
             triggers.append(f"Price holds above the 200-day MA at ${sma200:.2f} — a break below is a bigger structural concern")
-        # Model-based triggers
         if tq < 0.20:
             triggers.append(f"Trade quality improves past 0.20 (currently {tq:.3f}) — right now there's simply no edge")
         if rel < 0.25:
@@ -306,7 +303,6 @@ def _generate_triggers(s, verdict):
             triggers.append(f"VIX drops below 22 (currently {vix:.1f}) — a calmer vol regime would improve the setup")
         if abs(c_raw) < 15:
             triggers.append(f"Composite signal strength rises above 15 in either direction (currently {c_raw:+.1f}) — a stronger lean would help")
-        # Earnings trigger
         if scores.get('consensus', 0) > 20:
             triggers.append("Upcoming earnings could be the catalyst — positive estimate momentum suggests a beat is possible")
         elif scores.get('consensus', 0) < -20:
@@ -330,11 +326,189 @@ def _generate_triggers(s, verdict):
 
 
 # ============================================================================
+# V7 NEW HELPERS
+# ============================================================================
+
+def _format_engine_scoreboard(s):
+    """Compact engine scoreboard table as a code block."""
+    engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
+    scores = s.get('scores', {})
+    w_dyn = s.get('w_dynamic', {})
+    contributions = s.get('contributions', {})
+
+    lines = [
+        f"{'Engine':<13} {'Score':>6} {'Wt':>6} {'Contrib':>8}",
+        "-" * 35,
+    ]
+
+    contrib_sum = 0.0
+    w_sum = 0.0
+    for engine in engines:
+        sc = float(scores.get(engine, 0))
+        w = float(w_dyn.get(engine, 1/8))
+        c = float(contributions.get(engine, 0))
+        contrib_sum += c
+        w_sum += w
+        lines.append(f"{engine:<13} {sc:>+6.1f} {w:>6.3f} {c:>+8.2f}")
+
+    lines.append(f"{'':13} {'':>6} {'-----':>6} {'------':>8}")
+    lines.append(f"{'TOTAL':<13} {'':>6} {w_sum:>6.3f} {contrib_sum:>+8.2f}")
+
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
+def _format_weight_shift(s):
+    """One-line summary of the biggest adaptive weight shift."""
+    run_count = s.get('run_count', 0)
+    w0 = s.get('w0', {})
+    w_dyn = s.get('w_dynamic', {})
+
+    if run_count < 10:
+        return f"_Weights are default (run {run_count}/10 — adaptive learning begins at run 10)_"
+
+    max_shift = 0
+    max_engine = None
+    for eng in w0:
+        shift = abs(float(w_dyn.get(eng, 1/8)) - float(w0.get(eng, 1/8)))
+        if shift > max_shift:
+            max_shift = shift
+            max_engine = eng
+
+    if max_engine and max_shift > 0.001:
+        w0_val = float(w0.get(max_engine, 1/8))
+        wd_val = float(w_dyn.get(max_engine, 1/8))
+        direction = "up" if wd_val > w0_val else "down"
+        return f"_Largest weight shift: {max_engine} {w0_val:.3f} -> {wd_val:.3f} ({direction}) | Run {run_count}_"
+    return f"_Weights stable after {run_count} runs_"
+
+
+def _annotate_regime_features(rv):
+    """Human-readable annotations for extreme regime vector values."""
+    annotations = {
+        'TS': {
+            'high': "Trend momentum is strong — directional signals are reliable",
+            'low': "Trend momentum is weak or negative — no clear direction",
+        },
+        'CH': {
+            'high': "Choppiness is elevated — signals are noisy, range-bound",
+            'low': "Low choppiness — clean trending environment",
+        },
+        'VL': {
+            'high': "Realized vol is elevated — wider daily ranges, position smaller",
+            'low': "Vol is compressed — calm environment favors trend strategies",
+        },
+        'VS': {
+            'high': "Vol stress is spiking — VIX momentum is negative for risk",
+            'low': "No vol stress — options market is calm",
+        },
+        'CI': {
+            'high': "Correlation instability detected — cross-asset signals are unreliable",
+            'low': "Correlations are stable — model signals are more trustworthy",
+        },
+        'RS': {
+            'high': "Rates shock in progress — bond market is disrupting equities",
+            'low': "Rates are stable — no macro disruption from bonds",
+        },
+        'CS': {
+            'high': "Credit stress is elevated — liquidity risk is rising",
+            'low': "Credit markets are calm — no stress signal",
+        },
+        'GR': {
+            'high': "Global risk is elevated — international markets flagging caution",
+            'low': "Global risk is low — supportive international flows",
+        },
+        'BM_f': {
+            'high': "Breadth is deteriorating — fewer stocks participating",
+            'low': "Breadth is healthy — broad market participation",
+        },
+        'BEI': {
+            'high': "Bond-equity correlation flip — systemic stress signal",
+            'low': "Normal bond-equity relationship — no structural concern",
+        },
+    }
+
+    lines = []
+    for feature, labels in annotations.items():
+        val = float(rv.get(feature, 0))
+        # For TS, check magnitude since it can be negative
+        if feature == 'TS':
+            if val > 0.70:
+                lines.append(f"  TS={val:+.2f}  {labels['high']}")
+            elif val < -0.70 or (val >= 0 and val < 0.15):
+                lines.append(f"  TS={val:+.2f}  {labels['low']}")
+        else:
+            if val > 0.70:
+                lines.append(f"  {feature}={val:.2f}   {labels['high']}")
+            elif val < 0.15:
+                lines.append(f"  {feature}={val:.2f}   {labels['low']}")
+
+    return lines
+
+
+def _build_conditional_trigger(s, verdict):
+    """Build a conditional BUY IF / SELL IF line."""
+    sma50 = s.get('sma50', 0)
+    sma200 = s.get('sma200', 0)
+    price = s.get('price', 0)
+    tq = s.get('trade_quality', 0)
+    gate = s.get('gate_value', 0)
+
+    if verdict == 'WAIT':
+        conditions = []
+        if sma50 > 0 and price < sma50:
+            conditions.append(f"price closes above ${sma50:.2f}")
+        elif sma50 > 0:
+            conditions.append(f"price holds above ${sma50:.2f}")
+        if tq < 0.20:
+            conditions.append("TQ > 0.20")
+        if gate < 0.50:
+            conditions.append("gate > 0.50")
+        if conditions:
+            return f"_Conditional: BUY IF {' AND '.join(conditions)}_"
+
+    elif verdict == 'CASH':
+        conditions = []
+        if sma50 > 0 and price < sma50:
+            conditions.append(f"price reclaims ${sma50:.2f}")
+        conditions.append("TQ > 0.20")
+        conditions.append("readability > 0.25")
+        return f"_Conditional: RE-EVALUATE IF {' AND '.join(conditions)}_"
+
+    elif verdict == 'BUY':
+        conditions = []
+        if sma50 > 0:
+            conditions.append(f"price breaks below ${sma50:.2f}")
+        conditions.append("gate < 0.40")
+        if conditions:
+            return f"_Conditional: EXIT IF {' AND '.join(conditions)}_"
+
+    elif verdict == 'SELL':
+        conditions = []
+        if sma50 > 0:
+            conditions.append(f"price reclaims ${sma50:.2f}")
+        conditions.append("trend score > +0.30")
+        if conditions:
+            return f"_Conditional: COVER IF {' AND '.join(conditions)}_"
+
+    return ""
+
+
+def _execution_mode_note(mode):
+    """Human-readable explanation of execution mode."""
+    modes = {
+        'Momentum': "Trending environment — ride the move with a trailing stop",
+        'MeanRev': "Choppy regime — expect reversal, tighter exits recommended",
+        'Confirm': "Needs confirmation — wait for breakout/breakdown to scale in",
+    }
+    return modes.get(mode, "Standard execution parameters")
+
+
+# ============================================================================
 # MESSAGE 1: VERDICT + THE BOTTOM LINE
 # ============================================================================
 
 def format_trader_snapshot(s):
-    """Compact verdict card + narrative summary."""
+    """Verdict card + narrative summary + quick reference strip."""
     verdict = _trader_verdict(s)
     tq = s.get('trade_quality', 0)
     rel = s.get('regime_reliability', 0)
@@ -344,6 +518,13 @@ def format_trader_snapshot(s):
     symbol = s.get('symbol', '???')
     pos_size = s.get('position_size', 0)
     pos_pct = s.get('position_pct', 0)
+    dc = s.get('data_confidence', 0)
+    exec_mode = s.get('execution_mode', 'N/A')
+    sma20 = s.get('sma20', 0)
+    sma50 = s.get('sma50', 0)
+    sma200 = s.get('sma200', 0)
+    atr_val = s.get('atr', 0)
+    vix = s.get('vix', 20)
 
     emoji = _verdict_emoji(verdict)
     risk_env = _risk_env(s.get('regime_label', 'Unknown'))
@@ -355,29 +536,46 @@ def format_trader_snapshot(s):
         "",
     ]
 
-    # Verdict card
+    # Verdict card — 4 lines
     if verdict in ('CASH', 'WAIT'):
-        lines.append(f"*Verdict: {verdict}* | Bias: {_bias(c_raw)} | Risk: {risk_env}")
-        lines.append(f"Tradable: NO | Readability: {readability} | Conviction: {conv}")
-        lines.append("Position: $0")
+        lines.append(f"*Verdict: {verdict}* | Bias: {_bias(c_raw)} | Risk Env: {risk_env}")
+        lines.append(f"Conviction: {conv} ({tq:.3f}) | Readability: {readability} ({rel:.2f})")
+        lines.append(f"Position: $0 | Mode: {exec_mode}")
+        lines.append(f"Gate: {gate:.2f} | Data Confidence: {dc:.0f}%")
     else:
-        lines.append(f"*Verdict: {verdict}* | Risk: {risk_env}")
-        lines.append(f"Tradable: YES | Readability: {readability} | Conviction: {conv}")
-        lines.append(f"Position: ${pos_size:,.0f} ({pos_pct:.1f}%)")
+        lines.append(f"*Verdict: {verdict}* | Bias: {_bias(c_raw)} | Risk Env: {risk_env}")
+        lines.append(f"Conviction: {conv} ({tq:.3f}) | Readability: {readability} ({rel:.2f})")
+        lines.append(f"Position: ${pos_size:,.0f} ({pos_pct:.1f}%) | Mode: {exec_mode}")
+        lines.append(f"Gate: {gate:.2f} | Data Confidence: {dc:.0f}%")
 
     lines.append("")
     lines.append("*THE BOTTOM LINE*")
     lines.append(_build_narrative(s))
 
+    # Quick reference strip
+    lines.append("")
+    sma_parts = []
+    if sma20 > 0:
+        sma_parts.append(f"20d ${sma20:.2f}")
+    if sma50 > 0:
+        sma_parts.append(f"50d ${sma50:.2f}")
+    if sma200 > 0:
+        sma_parts.append(f"200d ${sma200:.2f}")
+    strip = f"_SMAs: {' | '.join(sma_parts)}"
+    if atr_val > 0:
+        strip += f" | ATR(14): ${atr_val:.2f}"
+    strip += f" | VIX: {vix:.1f}_"
+    lines.append(strip)
+
     return '\n'.join(lines)
 
 
 # ============================================================================
-# MESSAGE 2: WHAT'S DRIVING THIS
+# MESSAGE 2: WHAT'S DRIVING THIS + ENGINE SCOREBOARD
 # ============================================================================
 
 def format_driver_analysis(s):
-    """Detailed, context-aware explanation of the key forces."""
+    """Context-aware driver narratives + full engine scoreboard."""
     positive_drivers, negative_drivers = _get_top_drivers(s)
 
     lines = ["*WHAT'S DRIVING THIS*", ""]
@@ -398,15 +596,22 @@ def format_driver_analysis(s):
         lines.append("No dominant driver in either direction. All inputs are generating weak, offsetting signals — which is exactly why the model says no trade.")
         lines.append("")
 
+    # Engine scoreboard
+    lines.append("*ALL 8 ENGINES*")
+    lines.append(_format_engine_scoreboard(s))
+
+    # Weight shift
+    lines.append(_format_weight_shift(s))
+
     return '\n'.join(lines)
 
 
 # ============================================================================
-# MESSAGE 3: LEVELS + RISK + TRIGGERS
+# MESSAGE 3: TRADE PLAN (LEVELS + RISK + TRIGGERS)
 # ============================================================================
 
 def format_levels_and_triggers(s):
-    """Levels, risk check, and what would change the call."""
+    """Trade levels, risk dashboard, and conditional triggers."""
     verdict = _trader_verdict(s)
     tq = s.get('trade_quality', 0)
     rel = s.get('regime_reliability', 0)
@@ -414,6 +619,10 @@ def format_levels_and_triggers(s):
     price = s.get('price', 0)
     rv = s.get('regime_vector', {})
     run_count = s.get('run_count', 0)
+    risk_s = s.get('risk_structural', 0)
+    risk_t = s.get('risk_tactical', 0)
+    risk_drivers = s.get('risk_drivers', [])
+    contradictions = s.get('contradictions', [])
 
     lines = []
 
@@ -422,6 +631,8 @@ def format_levels_and_triggers(s):
         atr_val = s.get('atr', 1.0)
         stop = s.get('stop_loss', 0)
         tp_lo, tp_hi = s.get('take_profit', (0, 0))
+        buy_zone = s.get('buy_zone', (0, 0))
+        sma200 = s.get('sma200', 0)
 
         if verdict == 'BUY':
             entry_lo = round(price - atr_val * 0.75, 2)
@@ -436,18 +647,26 @@ def format_levels_and_triggers(s):
         reward_amt = abs(tp_mid - entry_mid)
         rr = reward_amt / risk_amt if risk_amt > 0 else 0
 
+        # Structural stop: 3% below 200 SMA
+        structural_stop = round(sma200 * 0.97, 2) if sma200 > 0 else 0
+
         lines.append("*TRADE LEVELS*")
-        lines.append(f"Entry Zone: ${entry_lo:.2f} - ${entry_hi:.2f}")
-        lines.append(f"Stop Loss: ${stop:.2f}")
-        lines.append(f"Target 1: ${tp_lo:.2f} | Stretch: ${tp_hi:.2f}")
+        lines.append(f"Entry Zone:     ${entry_lo:.2f} - ${entry_hi:.2f}")
+        if buy_zone[0] > 0 and buy_zone[1] > 0:
+            lines.append(f"Buy Zone:       ${buy_zone[0]:.2f} - ${buy_zone[1]:.2f}  _(200-day structural support)_")
+        lines.append(f"Stop Loss:      ${stop:.2f}")
+        if structural_stop > 0 and abs(structural_stop - stop) > 0.10:
+            lines.append(f"                _(ATR-based: ${stop:.2f} | Structural: ${structural_stop:.2f})_")
+        lines.append(f"Target 1:       ${tp_lo:.2f} | Stretch: ${tp_hi:.2f}")
         if rr > 0:
-            lines.append(f"Risk/Reward: {rr:.1f}:1")
+            lines.append(f"Risk/Reward:    {rr:.1f}:1")
         lines.append("")
 
     elif verdict == 'WAIT':
         sma50 = s.get('sma50', 0)
         sma200 = s.get('sma200', 0)
         stop = s.get('stop_loss', 0)
+        buy_zone = s.get('buy_zone', (0, 0))
 
         lines.append("*WATCH LEVELS* _(observation only — not trade entries)_")
         if sma50 > 0:
@@ -459,10 +678,12 @@ def format_levels_and_triggers(s):
             lines.append(f"200-day MA at ${sma200:.2f} — the structural line in the sand")
         if stop > 0:
             lines.append(f"Support floor at ${stop:.2f}")
+        if buy_zone[0] > 0 and buy_zone[1] > 0:
+            lines.append(f"Buy zone (if triggered): ${buy_zone[0]:.2f} - ${buy_zone[1]:.2f}")
         lines.append("")
 
     else:
-        # CASH: Key levels to watch
+        # CASH
         sma50 = s.get('sma50', 0)
         sma200 = s.get('sma200', 0)
         atr_val = s.get('atr', 1.0)
@@ -479,20 +700,32 @@ def format_levels_and_triggers(s):
             else:
                 lines.append(f"200-day MA: ${sma200:.2f} — long-term support, a break below would escalate concerns")
         if atr_val > 0:
-            lines.append(f"Daily range: ~${atr_val:.2f} (14-day ATR) — gives you a sense of normal daily movement")
+            lines.append(f"Daily range: ~${atr_val:.2f} (14-day ATR)")
         lines.append("")
 
-    # ── RISK CHECK ──
+    # ── RISK CHECK (expanded) ──
     conv = _conviction(tq)
     lines.append("*RISK CHECK*")
-    lines.append(f"Risk Gate: {gate:.2f} | Readability: {rel:.2f} | TQ: {tq:.3f} | Conviction: {conv}")
+    lines.append(f"Gate: {gate:.2f} | TQ: {tq:.3f} | Conviction: {conv}")
+    lines.append(f"Structural Risk: {risk_s:.3f} | Tactical Risk: {risk_t:.3f}")
+    lines.append(f"Regime: {s.get('regime_label', 'Unknown')} | Reliability: {rel:.2f}")
 
-    # Warnings in human language
+    # Risk drivers
+    if risk_drivers:
+        for rd in risk_drivers[:3]:
+            lines.append(f":warning: {rd}")
+
+    # Contradictions
+    if contradictions:
+        for c in contradictions[:2]:
+            lines.append(f":rotating_light: {c}")
+
+    # Saturation warnings
     saturated = [k for k, v in rv.items() if v >= 0.95 or v <= -0.95]
     if saturated:
-        lines.append(f"_Note: Some regime inputs are maxed out ({', '.join(saturated)}) — this usually means the model is operating in an unusual environment and signals should be taken with extra caution._")
+        lines.append(f"_Regime inputs saturated ({', '.join(saturated)}) — model in extreme environment_")
     if run_count < 10:
-        lines.append(f"_Model is still calibrating (run {run_count} of 10). Adaptive weights will begin adjusting after 10 runs to learn which signals work best in the current environment._")
+        lines.append(f"_Model calibrating (run {run_count}/10). Adaptive weights engage after 10 runs._")
     lines.append("")
 
     # ── WHAT WOULD CHANGE MY MIND ──
@@ -500,6 +733,12 @@ def format_levels_and_triggers(s):
     triggers = _generate_triggers(s, verdict)
     for i, t in enumerate(triggers, 1):
         lines.append(f"{i}. {t}")
+
+    # Conditional trigger
+    cond = _build_conditional_trigger(s, verdict)
+    if cond:
+        lines.append("")
+        lines.append(cond)
 
     return '\n'.join(lines)
 
@@ -509,52 +748,61 @@ def format_levels_and_triggers(s):
 # ============================================================================
 
 def format_model_internals(s):
-    """Compact model internals in code block. Numbers only, no formulas."""
+    """Model internals: composite decomposition, regime vector with annotations, weight matrix."""
     c_raw = s.get('composite_raw', 0)
     c_adj = s.get('composite_adjusted', 0)
     dc = s.get('data_confidence', 0)
     run_count = s.get('run_count', 0)
     rel = s.get('regime_reliability', 0)
     regime = s.get('regime_label', 'Unknown')
+    exec_mode = s.get('execution_mode', 'N/A')
+    rv = s.get('regime_vector', {})
+    w0 = s.get('w0', {})
+    w_dyn = s.get('w_dynamic', {})
 
     learning = "Cold Start" if run_count < 10 else "Learning" if run_count < 50 else "Converged"
 
-    lines = [
-        "--- MODEL INTERNALS (ADVANCED) ---",
+    # Code block section
+    code_lines = [
+        "--- MODEL INTERNALS ---",
         f"Composite: Raw {c_raw:+.1f} -> Adjusted {c_adj:+.1f}",
         f"DC: {dc:.0f}% | Learning: {learning} ({run_count})",
+        f"Mode: {exec_mode} — {_execution_mode_note(exec_mode)}",
         "",
-        f"{'Engine':<14} {'Score':>6} {'Weight':>7} {'Contrib':>8}",
-        "-" * 38,
+        f"Regime: {regime} | Reliability: {rel:.2f}",
+        "",
     ]
 
-    engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
-    scores = s.get('scores', {})
-    w_dyn = s.get('w_dynamic', {})
-    contributions = s.get('contributions', {})
-
-    contrib_sum = 0.0
-    for engine in engines:
-        sc = scores.get(engine, 0)
-        w = w_dyn.get(engine, 1/8)
-        c = contributions.get(engine, 0)
-        contrib_sum += c
-        lines.append(f"{engine:<14} {float(sc):>+6.1f} {float(w):>7.3f} {float(c):>+8.2f}")
-
-    lines.append(f"{'':14} {'':>6} {'':>7} {'------':>8}")
-    lines.append(f"{'Total':14} {'':>6} {'':>7} {contrib_sum:>+8.2f}")
-
-    lines.append("")
-    lines.append(f"Regime: {regime} | Reliability: {rel:.2f}")
-
-    rv = s.get('regime_vector', {})
+    # Regime vector
     feature_order = ['TS', 'CH', 'VL', 'VS', 'CI', 'RS', 'CS', 'GR', 'BM_f', 'BEI']
     rv_line1 = "  ".join([f"{f}={float(rv.get(f, 0)):+.2f}" if f == 'TS' else f"{f}={float(rv.get(f, 0)):.2f}" for f in feature_order[:5]])
     rv_line2 = "  ".join([f"{f}={float(rv.get(f, 0)):.2f}" for f in feature_order[5:]])
-    lines.append(rv_line1)
-    lines.append(rv_line2)
+    code_lines.append(rv_line1)
+    code_lines.append(rv_line2)
 
-    return "```\n" + '\n'.join(lines) + "\n```"
+    # Regime feature annotations (only extreme values)
+    annotations = _annotate_regime_features(rv)
+    if annotations:
+        code_lines.append("")
+        for ann in annotations:
+            code_lines.append(ann)
+
+    # Weight matrix
+    engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
+    if run_count >= 10:
+        code_lines.append("")
+        code_lines.append(f"{'Engine':<13} {'Base w0':>8} {'w(t)':>8} {'Shift':>8}")
+        code_lines.append("-" * 39)
+        for eng in engines:
+            w0_val = float(w0.get(eng, 1/8))
+            wd_val = float(w_dyn.get(eng, 1/8))
+            shift = wd_val - w0_val
+            code_lines.append(f"{eng:<13} {w0_val:>8.3f} {wd_val:>8.3f} {shift:>+8.3f}")
+    else:
+        code_lines.append("")
+        code_lines.append(f"Weights: Default (1/8 each) — learning begins at run 10 ({run_count} so far)")
+
+    return "```\n" + '\n'.join(code_lines) + "\n```"
 
 
 # ============================================================================
@@ -564,7 +812,7 @@ def format_model_internals(s):
 def format_full_trader_report(summary):
     """
     Generate complete trader report as list of Slack messages.
-    4 messages: Snapshot, Drivers, Levels+Risk+Triggers, Internals
+    4 messages: Snapshot, Drivers+Scoreboard, Levels+Risk+Triggers, Internals
     """
     messages = []
     messages.append(format_trader_snapshot(summary))
