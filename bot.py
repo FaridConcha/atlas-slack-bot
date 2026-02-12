@@ -22,10 +22,9 @@ import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
-# Force unbuffered stdout/stderr so Render logs appear in real time
-if not sys.flags.unbuffered:
-    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
-    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+# Force flush on every print so Render logs appear in real time
+import functools
+print = functools.partial(print, flush=True)  # noqa: A001
 
 from dotenv import load_dotenv
 from slack_bolt import App
