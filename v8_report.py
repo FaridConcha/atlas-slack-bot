@@ -710,7 +710,10 @@ def _section_competitive(v8_data):
 # ============================================================================
 
 def _section_sentiment(v8_data):
-    """Analyst consensus + news sentiment."""
+    """Analyst consensus + news sentiment.
+    Returns a dict with 'blocks' and 'text' when news is available (Block Kit),
+    or a plain string when there's no news.
+    """
     fin = v8_data.get('financials', {})
     news = v8_data.get('news', [])
     inst = v8_data.get('institutional', {})
@@ -735,64 +738,85 @@ def _section_sentiment(v8_data):
         f"  Price Target:    ${target:.2f} ({_fmt_pct(upside, plus=True)})" if target > 0 else "  Price Target:    N/A",
         f"  Target Range:    ${t_low:.2f} - ${t_high:.2f}" if t_low > 0 else "",
         "```",
+        "```",
+        "SENTIMENT INDICATORS",
+        "-" * 40,
+        f"  Short Interest:        {inst.get('short_pct', 0):.1f}% of float",
+        f"  Short Ratio:           {inst.get('short_ratio', 0):.1f} days",
+        f"  Institutional:         {inst.get('institutional_pct', 0):.1f}%",
+        f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%",
+        "```",
     ]
 
-    # Institutional data
-    lines.append("```")
-    lines.append("SENTIMENT INDICATORS")
-    lines.append("-" * 40)
-    lines.append(f"  Short Interest:        {inst.get('short_pct', 0):.1f}% of float")
-    lines.append(f"  Short Ratio:           {inst.get('short_ratio', 0):.1f} days")
-    lines.append(f"  Institutional:         {inst.get('institutional_pct', 0):.1f}%")
-    lines.append(f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%")
-    lines.append("```")
+    # If no news, return plain text
+    valid_news = [a for a in news if a.get('title', '').strip()] if news else []
+    if not valid_news:
+        return "\n".join(lines)
 
-    # News section
-    if news:
-        valid_news = [a for a in news if a.get('title', '').strip()]
-        if valid_news:
-            pos = sum(1 for a in valid_news if a.get('sentiment') == 'POSITIVE')
-            neg = sum(1 for a in valid_news if a.get('sentiment') == 'NEGATIVE')
-            neu = len(valid_news) - pos - neg
+    pos = sum(1 for a in valid_news if a.get('sentiment') == 'POSITIVE')
+    neg = sum(1 for a in valid_news if a.get('sentiment') == 'NEGATIVE')
+    neu = len(valid_news) - pos - neg
 
-            lines.append("")
-            lines.append("*RECENT NEWS*")
-            # Legend in code block
-            lines.append("```Positive ( + )  |  Negative ( - )  |  Neutral ( = )```")
+    # Add news header + legend to the mrkdwn portion
+    lines.append("")
+    lines.append("*RECENT NEWS*")
+    lines.append("```Positive ( + )  |  Negative ( - )  |  Neutral ( = )```")
+    top_mrkdwn = "\n".join(lines)
 
-            # Articles in blockquote
-            for a in valid_news[:7]:
-                s = a.get('sentiment', 'NEUTRAL')
-                marker = '( + )' if s == 'POSITIVE' else '( - )' if s == 'NEGATIVE' else '( = )'
-                title = _truncate_title(a.get('title', ''))
-                link = a.get('link', '')
-                pub = a.get('publisher', '')
-                date = a.get('date', '')
+    # Build rich_text_quote elements for articles (Block Kit)
+    quote_elements = []
+    for i, a in enumerate(valid_news[:7]):
+        s = a.get('sentiment', 'NEUTRAL')
+        marker = '( + )' if s == 'POSITIVE' else '( - )' if s == 'NEGATIVE' else '( = )'
+        title = _truncate_title(a.get('title', ''))
+        link = a.get('link', '')
+        pub = a.get('publisher', '')
+        date = a.get('date', '')
+        pub = pub.replace(' Video', '').replace('.com', '')
 
-                # Clean up publisher name
-                pub = pub.replace(' Video', '').replace('.com', '')
+        quote_elements.append({"type": "text", "text": f"{marker}  {title}"})
 
-                # Source with hyperlink, title is plain text
-                if link and pub:
-                    source = f"<{link}|{pub}>"
-                elif pub:
-                    source = pub
-                else:
-                    source = ''
+        if link and pub:
+            quote_elements.append({"type": "text", "text": " \u2014 "})
+            quote_elements.append({"type": "link", "url": link, "text": pub})
+        elif pub:
+            quote_elements.append({"type": "text", "text": f" \u2014 {pub}"})
 
-                line = f"> {marker}  {title}"
-                if source:
-                    line += f" — {source}"
-                if date:
-                    line += f" ({date})"
-                lines.append(line)
+        if date:
+            quote_elements.append({"type": "text", "text": f" ({date})"})
 
-            score = (pos - neg) / len(valid_news) if valid_news else 0
-            label = "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL"
-            lines.append("")
-            lines.append(f"_Sentiment: {label}  |  ( + ) {pos}  |  ( - ) {neg}  |  ( = ) {neu}_")
+        # Newline between articles (not after last)
+        if i < min(len(valid_news), 7) - 1:
+            quote_elements.append({"type": "text", "text": "\n"})
 
-    return "\n".join(lines)
+    # Sentiment summary line
+    score = (pos - neg) / len(valid_news) if valid_news else 0
+    label = "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL"
+    sentiment_summary = f"_Sentiment: {label}  |  ( + ) {pos}  |  ( - ) {neg}  |  ( = ) {neu}_"
+
+    # Assemble Block Kit blocks
+    blocks = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": top_mrkdwn}
+        },
+        {
+            "type": "rich_text",
+            "elements": [
+                {
+                    "type": "rich_text_quote",
+                    "elements": quote_elements
+                }
+            ]
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": sentiment_summary}
+        }
+    ]
+
+    fallback = top_mrkdwn + "\n" + sentiment_summary
+    return {"blocks": blocks, "text": fallback}
 
 
 # ============================================================================
@@ -1208,9 +1232,14 @@ def format_v8_report(summary, v8_data):
     result = []
     for msg in messages:
         if msg:
-            if len(msg) > 3900:
+            if isinstance(msg, dict):
+                # Block Kit message — pass through as-is
+                result.append(msg)
+            elif len(msg) > 3900:
                 # Truncate with warning
                 msg = msg[:3850] + "\n```\n_[Truncated — section too large]_"
-            result.append(msg)
+                result.append(msg)
+            else:
+                result.append(msg)
 
     return result

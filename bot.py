@@ -146,7 +146,10 @@ def handle_atlas_mention(event, say, client):
 
         # Post each section as a threaded reply
         for msg in v8_messages:
-            say(text=msg, thread_ts=thread_ts)
+            if isinstance(msg, dict):
+                say(blocks=msg.get('blocks', []), text=msg.get('text', ''), thread_ts=thread_ts)
+            else:
+                say(text=msg, thread_ts=thread_ts)
 
         # Final confirmation
         say(
