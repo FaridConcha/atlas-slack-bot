@@ -50,8 +50,12 @@ def _score_bar(score, width=10):
     return '\u2588' * filled + '\u2591' * (width - filled)
 
 
-def _sentiment_icon(s):
-    return {'POSITIVE': '+', 'NEGATIVE': '-', 'NEUTRAL': '~'}.get(s, '~')
+def _truncate_title(title, max_len=60):
+    """Truncate title at word boundary."""
+    if len(title) <= max_len:
+        return title
+    truncated = title[:max_len].rsplit(' ', 1)[0]
+    return truncated + '...'
 
 
 def _trend_arrow(current, prior):
@@ -743,38 +747,40 @@ def _section_sentiment(v8_data):
     lines.append(f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%")
     lines.append("```")
 
-    # News — displayed outside code block so Slack renders hyperlinks
+    # News — outside code block so Slack renders hyperlinks
     if news:
-        lines.append("")
-        lines.append("*RECENT NEWS*")
-        for a in news[:7]:
-            s = a.get('sentiment', 'NEUTRAL')
-            icon = ':large_green_circle:' if s == 'POSITIVE' else ':red_circle:' if s == 'NEGATIVE' else ':white_circle:'
-            title = a.get('title', '')
-            link = a.get('link', '')
-            pub = a.get('publisher', '')
-            date = a.get('date', '')
+        # Filter to articles with actual titles
+        valid_news = [a for a in news if a.get('title', '').strip()]
+        if valid_news:
+            pos = sum(1 for a in valid_news if a.get('sentiment') == 'POSITIVE')
+            neg = sum(1 for a in valid_news if a.get('sentiment') == 'NEGATIVE')
+            neu = len(valid_news) - pos - neg
+            total = len(valid_news)
+            score = (pos - neg) / total if total > 0 else 0
+            label = "Bullish" if score > 0.2 else "Bearish" if score < -0.2 else "Mixed"
 
-            # Build one-liner with hyperlink if available
-            if link and title:
-                line = f"{icon} <{link}|{title}>"
-            elif title:
-                line = f"{icon} {title}"
-            else:
-                continue
-            if pub:
-                line += f" — _{pub}_"
-            if date:
-                line += f" ({date})"
-            lines.append(line)
+            lines.append("")
+            lines.append(f"*RECENT NEWS* — {total} articles, sentiment: *{label}* ({pos}+ {neg}- {neu}~)")
 
-        pos = sum(1 for a in news if a.get('sentiment') == 'POSITIVE')
-        neg = sum(1 for a in news if a.get('sentiment') == 'NEGATIVE')
-        neu = len(news) - pos - neg
-        total = len(news)
-        score = (pos - neg) / total if total > 0 else 0
-        label = "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL"
-        lines.append(f"_Sentiment: {label} | :large_green_circle:{pos}  :red_circle:{neg}  :white_circle:{neu}_")
+            for a in valid_news[:7]:
+                s = a.get('sentiment', 'NEUTRAL')
+                marker = ':small_blue_diamond:' if s == 'POSITIVE' else ':small_orange_diamond:' if s == 'NEGATIVE' else '\u2022'
+                title = _truncate_title(a.get('title', ''))
+                link = a.get('link', '')
+                pub = a.get('publisher', '')
+
+                # Clean up publisher name
+                pub = pub.replace(' Video', '').replace('.com', '')
+
+                if link and title:
+                    line = f"  {marker} <{link}|{title}>"
+                elif title:
+                    line = f"  {marker} {title}"
+                else:
+                    continue
+                if pub:
+                    line += f" _({pub})_"
+                lines.append(line)
 
     return "\n".join(lines)
 
