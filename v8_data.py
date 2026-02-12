@@ -766,7 +766,7 @@ def _build_news(ticker):
 
             sentiment = _score_sentiment(title)
             articles.append({
-                'title': title[:75],
+                'title': title,
                 'publisher': publisher or 'Unknown',
                 'date': date_str,
                 'link': link,

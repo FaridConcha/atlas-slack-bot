@@ -747,40 +747,49 @@ def _section_sentiment(v8_data):
     lines.append(f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%")
     lines.append("```")
 
-    # News — outside code block so Slack renders hyperlinks
+    # News — outside code block so Slack renders source hyperlinks
     if news:
-        # Filter to articles with actual titles
         valid_news = [a for a in news if a.get('title', '').strip()]
         if valid_news:
             pos = sum(1 for a in valid_news if a.get('sentiment') == 'POSITIVE')
             neg = sum(1 for a in valid_news if a.get('sentiment') == 'NEGATIVE')
             neu = len(valid_news) - pos - neg
-            total = len(valid_news)
-            score = (pos - neg) / total if total > 0 else 0
-            label = "Bullish" if score > 0.2 else "Bearish" if score < -0.2 else "Mixed"
 
             lines.append("")
-            lines.append(f"*RECENT NEWS* — {total} articles, sentiment: *{label}* ({pos}+ {neg}- {neu}~)")
+            lines.append("*RECENT NEWS*")
+            lines.append("_Positive_ ( + )  |  _Negative_ ( - )  |  _Neutral_ ( = )")
+            lines.append("")
 
             for a in valid_news[:7]:
                 s = a.get('sentiment', 'NEUTRAL')
-                marker = ':small_blue_diamond:' if s == 'POSITIVE' else ':small_orange_diamond:' if s == 'NEGATIVE' else '\u2022'
+                marker = '( + )' if s == 'POSITIVE' else '( - )' if s == 'NEGATIVE' else '( = )'
                 title = _truncate_title(a.get('title', ''))
                 link = a.get('link', '')
                 pub = a.get('publisher', '')
+                date = a.get('date', '')
 
                 # Clean up publisher name
                 pub = pub.replace(' Video', '').replace('.com', '')
 
-                if link and title:
-                    line = f"  {marker} <{link}|{title}>"
-                elif title:
-                    line = f"  {marker} {title}"
+                # Source with hyperlink, title is plain text
+                if link and pub:
+                    source = f"<{link}|{pub}>"
+                elif pub:
+                    source = pub
                 else:
-                    continue
-                if pub:
-                    line += f" _({pub})_"
+                    source = ''
+
+                line = f"      {marker}  {title}"
+                if source:
+                    line += f" — {source}"
+                if date:
+                    line += f" ({date})"
                 lines.append(line)
+
+            score = (pos - neg) / len(valid_news) if valid_news else 0
+            label = "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL"
+            lines.append("")
+            lines.append(f"_Sentiment: {label}  |  ( + ) {pos}  |  ( - ) {neg}  |  ( = ) {neu}_")
 
     return "\n".join(lines)
 
