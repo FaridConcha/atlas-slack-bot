@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-ATLAS Slack Bot — Trader-Ready Output
-Listens for @mentions and runs the ATLAS engine,
+ATLAS Slack Bot — V8 Full-Spectrum Intelligence
+Listens for @mentions and runs the ATLAS engine + V8 extended analysis,
 pulling LIVE data from yfinance for any ticker.
 
-Output is formatted as a senior trader desk note:
-decisive, clean, no quant jargon.
+Output is a 10-section institutional-grade research report:
+verdict, fundamentals, valuation, technicals, peers, sentiment,
+risk factors, growth catalysts, macro context, and engine signal.
 
 Usage:
     python3 bot.py
@@ -24,7 +25,8 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from atlas_engine import run_atlas
 from data_fetcher import fetch_live_data
-from message_formatter import format_full_trader_report
+from v8_data import fetch_v8_data
+from v8_report import format_v8_report
 
 # Load environment variables
 load_dotenv()
@@ -98,6 +100,7 @@ def handle_atlas_mention(event, say, client):
                 "  `@atlas SPY` — S&P 500 ETF\n"
                 "  `@atlas` — Default (SPY)\n"
                 "  `@atlas help` — This message\n\n"
+                "Full report includes fundamentals, technicals, peers, news, macro, and more.\n"
                 "Data is pulled live from Yahoo Finance."
             ),
             thread_ts=thread_ts
@@ -106,12 +109,12 @@ def handle_atlas_mention(event, say, client):
 
     # Acknowledge immediately
     say(
-        text=f":gear: Running ATLAS on *{symbol}*... pulling live data (10-15 sec)",
+        text=f":gear: Running ATLAS V8 on *{symbol}*... pulling live data & building full report (30-45 sec)",
         thread_ts=thread_ts
     )
 
     try:
-        # Fetch live data
+        # Fetch live data for ATLAS engine
         if USE_LIVE_DATA:
             print(f"[BOT] Fetching live data for {symbol}...")
             data_path = fetch_live_data(
@@ -130,16 +133,24 @@ def handle_atlas_mention(event, say, client):
             state_dir=STATE_DIR
         )
 
-        # Generate trader-ready messages
-        trader_messages = format_full_trader_report(summary)
+        # Fetch V8 extended data (peers, technicals, news, macro, etc.)
+        print(f"[BOT] Fetching V8 extended data for {symbol}...")
+        v8_extended = fetch_v8_data(
+            symbol=symbol,
+            fred_api_key=FRED_API_KEY
+        )
+
+        # Generate V8 full-spectrum report (10 sections)
+        print(f"[BOT] Formatting V8 report for {symbol}...")
+        v8_messages = format_v8_report(summary, v8_extended)
 
         # Post each section as a threaded reply
-        for msg in trader_messages:
+        for msg in v8_messages:
             say(text=msg, thread_ts=thread_ts)
 
-        # Final confirmation (minimal — the report speaks for itself)
+        # Final confirmation
         say(
-            text=f":white_check_mark: ATLAS complete for *{symbol}*",
+            text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered",
             thread_ts=thread_ts
         )
 
@@ -180,7 +191,7 @@ if __name__ == "__main__":
     os.makedirs(STATE_DIR, exist_ok=True)
 
     print("=" * 60)
-    print("ATLAS Slack Bot — Trader Output Mode")
+    print("ATLAS Slack Bot — V8 Full-Spectrum Mode")
     print("=" * 60)
     print(f"Live data:  {'ENABLED (yfinance)' if USE_LIVE_DATA else 'DISABLED (static files)'}")
     print(f"FRED API:   {'Connected' if FRED_API_KEY else 'Not configured (using yfinance for macro)'}")
