@@ -58,14 +58,6 @@ def _truncate_title(title, max_len=60):
     return truncated + '...'
 
 
-def _trend_arrow(current, prior):
-    if current > prior:
-        return 'Rising'
-    if current < prior:
-        return 'Declining'
-    return 'Stable'
-
-
 # ============================================================================
 # V8 SCORING SYSTEM
 # ============================================================================
