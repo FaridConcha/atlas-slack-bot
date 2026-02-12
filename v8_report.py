@@ -743,18 +743,30 @@ def _section_sentiment(v8_data):
     lines.append(f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%")
     lines.append("```")
 
-    # News
+    # News — displayed outside code block so Slack renders hyperlinks
     if news:
         lines.append("")
-        lines.append("```")
-        lines.append("RECENT NEWS")
-        lines.append("-" * 50)
+        lines.append("*RECENT NEWS*")
         for a in news[:7]:
-            icon = _sentiment_icon(a.get('sentiment', 'NEUTRAL'))
-            title = a.get('title', '')[:45]
+            s = a.get('sentiment', 'NEUTRAL')
+            icon = ':large_green_circle:' if s == 'POSITIVE' else ':red_circle:' if s == 'NEGATIVE' else ':white_circle:'
+            title = a.get('title', '')
+            link = a.get('link', '')
+            pub = a.get('publisher', '')
             date = a.get('date', '')
-            lines.append(f"  [{icon}] {date:<6} {title}")
-        lines.append("-" * 50)
+
+            # Build one-liner with hyperlink if available
+            if link and title:
+                line = f"{icon} <{link}|{title}>"
+            elif title:
+                line = f"{icon} {title}"
+            else:
+                continue
+            if pub:
+                line += f" — _{pub}_"
+            if date:
+                line += f" ({date})"
+            lines.append(line)
 
         pos = sum(1 for a in news if a.get('sentiment') == 'POSITIVE')
         neg = sum(1 for a in news if a.get('sentiment') == 'NEGATIVE')
@@ -762,8 +774,7 @@ def _section_sentiment(v8_data):
         total = len(news)
         score = (pos - neg) / total if total > 0 else 0
         label = "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL"
-        lines.append(f"  Sentiment: {label} | +{pos} / -{neg} / ~{neu}")
-        lines.append("```")
+        lines.append(f"_Sentiment: {label} | :large_green_circle:{pos}  :red_circle:{neg}  :white_circle:{neu}_")
 
     return "\n".join(lines)
 

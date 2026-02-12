@@ -721,7 +721,9 @@ def _build_peers(symbol, info):
 # ============================================================================
 
 def _build_news(ticker):
-    """Fetch and score recent news articles."""
+    """Fetch and score recent news articles.
+    Handles both old and new yfinance news formats.
+    """
     try:
         news_list = ticker.news
         if not news_list:
@@ -729,23 +731,50 @@ def _build_news(ticker):
 
         articles = []
         for article in news_list[:10]:
-            title = article.get('title', '')
-            publisher = article.get('publisher', 'Unknown')
+            # New yfinance format: data nested under 'content'
+            content = article.get('content', {}) or {}
+
+            # Title: try content.title first, then top-level
+            title = content.get('title', '') or article.get('title', '')
+            if not title:
+                continue  # Skip articles with no title
+
+            # Publisher: try content.provider, then top-level
+            provider = content.get('provider', {}) or {}
+            publisher = provider.get('displayName', '') or article.get('publisher', '')
+
+            # Link: try content.clickThroughUrl, content.canonicalUrl, then top-level
+            click_url = content.get('clickThroughUrl', {}) or {}
+            canon_url = content.get('canonicalUrl', {}) or {}
+            link = (click_url.get('url', '') or canon_url.get('url', '')
+                    or article.get('link', ''))
+
+            # Date: try content.pubDate (ISO string), then top-level timestamp
+            pub_date_str = content.get('pubDate', '')
             pub_time = article.get('providerPublishTime', 0)
-            if pub_time:
+            if pub_date_str:
+                try:
+                    # ISO format: "2024-02-12T14:30:00Z"
+                    dt = datetime.fromisoformat(pub_date_str.replace('Z', '+00:00'))
+                    date_str = dt.strftime('%b %d')
+                except Exception:
+                    date_str = ''
+            elif pub_time:
                 date_str = datetime.fromtimestamp(pub_time).strftime('%b %d')
             else:
                 date_str = ''
 
             sentiment = _score_sentiment(title)
             articles.append({
-                'title': title[:80],  # Truncate for Slack display
-                'publisher': publisher,
+                'title': title[:75],
+                'publisher': publisher or 'Unknown',
                 'date': date_str,
+                'link': link,
                 'sentiment': sentiment,
             })
         return articles
-    except Exception:
+    except Exception as e:
+        print(f"[V8]   News fetch error: {e}")
         return []
 
 
