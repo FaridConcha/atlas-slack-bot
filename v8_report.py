@@ -747,7 +747,7 @@ def _section_sentiment(v8_data):
     lines.append(f"  Insider Ownership:     {inst.get('insider_pct', 0):.1f}%")
     lines.append("```")
 
-    # News — outside code block so Slack renders source hyperlinks
+    # News section
     if news:
         valid_news = [a for a in news if a.get('title', '').strip()]
         if valid_news:
@@ -757,9 +757,10 @@ def _section_sentiment(v8_data):
 
             lines.append("")
             lines.append("*RECENT NEWS*")
-            lines.append("_Positive_ ( + )  |  _Negative_ ( - )  |  _Neutral_ ( = )")
-            lines.append("")
+            # Legend in code block
+            lines.append("```Positive ( + )  |  Negative ( - )  |  Neutral ( = )```")
 
+            # Articles in blockquote
             for a in valid_news[:7]:
                 s = a.get('sentiment', 'NEUTRAL')
                 marker = '( + )' if s == 'POSITIVE' else '( - )' if s == 'NEGATIVE' else '( = )'
@@ -779,7 +780,7 @@ def _section_sentiment(v8_data):
                 else:
                     source = ''
 
-                line = f"      {marker}  {title}"
+                line = f"> {marker}  {title}"
                 if source:
                     line += f" — {source}"
                 if date:
