@@ -1,0 +1,46 @@
+{
+  "trailing_pe": 25.13,
+  "forward_pe": 22.3,
+  "ev_ebitda": 18.7,
+  "ev_ebitda_ntm": 19.56,
+  "ev_revenue": 7.1,
+  "fcf_yield": 4.53,
+  "roic": 12.32,
+  "roa": 9.02,
+  "roe": 39.55,
+  "gross_margin": 61.06,
+  "ebitda_margin": 32.67,
+  "net_margin": 22.59,
+  "current_ratio": 1.03,
+  "debt_equity": 1.77,
+  "eps_2024": 3.04,
+  "eps_2025": 3.0,
+  "revenue_2024_m": 47061,
+  "revenue_2025_m": 47941,
+  "market_cap_m": 330407,
+  "tev_m": 362199,
+  "trailing_pe_history": [
+    24.93,
+    27.77,
+    26.94,
+    27.38,
+    28.72,
+    25.13
+  ],
+  "ev_ebitda_history": [
+    17.72,
+    18.97,
+    18.26,
+    18.52,
+    19.59,
+    18.7
+  ],
+  "fcf_yield_history": [
+    5.2,
+    4.8,
+    4.5,
+    4.2,
+    3.8,
+    4.53
+  ]
+}
