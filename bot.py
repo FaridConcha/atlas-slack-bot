@@ -16,6 +16,7 @@ import os
 import sys
 import re
 import shutil
+import signal
 import time
 import threading
 import traceback
@@ -66,6 +67,13 @@ CACHE_TTL_HOURS = 4
 CACHE_MAX_SIZE = 50
 _thread_cache = {}  # {thread_ts: {symbol, summary, v8_extended, timestamp, conversation_history}}
 
+# Cold-start / shutdown state
+_boot_time = time.time()
+_boot_complete = False
+_COLD_START_WINDOW = 120  # seconds — generous for Render container spin-up
+_last_channel = None
+_last_thread_ts = None
+
 
 def _cleanup_cache():
     """Remove expired entries and enforce size limit."""
@@ -93,16 +101,68 @@ def parse_mention(text):
         "@atlas run"    -> "SPY" (default)
         "@atlas"        -> "SPY" (default)
     """
-    # Remove the @mention tag
-    cleaned = re.sub(r'<@[A-Z0-9]+>', '', text).strip().upper()
+    # Remove the @mention tag (use [^>]+ to handle any user-ID format Slack sends)
+    cleaned = re.sub(r'<@[^>]+>', '', text).strip().upper()
+
+    print(f"[PARSE] raw text: {repr(text)}")
+    print(f"[PARSE] cleaned:  {repr(cleaned)}")
 
     # Look for a ticker-like word (1-5 uppercase letters)
     tokens = cleaned.split()
+    print(f"[PARSE] tokens:   {tokens}")
     for token in tokens:
         if re.match(r'^[A-Z]{1,5}$', token) and token not in ('RUN', 'HELP', 'STATUS', 'LIVE'):
+            print(f"[PARSE] matched ticker: {token}")
             return token
 
+    print("[PARSE] no ticker matched, defaulting to SPY")
     return 'SPY'  # Default to SPY
+
+
+def _is_cold_start():
+    """Return True once if the first mention arrives within the cold-start window."""
+    global _boot_complete
+    if _boot_complete:
+        return False
+    _boot_complete = True
+    return (time.time() - _boot_time) < _COLD_START_WINDOW
+
+
+def _send_boot_progress(client, channel, thread_ts, symbol):
+    """Post and update a boot-progress message in-place. Returns the message ts."""
+    stages = [
+        ":zzz: ATLAS is waking up from sleep... hang tight",
+        ":satellite: Connecting data systems...",
+        ":rocket: Systems online, fetching *{symbol}*...",
+    ]
+    # Post initial message
+    resp = client.chat_postMessage(channel=channel, thread_ts=thread_ts,
+                                   text=stages[0])
+    msg_ts = resp["ts"]
+    # Walk through remaining stages
+    for stage in stages[1:]:
+        time.sleep(1.5)
+        try:
+            client.chat_update(channel=channel, ts=msg_ts,
+                               text=stage.replace("{symbol}", symbol))
+        except Exception:
+            pass
+    return msg_ts
+
+
+def _handle_shutdown(signum, frame):
+    """Notify Slack before Render kills the process."""
+    if _last_channel:
+        try:
+            app.client.chat_postMessage(
+                channel=_last_channel,
+                thread_ts=_last_thread_ts,
+                text=":zzz: ATLAS is going offline (Render free-tier sleep). "
+                     "Mention me again to wake up — takes ~30 seconds.",
+            )
+        except Exception:
+            pass
+    sys.exit(0)
 
 
 @app.event("app_mention")
@@ -111,10 +171,15 @@ def handle_atlas_mention(event, say, client):
     Handle @atlas mentions in any channel.
     Fetches live data, runs ATLAS engine, posts trader-ready analysis.
     """
+    global _last_channel, _last_thread_ts
+
     channel = event['channel']
     user = event['user']
     text = event.get('text', '')
     thread_ts = event.get('ts')
+
+    _last_channel = channel
+    _last_thread_ts = thread_ts
 
     # Parse which symbol they want
     symbol = parse_mention(text)
@@ -139,11 +204,18 @@ def handle_atlas_mention(event, say, client):
         )
         return
 
-    # Acknowledge immediately
-    say(
-        text=f":gear: Running ATLAS V8 on *{symbol}*... pulling live data & building full report (30-45 sec)",
-        thread_ts=thread_ts
-    )
+    # Detect cold start (first mention after Render spin-up)
+    cold = _is_cold_start()
+
+    if cold:
+        progress_ts = _send_boot_progress(client, channel, thread_ts, symbol)
+    else:
+        # Acknowledge immediately (warm path)
+        say(
+            text=f":gear: Running ATLAS V8 on *{symbol}*... pulling live data & building full report (30-45 sec)",
+            thread_ts=thread_ts
+        )
+        progress_ts = None
 
     try:
         # Fetch live data for ATLAS engine
@@ -156,6 +228,13 @@ def handle_atlas_mention(event, say, client):
         else:
             data_path = STATIC_DATA_PATH
 
+        if cold and progress_ts:
+            try:
+                client.chat_update(channel=channel, ts=progress_ts,
+                                   text=f":chart_with_upwards_trend: Live data fetched, running engine on *{symbol}*...")
+            except Exception:
+                pass
+
         # Run the 11-layer engine
         print(f"[BOT] Running ATLAS engine on {symbol}...")
         report_text, summary = run_atlas(
@@ -164,6 +243,13 @@ def handle_atlas_mention(event, say, client):
             capital=CAPITAL,
             state_dir=STATE_DIR
         )
+
+        if cold and progress_ts:
+            try:
+                client.chat_update(channel=channel, ts=progress_ts,
+                                   text=":brain: Engine complete, building report...")
+            except Exception:
+                pass
 
         # Fetch V8 extended data (peers, technicals, news, macro, etc.)
         print(f"[BOT] Fetching V8 extended data for {symbol}...")
@@ -175,6 +261,13 @@ def handle_atlas_mention(event, say, client):
         # Generate V8 full-spectrum report (10 sections)
         print(f"[BOT] Formatting V8 report for {symbol}...")
         v8_messages = format_v8_report(summary, v8_extended)
+
+        if cold and progress_ts:
+            try:
+                client.chat_update(channel=channel, ts=progress_ts,
+                                   text=":white_check_mark: Report ready, delivering...")
+            except Exception:
+                pass
 
         # Cache data for AI follow-up Q&A
         if GROQ_API_KEY:
@@ -230,6 +323,8 @@ def handle_message_events(event, say, client, logger):
     Handle thread replies for AI follow-up Q&A.
     Also serves as catch-all for message events (required by slack-bolt).
     """
+    global _last_channel, _last_thread_ts
+
     # Filter: Ignore bot's own messages
     if event.get('bot_id') or event.get('subtype'):
         return
@@ -243,6 +338,9 @@ def handle_message_events(event, say, client, logger):
     cache_entry = _thread_cache.get(thread_ts)
     if not cache_entry:
         return
+
+    _last_channel = event['channel']
+    _last_thread_ts = thread_ts
 
     # Filter: Skip if Groq not configured
     if not GROQ_API_KEY:
@@ -366,6 +464,9 @@ if __name__ == "__main__":
     health_server = HTTPServer(("0.0.0.0", port), HealthHandler)
     threading.Thread(target=health_server.serve_forever, daemon=True).start()
     print(f"Health check listening on port {port}")
+
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
 
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
