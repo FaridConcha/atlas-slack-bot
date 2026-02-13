@@ -71,8 +71,8 @@ def _build_dashboard_html(report_id: str, payload_json_escaped: str) -> str:
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <style>
   body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; }}
-  .card {{ @apply bg-gray-900 rounded-xl border border-gray-800 p-5 mb-4; }}
-  .badge {{ @apply inline-block px-2 py-0.5 rounded text-xs font-semibold; }}
+  .card {{ background: rgb(17 24 39); border-radius: 0.75rem; border: 1px solid rgb(31 41 55); padding: 1.25rem; margin-bottom: 1rem; }}
+  .badge {{ display: inline-block; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; }}
 </style>
 </head>
 <body class="min-h-screen p-4 md:p-8 max-w-6xl mx-auto">
@@ -337,9 +337,9 @@ function render() {{
     if (supports.length || resistances.length) {{
       html += `<div class="grid grid-cols-2 gap-4 text-sm">
         <div><div class="text-xs text-gray-500 uppercase mb-1">Resistance</div>`;
-      for (const r of resistances.slice(0,3)) html += `<div class="text-red-400">$${fmt(r,2)}</div>`;
+      for (const r of resistances.slice(0,3)) html += `<div class="text-red-400">$${{fmt(r,2)}}</div>`;
       html += `</div><div><div class="text-xs text-gray-500 uppercase mb-1">Support</div>`;
-      for (const sp of supports.slice(0,3)) html += `<div class="text-emerald-400">$${fmt(sp,2)}</div>`;
+      for (const sp of supports.slice(0,3)) html += `<div class="text-emerald-400">$${{fmt(sp,2)}}</div>`;
       html += `</div></div>`;
     }}
     html += `</div>`;
