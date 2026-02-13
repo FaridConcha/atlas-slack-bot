@@ -8,7 +8,7 @@ Run locally:
     uvicorn web_server:app --reload --port 8000
 
 Routes:
-    GET /r/{report_id}          → HTML dashboard (Tailwind + Chart.js CDN)
+    GET /r/{report_id}          → HTML dashboard (ECharts + Tailwind CDN)
     GET /api/r/{report_id}.json → Raw payload JSON
     GET /health                 → Health check
 """
@@ -22,17 +22,11 @@ from web_report import get_report
 app = FastAPI(title="ATLAS Web Reports", docs_url=None, redoc_url=None)
 
 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-# ---------------------------------------------------------------------------
-# JSON API
-# ---------------------------------------------------------------------------
 @app.get("/api/r/{report_id}.json")
 def api_report(report_id: str):
     payload = get_report(report_id)
@@ -41,373 +35,693 @@ def api_report(report_id: str):
     return JSONResponse(content=payload)
 
 
-# ---------------------------------------------------------------------------
-# HTML Dashboard
-# ---------------------------------------------------------------------------
 @app.get("/r/{report_id}", response_class=HTMLResponse)
 def html_report(report_id: str):
     payload = get_report(report_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Report not found")
-
-    # Embed payload as JSON inside the HTML so the page is self-contained
     payload_json_escaped = json.dumps(payload).replace("</", "<\\/")
-
-    html = _build_dashboard_html(report_id, payload_json_escaped)
+    html = _DASHBOARD_TEMPLATE.replace("__PAYLOAD_JSON__", payload_json_escaped)
     return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------
-# Dashboard HTML builder (single-page, CDN-only, no build step)
+# Full dashboard template — plain string, NO f-string.
+# Only substitution: __PAYLOAD_JSON__ replaced at serve time.
 # ---------------------------------------------------------------------------
-def _build_dashboard_html(report_id: str, payload_json_escaped: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="en" class="bg-gray-950 text-gray-100">
+_DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ATLAS Report</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 <style>
-  body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; }}
-  .card {{ background: rgb(17 24 39); border-radius: 0.75rem; border: 1px solid rgb(31 41 55); padding: 1.25rem; margin-bottom: 1rem; }}
-  .badge {{ display: inline-block; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; }}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:     #06090f;
+  --bg1:    #0d1117;
+  --bg2:    #161b22;
+  --border: #21262d;
+  --t1:     #e6edf3;
+  --t2:     #8b949e;
+  --t3:     #484f58;
+  --pos:    #3fb950;
+  --neg:    #f85149;
+  --warn:   #d29922;
+  --acc:    #58a6ff;
+  --r:      4px;
+}
+html{background:var(--bg);color:var(--t1)}
+body{font:13px/1.6 'Inter',system-ui,sans-serif;max-width:1400px;margin:0 auto;padding:16px 20px 48px}
+.mono{font-family:'JetBrains Mono',monospace;font-size:12px;font-variant-numeric:tabular-nums}
+h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--t3);margin-bottom:12px}
+a{color:var(--acc);text-decoration:none}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:860px){.g2,.g3,.g4{grid-template-columns:1fr}}
+.pill{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:600}
+.pill-pos{background:rgba(63,185,80,.15);color:var(--pos)}
+.pill-neg{background:rgba(248,81,73,.15);color:var(--neg)}
+.pill-warn{background:rgba(210,153,34,.15);color:var(--warn)}
+.pill-muted{background:var(--bg2);color:var(--t2)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--t2)}
+td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
+.tr-hl{background:var(--bg2)}
+.text-r{text-align:right}
+.text-c{text-align:center}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.warn{color:var(--warn)}.muted{color:var(--t3)}
+.skel{height:200px;display:flex;align-items:center;justify-content:center;color:var(--t3)}
+.chart-box{height:240px;min-height:200px}
+.metrics-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.metric{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;min-width:100px;flex:1}
+.metric-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);margin-bottom:2px}
+.metric-value{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.section-sep{border:none;border-top:1px solid var(--border);margin:20px 0}
+.collapse-btn{background:none;border:1px solid var(--border);color:var(--t2);padding:6px 14px;border-radius:var(--r);cursor:pointer;font:12px/1 'Inter',sans-serif;font-weight:500}
+.collapse-btn:hover{color:var(--t1);border-color:var(--t3)}
+.collapse-body{display:none;margin-top:12px}
+.collapse-body.open{display:block}
+.formula{font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.8;color:var(--t2);white-space:pre;overflow-x:auto}
+.formula .hl{color:var(--t1);font-weight:500}
+.formula .pos{color:var(--pos)}.formula .neg{color:var(--neg)}
+.badge-warn{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:rgba(210,153,34,.15);color:var(--warn);margin-left:6px}
+.sentiment-chip{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.sentiment-pos{background:var(--pos)}.sentiment-neg{background:var(--neg)}.sentiment-neu{background:var(--t3)}
+.news-item{padding:6px 0;border-bottom:1px solid rgba(33,38,45,.3);font-size:12px;display:flex;align-items:baseline;gap:8px}
+.news-item:last-child{border-bottom:none}
+.news-src{color:var(--t3);font-size:11px;white-space:nowrap}
+.empty{text-align:center;padding:32px;color:var(--t3);font-size:12px}
 </style>
 </head>
-<body class="min-h-screen p-4 md:p-8 max-w-6xl mx-auto">
-
-<!-- Populated by JS from embedded payload -->
-<div id="app">
-  <p class="text-gray-500 text-center mt-20">Loading report&hellip;</p>
-</div>
-
+<body>
+<div id="app"><div class="skel">Loading report…</div></div>
 <script>
-// Embedded payload — no extra fetch required
-const DATA = {payload_json_escaped};
+const D = __PAYLOAD_JSON__;
+const S = D.summary||{};
+const V8 = D.v8_extended||{};
+const P = D.provenance||{};
+const CO = V8.company||{};
+const FIN = V8.financials||{};
+const TECH = V8.technicals||{};
+const PEERS = V8.peers||[];
+const DCF = V8.dcf||null;
+const NEWS = V8.news||[];
+const EARN = V8.earnings||[];
+const SC = S.scores||{};
+const W = S.w_dynamic||{};
+const CT = S.contributions||{};
+const RV = S.regime_vector||{};
+const ENGINES = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
+const RF = [['TS','Trend'],['CH','Choppiness'],['VL','VIX Level'],['VS','VIX Stress'],['CI','Corr Instab.'],['RS','Rates Shock'],['CS','Credit Stress'],['GR','Global Risk'],['BM_f','Bad Mix'],['BEI','Bond-Eq Flip']];
 
-// ── Helpers ──────────────────────────────────────────────────────────
-const fmt  = (v, d=1) => v == null ? 'N/A' : Number(v).toFixed(d);
-const fmtP = (v, d=1) => v == null ? 'N/A' : (v >= 0 ? '+' : '') + Number(v).toFixed(d) + '%';
-const fmtM = (v) => {{
-  if (v == null) return 'N/A';
-  const abs = Math.abs(v);
-  if (abs >= 1e12) return '$' + (v/1e12).toFixed(2) + 'T';
-  if (abs >= 1e9)  return '$' + (v/1e9).toFixed(2) + 'B';
-  if (abs >= 1e6)  return '$' + (v/1e6).toFixed(1) + 'M';
-  return '$' + v.toLocaleString();
-}};
-const safe = (obj, ...keys) => {{
-  let cur = obj;
-  for (const k of keys) {{ if (cur == null) return null; cur = cur[k]; }}
-  return cur;
-}};
+// ── Utilities ───────────────────────────────────────
+function f(v,d){if(v==null||isNaN(v))return'N/A';return Number(v).toFixed(d==null?1:d)}
+function fS(v,d){if(v==null||isNaN(v))return'N/A';d=d==null?1:d;return(v>=0?'+':'')+Number(v).toFixed(d)}
+function fP(v,d){if(v==null||isNaN(v))return'N/A';d=d==null?1:d;return(v>=0?'+':'')+Number(v).toFixed(d)+'%'}
+function fM(v){if(v==null||isNaN(v))return'N/A';var a=Math.abs(v);if(a>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(a>=1e9)return'$'+(v/1e9).toFixed(1)+'B';if(a>=1e6)return'$'+(v/1e6).toFixed(0)+'M';return'$'+Number(v).toLocaleString()}
+function fD(v){return v!=null?'$'+f(v,2):'N/A'}
+function cls(v){return v>0?'pos':v<0?'neg':'muted'}
+function pill(v){return v>=60?'pill-pos':v>=40?'pill-warn':'pill-neg'}
+function pillV(verdict){var v=(verdict||'').toUpperCase();if(v.includes('BUY')||v.includes('LONG'))return'pill-pos';if(v.includes('HOLD')||v.includes('CASH')||v.includes('ASIDE'))return'pill-warn';return'pill-neg'}
+function norm(c){return c!=null?Math.max(0,Math.min(100,(c+100)/2)):50}
 
-// ── Verdict colour ───────────────────────────────────────────────────
-function verdictColor(score) {{
-  if (score >= 60) return 'text-emerald-400';
-  if (score >= 40) return 'text-yellow-400';
-  return 'text-red-400';
-}}
-function verdictBg(score) {{
-  if (score >= 60) return 'bg-emerald-500/20 text-emerald-300';
-  if (score >= 40) return 'bg-yellow-500/20 text-yellow-300';
-  return 'bg-red-500/20 text-red-300';
-}}
+var price = S.price||CO.price||null;
+var cRaw = S.composite_raw;
+var cAdj = S.composite_adjusted;
+var comp = cAdj!=null?cAdj:cRaw;
+var tq = S.trade_quality;
+var gate = S.gate_value;
+var regime = S.regime_label||'N/A';
+var rel = S.regime_reliability;
+var dc = S.data_confidence;
+var mode = S.execution_mode||'N/A';
+var verdict = S.verdict||'N/A';
+var name = D.company_name||CO.name||D.symbol;
 
-// ── Score bar (10 blocks) ────────────────────────────────────────────
-function scoreBar(score, max=100) {{
-  const pct = Math.max(0, Math.min(100, ((score + max) / (2 * max)) * 100));
-  const filled = Math.round(pct / 10);
-  return '<span class="font-mono text-xs">' +
-    '<span class="text-emerald-400">' + '█'.repeat(filled) + '</span>' +
-    '<span class="text-gray-700">' + '░'.repeat(10 - filled) + '</span>' +
-    '</span>';
-}}
+// ── Build HTML ──────────────────────────────────────
+var h = '';
 
-// ── Build page ───────────────────────────────────────────────────────
-function render() {{
-  const s   = DATA.summary || {{}};
-  const v8  = DATA.v8_extended || {{}};
-  const prov = DATA.provenance || {{}};
-  const co  = v8.company || {{}};
-  const fin = v8.financials || {{}};
-  const tech = v8.technicals || {{}};
-  const peers = v8.peers || [];
-  const dcf  = v8.dcf || null;
-  const scores = s.scores || {{}};
-  const wDyn = s.w_dynamic || {{}};
-  const contribs = s.contributions || {{}};
+// HEADER
+h += '<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px">';
+h += '<span style="font-size:28px;font-weight:700;letter-spacing:-0.02em">'+D.symbol+'</span>';
+h += '<span style="font-size:15px;color:var(--t2)">'+name+'</span>';
+if(price!=null) h += '<span class="mono" style="font-size:18px;font-weight:600">$'+f(price,2)+'</span>';
+h += '<span class="pill '+pillV(verdict)+'" style="margin-left:auto;font-size:12px;padding:3px 10px">'+verdict+'</span>';
+h += '</div>';
+h += '<div style="font-size:11px;color:var(--t3);margin-bottom:16px">';
+h += 'ATLAS V8';
+if(D.created_at) h += ' · '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+if(P.fallback_mode) h += ' · Data: '+P.fallback_mode;
+h += '</div>';
 
-  const composite = s.composite_adjusted != null ? s.composite_adjusted : s.composite_raw;
-  const compositeRaw = s.composite_raw;
-  const compositeAdj = s.composite_adjusted;
-  const tq = s.trade_quality;
-  const dc = s.data_confidence;
-  const regime = s.regime_label || 'N/A';
-  const reliability = s.regime_reliability;
-  const execMode = s.execution_mode || 'N/A';
-  const verdict = s.verdict || 'N/A';
-  const price = s.price || co.price;
-  const companyName = DATA.company_name || co.name || DATA.symbol;
+// METRICS STRIP
+h += '<div class="metrics-row">';
+var ms = [
+  ['Composite',comp!=null?f(comp,1):'N/A',pill(norm(comp))],
+  ['Raw Score',cRaw!=null?fS(cRaw,1):'N/A','pill-muted'],
+  ['Trade Quality',tq!=null?f(tq,3):'N/A','pill-muted'],
+  ['Gate',gate!=null?f(gate,2):'N/A','pill-muted'],
+  ['Regime',regime,'pill-muted'],
+  ['Data Conf.',dc!=null?f(dc,0)+'%':'N/A',dc!=null?(dc>=70?'pill-pos':dc>=40?'pill-warn':'pill-neg'):'pill-muted'],
+  ['Reliability',rel!=null?f(rel,2):'N/A','pill-muted'],
+  ['Mode',mode,'pill-muted'],
+];
+for(var i=0;i<ms.length;i++){
+  h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'">'+ms[i][1]+'</span></div></div>';
+}
+h += '</div>';
 
-  // Normalise composite to 0-100 for colour
-  const normScore = composite != null ? Math.max(0, Math.min(100, (composite + 100) / 2)) : 50;
+h += '<hr class="section-sep">';
 
-  let html = '';
+// ── CHARTS ROW: Price Levels + Engine Waterfall ─────
+h += '<div class="g2">';
 
-  // ── Header ─────────────────────────────────────────────────────────
-  html += `
-  <div class="mb-6">
-    <div class="flex flex-wrap items-baseline gap-3 mb-1">
-      <h1 class="text-3xl font-bold tracking-tight">${{DATA.symbol}}</h1>
-      <span class="text-lg text-gray-400">${{companyName}}</span>
-    </div>
-    <div class="text-sm text-gray-500">
-      ATLAS V8 &middot; ${{new Date(DATA.created_at).toLocaleString()}}
-      ${{prov.fallback_mode ? ' &middot; Data: ' + prov.fallback_mode : ''}}
-    </div>
-  </div>`;
+// Price Context
+h += '<div class="card"><h2>Price Context</h2>';
+if(price && (TECH.sma20||TECH.sma50||TECH.sma200)){
+  h += '<div id="ch-price" class="chart-box"></div>';
+} else {
+  h += '<div class="empty">No price level data available</div>';
+}
+h += '</div>';
 
-  // ── Key Metrics Row ────────────────────────────────────────────────
-  html += `<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">`;
-  const metrics = [
-    ['Verdict', verdict, verdictBg(normScore)],
-    ['Composite', (compositeAdj != null ? fmt(compositeAdj,1) : 'N/A') + ' / 100', verdictBg(normScore)],
-    ['Raw Score', compositeRaw != null ? fmt(compositeRaw,1) : 'N/A', 'bg-gray-800 text-gray-300'],
-    ['Trade Quality', tq != null ? fmt(tq, 3) : 'N/A', 'bg-gray-800 text-gray-300'],
-    ['Regime', regime, 'bg-gray-800 text-gray-300'],
-    ['Data Conf.', dc != null ? fmt(dc,0) + '%' : 'N/A', 'bg-gray-800 text-gray-300'],
+// Engine Contributions Waterfall
+h += '<div class="card"><h2>Engine Contributions</h2>';
+var hasContribs = false;
+for(var i=0;i<ENGINES.length;i++){if(CT[ENGINES[i]]!=null){hasContribs=true;break}}
+if(hasContribs){
+  h += '<div id="ch-waterfall" class="chart-box"></div>';
+} else {
+  h += '<div class="empty">No contribution data</div>';
+}
+h += '</div>';
+h += '</div>'; // end g2
+
+// ── CHARTS ROW 2: Regime Vector + DCF ───────────────
+h += '<div class="g2">';
+
+// Regime Vector
+h += '<div class="card"><h2>Regime Analysis</h2>';
+var hasRV = false;
+for(var k in RV){if(RV[k]!=null){hasRV=true;break}}
+if(hasRV){
+  h += '<div id="ch-regime" class="chart-box"></div>';
+} else {
+  h += '<div class="empty">No regime vector data</div>';
+}
+h += '</div>';
+
+// DCF
+h += '<div class="card"><h2>DCF Fair Value</h2>';
+if(DCF && (DCF.bear||DCF.base||DCF.bull)){
+  h += '<div id="ch-dcf" class="chart-box"></div>';
+  if(DCF.assumptions){
+    var a=DCF.assumptions;
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% · FCF Mgn '+f(a.fcf_margin)+'% · WACC '+f(a.discount_rate)+'% · Terminal '+f(a.terminal_growth)+'%</div>';
+  }
+} else {
+  h += '<div class="empty">DCF not available for this ticker</div>';
+}
+h += '</div>';
+h += '</div>';
+
+h += '<hr class="section-sep">';
+
+// ── TECHNICALS ──────────────────────────────────────
+h += '<div class="card"><h2>Technical Indicators</h2>';
+if(TECH.rsi_14||TECH.sma20){
+  h += '<div class="g4" style="font-size:12px;margin-bottom:12px">';
+  var tm = [
+    ['RSI (14)',TECH.rsi_14!=null?f(TECH.rsi_14,1):'N/A',TECH.rsi_14>70?'neg':TECH.rsi_14<30?'pos':''],
+    ['MACD',TECH.macd_line!=null?fS(TECH.macd_line,3):'N/A',cls(TECH.macd_line)],
+    ['MACD Signal',TECH.macd_signal!=null?f(TECH.macd_signal,3):'N/A',''],
+    ['MACD Histogram',TECH.macd_histogram!=null?fS(TECH.macd_histogram,3):'N/A',cls(TECH.macd_histogram)],
+    ['ADX',TECH.adx!=null?f(TECH.adx,1):'N/A',TECH.adx>25?'pos':'muted'],
+    ['Stochastic K/D',TECH.stochastic_k!=null?f(TECH.stochastic_k,0)+'/'+f(TECH.stochastic_d,0):'N/A',''],
+    ['OBV Trend',TECH.obv_trend||'N/A',TECH.obv_trend==='Rising'?'pos':TECH.obv_trend==='Falling'?'neg':''],
+    ['ATR',TECH.atr!=null?'$'+f(TECH.atr,2):'N/A',''],
+    ['SMA 20',TECH.sma20!=null?fD(TECH.sma20):'N/A',price&&TECH.sma20?(price>TECH.sma20?'pos':'neg'):''],
+    ['SMA 50',TECH.sma50!=null?fD(TECH.sma50):'N/A',price&&TECH.sma50?(price>TECH.sma50?'pos':'neg'):''],
+    ['SMA 200',TECH.sma200!=null?fD(TECH.sma200):'N/A',price&&TECH.sma200?(price>TECH.sma200?'pos':'neg'):''],
+    ['52W Range',TECH.fifty_two_week_low!=null?fD(TECH.fifty_two_week_low)+' – '+fD(TECH.fifty_two_week_high):'N/A',''],
   ];
-  for (const [label, value, cls] of metrics) {{
-    html += `<div class="card !p-3 text-center">
-      <div class="text-[11px] text-gray-500 uppercase tracking-wider mb-1">${{label}}</div>
-      <div class="badge ${{cls}}">${{value}}</div>
-    </div>`;
-  }}
-  html += `</div>`;
+  for(var i=0;i<tm.length;i++){
+    h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+tm[i][0]+'</div><div class="mono '+tm[i][2]+'" style="font-size:13px;font-weight:500">'+tm[i][1]+'</div></div>';
+  }
+  h += '</div>';
+  // Support / Resistance
+  var sups=(TECH.support_levels||[]).slice(0,3);
+  var ress=(TECH.resistance_levels||[]).slice(0,3);
+  if(sups.length||ress.length){
+    h+='<div class="g2" style="font-size:12px">';
+    h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Resistance</div>';
+    for(var i=0;i<ress.length;i++) h+='<div class="mono neg">'+fD(ress[i])+'</div>';
+    if(!ress.length) h+='<span class="muted">—</span>';
+    h+='</div>';
+    h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Support</div>';
+    for(var i=0;i<sups.length;i++) h+='<div class="mono pos">'+fD(sups[i])+'</div>';
+    if(!sups.length) h+='<span class="muted">—</span>';
+    h+='</div></div>';
+  }
+} else {
+  h += '<div class="empty">Technical data not available</div>';
+}
+h += '</div>';
 
-  // ── Engine Scores Table ────────────────────────────────────────────
-  const engineNames = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
-  html += `<div class="card">
-    <h2 class="text-lg font-semibold mb-3">Engine Scores</h2>
-    <div class="overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead><tr class="text-gray-500 text-xs uppercase">
-        <th class="text-left py-1 pr-4">Engine</th>
-        <th class="text-right pr-4">Score</th>
-        <th class="text-center pr-4">Bar</th>
-        <th class="text-right pr-4">Weight</th>
-        <th class="text-right">Contribution</th>
-      </tr></thead><tbody>`;
-  let totalContrib = 0;
-  for (const eng of engineNames) {{
-    const sc = scores[eng];
-    const w  = wDyn[eng];
-    const ct = contribs[eng];
-    if (ct != null) totalContrib += ct;
-    html += `<tr class="border-t border-gray-800">
-      <td class="py-1.5 pr-4 font-medium">${{eng}}</td>
-      <td class="text-right pr-4 ${{sc >= 0 ? 'text-emerald-400' : 'text-red-400'}}">${{sc != null ? (sc >= 0 ? '+' : '') + fmt(sc,1) : 'N/A'}}</td>
-      <td class="text-center pr-4">${{sc != null ? scoreBar(sc) : ''}}</td>
-      <td class="text-right pr-4 text-gray-400">${{w != null ? fmt(w, 3) : ''}}</td>
-      <td class="text-right ${{ct >= 0 ? 'text-emerald-400' : 'text-red-400'}}">${{ct != null ? (ct >= 0 ? '+' : '') + fmt(ct, 2) : ''}}</td>
-    </tr>`;
-  }}
-  html += `<tr class="border-t-2 border-gray-700 font-bold">
-    <td class="py-1.5" colspan="4">TOTAL</td>
-    <td class="text-right ${{totalContrib >= 0 ? 'text-emerald-400' : 'text-red-400'}}">${{(totalContrib >= 0 ? '+' : '') + fmt(totalContrib, 2)}}</td>
-  </tr>`;
-  html += `</tbody></table></div></div>`;
+// ── FUNDAMENTALS ────────────────────────────────────
+h += '<div class="card"><h2>Fundamentals</h2>';
+if(FIN.revenue_ttm||FIN.net_income_ttm||FIN.gross_margin!=null){
+  h += '<div class="g4" style="font-size:12px">';
+  var fm = [
+    ['Revenue TTM',fM(FIN.revenue_ttm),''],
+    ['Rev Growth',FIN.revenue_growth!=null?fP(FIN.revenue_growth):'N/A',cls(FIN.revenue_growth)],
+    ['Net Income',fM(FIN.net_income_ttm),''],
+    ['Earnings Gr',FIN.earnings_growth!=null?fP(FIN.earnings_growth):'N/A',cls(FIN.earnings_growth)],
+    ['Gross Margin',FIN.gross_margin!=null?f(FIN.gross_margin)+'%':'N/A',''],
+    ['Op Margin',FIN.operating_margin!=null?f(FIN.operating_margin)+'%':'N/A',''],
+    ['Net Margin',FIN.net_margin!=null?f(FIN.net_margin)+'%':'N/A',''],
+    ['EBITDA Margin',FIN.ebitda_margin!=null?f(FIN.ebitda_margin)+'%':'N/A',''],
+    ['ROE',FIN.roe!=null?f(FIN.roe)+'%':'N/A',''],
+    ['ROA',FIN.roa!=null?f(FIN.roa)+'%':'N/A',''],
+    ['FCF',fM(FIN.free_cash_flow),''],
+    ['FCF Yield',FIN.fcf_yield!=null?f(FIN.fcf_yield)+'%':'N/A',''],
+    ['Total Debt',fM(FIN.total_debt),''],
+    ['Net Debt',fM(FIN.net_debt),''],
+    ['D/E',FIN.debt_equity!=null?f(FIN.debt_equity,2)+'x':'N/A',''],
+    ['Current Ratio',FIN.current_ratio!=null?f(FIN.current_ratio,2)+'x':'N/A',''],
+  ];
+  for(var i=0;i<fm.length;i++){
+    h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+fm[i][0]+'</div><div class="mono '+fm[i][2]+'" style="font-size:13px;font-weight:500">'+fm[i][1]+'</div></div>';
+  }
+  h += '</div>';
+} else {
+  h += '<div class="empty">Fundamental data not available</div>';
+}
+h += '</div>';
 
-  // ── Trade Plan ─────────────────────────────────────────────────────
-  if (s.stop_loss || s.entry) {{
-    html += `<div class="card">
-      <h2 class="text-lg font-semibold mb-3">Trade Plan</h2>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">`;
-    const tp = [
-      ['Price', price != null ? '$' + fmt(price, 2) : 'N/A'],
-      ['Entry', s.entry ? '$' + fmt(s.entry, 2) : 'N/A'],
-      ['Stop Loss', s.stop_loss ? '$' + fmt(s.stop_loss, 2) : 'N/A'],
-      ['Mode', execMode],
-      ['Buy Zone', s.buy_zone ? '$' + fmt(s.buy_zone[0],2) + ' – $' + fmt(s.buy_zone[1],2) : 'N/A'],
-      ['Target', s.take_profit ? '$' + fmt(s.take_profit[0],2) + ' – $' + fmt(s.take_profit[1],2) : 'N/A'],
-      ['Position $', s.position_size ? fmtM(s.position_size) : 'N/A'],
-      ['Position %', s.position_pct != null ? fmt(s.position_pct,1) + '%' : 'N/A'],
-    ];
-    for (const [label, value] of tp) {{
-      html += `<div><div class="text-[11px] text-gray-500 uppercase">${{label}}</div><div class="font-medium">${{value}}</div></div>`;
-    }}
-    html += `</div></div>`;
-  }}
+// ── VALUATION ───────────────────────────────────────
+h += '<div class="card"><h2>Valuation Multiples</h2>';
+if(FIN.trailing_pe||FIN.forward_pe||FIN.price_to_book){
+  h += '<div class="g4" style="font-size:12px">';
+  var vm = [
+    ['Trail P/E',FIN.trailing_pe!=null?f(FIN.trailing_pe)+'x':'N/A'],
+    ['Fwd P/E',FIN.forward_pe!=null?f(FIN.forward_pe)+'x':'N/A'],
+    ['PEG',FIN.peg_ratio!=null?f(FIN.peg_ratio,2):'N/A'],
+    ['P/B',FIN.price_to_book!=null?f(FIN.price_to_book)+'x':'N/A'],
+    ['P/S',FIN.price_to_sales!=null?f(FIN.price_to_sales)+'x':'N/A'],
+    ['EV/EBITDA',FIN.ev_ebitda!=null?f(FIN.ev_ebitda)+'x':'N/A'],
+    ['EV/Revenue',FIN.ev_revenue!=null?f(FIN.ev_revenue)+'x':'N/A'],
+    ['FCF Yield',FIN.fcf_yield!=null?f(FIN.fcf_yield)+'%':'N/A'],
+  ];
+  for(var i=0;i<vm.length;i++){
+    h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+vm[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+vm[i][1]+'</div></div>';
+  }
+  h += '</div>';
+} else {
+  h += '<div class="empty">Valuation data not available</div>';
+}
+h += '</div>';
 
-  // ── DCF Scenarios ──────────────────────────────────────────────────
-  if (dcf && (dcf.bear || dcf.base || dcf.bull)) {{
-    html += `<div class="card">
-      <h2 class="text-lg font-semibold mb-3">DCF Fair Value Scenarios</h2>
-      <div class="grid grid-cols-3 gap-4 text-center">`;
-    const scenarios = [
-      ['Bear', dcf.bear, 'border-red-500/40'],
-      ['Base', dcf.base, 'border-yellow-500/40'],
-      ['Bull', dcf.bull, 'border-emerald-500/40'],
-    ];
-    for (const [label, val, border] of scenarios) {{
-      const upside = (price && val) ? (((val - price) / price) * 100) : null;
-      html += `<div class="rounded-lg border ${{border}} bg-gray-800/50 p-4">
-        <div class="text-xs text-gray-500 uppercase mb-1">${{label}}</div>
-        <div class="text-xl font-bold">${{val != null ? '$' + fmt(val, 2) : 'N/A'}}</div>
-        ${{upside != null ? '<div class="text-xs mt-1 ' + (upside >= 0 ? 'text-emerald-400' : 'text-red-400') + '">' + fmtP(upside, 1) + ' vs current</div>' : ''}}
-      </div>`;
-    }}
-    html += `</div>`;
-    if (dcf.assumptions) {{
-      const a = dcf.assumptions;
-      html += `<div class="mt-3 text-xs text-gray-500">
-        Assumptions: Rev Growth ${{fmt(a.revenue_growth_y1,1)}}% &middot;
-        FCF Margin ${{fmt(a.fcf_margin,1)}}% &middot;
-        WACC ${{fmt(a.discount_rate,1)}}% &middot;
-        Terminal ${{fmt(a.terminal_growth,1)}}%
-      </div>`;
-    }}
-    html += `</div>`;
-  }}
+h += '<hr class="section-sep">';
 
-  // ── Peers Table ────────────────────────────────────────────────────
-  if (peers.length > 0) {{
-    html += `<div class="card">
-      <h2 class="text-lg font-semibold mb-3">Peer Comparison</h2>
-      <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead><tr class="text-gray-500 text-xs uppercase">
-          <th class="text-left py-1">Ticker</th>
-          <th class="text-right">Price</th>
-          <th class="text-right">Mkt Cap</th>
-          <th class="text-right">Rev Gr</th>
-          <th class="text-right">Margin</th>
-          <th class="text-right">Fwd PE</th>
-          <th class="text-right">ROE</th>
-        </tr></thead><tbody>`;
-    // Add the subject ticker first
-    html += `<tr class="border-t border-gray-800 bg-gray-800/50 font-semibold">
-      <td class="py-1.5">${{DATA.symbol}}</td>
-      <td class="text-right">${{price != null ? '$' + fmt(price,2) : 'N/A'}}</td>
-      <td class="text-right">${{fmtM(fin.market_cap || co.market_cap)}}</td>
-      <td class="text-right">${{fin.revenue_growth != null ? fmtP(fin.revenue_growth) : 'N/A'}}</td>
-      <td class="text-right">${{fin.net_margin != null ? fmt(fin.net_margin,1) + '%' : 'N/A'}}</td>
-      <td class="text-right">${{fin.forward_pe != null ? fmt(fin.forward_pe,1) + 'x' : 'N/A'}}</td>
-      <td class="text-right">${{fin.roe != null ? fmt(fin.roe,1) + '%' : 'N/A'}}</td>
-    </tr>`;
-    for (const p of peers) {{
-      html += `<tr class="border-t border-gray-800">
-        <td class="py-1.5">${{p.symbol || ''}}</td>
-        <td class="text-right">${{p.price != null ? '$' + fmt(p.price,2) : 'N/A'}}</td>
-        <td class="text-right">${{fmtM(p.market_cap)}}</td>
-        <td class="text-right">${{p.revenue_growth != null ? fmtP(p.revenue_growth) : 'N/A'}}</td>
-        <td class="text-right">${{p.profit_margin != null ? fmt(p.profit_margin,1) + '%' : 'N/A'}}</td>
-        <td class="text-right">${{p.forward_pe != null ? fmt(p.forward_pe,1) + 'x' : 'N/A'}}</td>
-        <td class="text-right">${{p.roe != null ? fmt(p.roe,1) + '%' : 'N/A'}}</td>
-      </tr>`;
-    }}
-    html += `</tbody></table></div></div>`;
-  }}
+// ── TRADE PLAN ──────────────────────────────────────
+if(S.stop_loss||S.entry){
+  h += '<div class="card"><h2>Trade Plan</h2>';
+  h += '<div class="g4" style="font-size:12px">';
+  var tp = [
+    ['Entry',S.entry?fD(S.entry):'N/A'],
+    ['Stop Loss',S.stop_loss?fD(S.stop_loss):'N/A'],
+    ['Target',S.take_profit?fD(S.take_profit[0])+' – '+fD(S.take_profit[1]):'N/A'],
+    ['Buy Zone',S.buy_zone?fD(S.buy_zone[0])+' – '+fD(S.buy_zone[1]):'N/A'],
+    ['Mode',mode],
+    ['Position $',S.position_size?fM(S.position_size):'N/A'],
+    ['Position %',S.position_pct!=null?f(S.position_pct,1)+'%':'N/A'],
+    ['TQ Category',S.tq_category||'N/A'],
+  ];
+  for(var i=0;i<tp.length;i++){
+    h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+tp[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+tp[i][1]+'</div></div>';
+  }
+  h += '</div></div>';
+}
 
-  // ── Technicals ─────────────────────────────────────────────────────
-  if (tech.sma20 || tech.rsi_14) {{
-    html += `<div class="card">
-      <h2 class="text-lg font-semibold mb-3">Technical Indicators</h2>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4">`;
-    const techMetrics = [
-      ['RSI (14)', tech.rsi_14 != null ? fmt(tech.rsi_14,1) : 'N/A'],
-      ['MACD', tech.macd_line != null ? fmt(tech.macd_line,3) : 'N/A'],
-      ['ADX', tech.adx != null ? fmt(tech.adx,1) : 'N/A'],
-      ['OBV Trend', tech.obv_trend || 'N/A'],
-      ['SMA 20', tech.sma20 != null ? '$' + fmt(tech.sma20,2) : 'N/A'],
-      ['SMA 50', tech.sma50 != null ? '$' + fmt(tech.sma50,2) : 'N/A'],
-      ['SMA 200', tech.sma200 != null ? '$' + fmt(tech.sma200,2) : 'N/A'],
-      ['ATR', tech.atr != null ? '$' + fmt(tech.atr,2) : 'N/A'],
-    ];
-    for (const [label, value] of techMetrics) {{
-      html += `<div><div class="text-[11px] text-gray-500 uppercase">${{label}}</div><div class="font-medium">${{value}}</div></div>`;
-    }}
-    html += `</div>`;
+// ── PEER COMPARISON TABLE ───────────────────────────
+h += '<div class="card"><h2>Peer Comparison</h2>';
+if(PEERS.length>0){
+  h += '<div style="overflow-x:auto"><table id="tbl-peers"><thead><tr>';
+  var pc = ['Ticker','Price','Mkt Cap','Rev Growth','Margin','Fwd PE','ROE'];
+  for(var i=0;i<pc.length;i++){
+    var align=i===0?'':'text-r';
+    h+='<th class="'+align+'" onclick="sortTbl(\'tbl-peers\','+i+')">'+pc[i]+' ↕</th>';
+  }
+  h += '</tr></thead><tbody>';
+  // Subject row
+  h += '<tr class="tr-hl"><td class="mono" style="font-weight:600">'+D.symbol+'</td>';
+  h += '<td class="text-r mono">'+fD(price)+'</td>';
+  h += '<td class="text-r mono">'+fM(FIN.market_cap||CO.market_cap)+'</td>';
+  h += '<td class="text-r mono '+(cls(FIN.revenue_growth))+'">'+fP(FIN.revenue_growth)+'</td>';
+  h += '<td class="text-r mono">'+(FIN.net_margin!=null?f(FIN.net_margin)+'%':'N/A')+'</td>';
+  h += '<td class="text-r mono">'+(FIN.forward_pe!=null?f(FIN.forward_pe)+'x':'N/A')+'</td>';
+  h += '<td class="text-r mono">'+(FIN.roe!=null?f(FIN.roe)+'%':'N/A')+'</td></tr>';
+  for(var i=0;i<PEERS.length;i++){
+    var p=PEERS[i];
+    h += '<tr>';
+    h += '<td class="mono">'+(p.symbol||'')+'</td>';
+    h += '<td class="text-r mono">'+(p.price!=null?fD(p.price):'N/A')+'</td>';
+    h += '<td class="text-r mono">'+fM(p.market_cap)+'</td>';
+    h += '<td class="text-r mono '+cls(p.revenue_growth)+'">'+fP(p.revenue_growth)+'</td>';
+    h += '<td class="text-r mono">'+(p.profit_margin!=null?f(p.profit_margin)+'%':'N/A')+'</td>';
+    h += '<td class="text-r mono">'+(p.forward_pe!=null?f(p.forward_pe)+'x':'N/A')+'</td>';
+    h += '<td class="text-r mono">'+(p.roe!=null?f(p.roe)+'%':'N/A')+'</td>';
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+} else {
+  h += '<div class="empty">No peer data available</div>';
+}
+h += '</div>';
 
-    // Support / Resistance levels
-    const supports = tech.support_levels || [];
-    const resistances = tech.resistance_levels || [];
-    if (supports.length || resistances.length) {{
-      html += `<div class="grid grid-cols-2 gap-4 text-sm">
-        <div><div class="text-xs text-gray-500 uppercase mb-1">Resistance</div>`;
-      for (const r of resistances.slice(0,3)) html += `<div class="text-red-400">$${{fmt(r,2)}}</div>`;
-      html += `</div><div><div class="text-xs text-gray-500 uppercase mb-1">Support</div>`;
-      for (const sp of supports.slice(0,3)) html += `<div class="text-emerald-400">$${{fmt(sp,2)}}</div>`;
-      html += `</div></div>`;
-    }}
-    html += `</div>`;
-  }}
+// ── ENGINE SCORES TABLE ─────────────────────────────
+h += '<div class="card"><h2>Engine Detail</h2>';
+h += '<div style="overflow-x:auto"><table id="tbl-eng"><thead><tr>';
+var ec = ['Engine','Raw Score','Weight','Contribution'];
+for(var i=0;i<ec.length;i++){
+  var align=i===0?'':'text-r';
+  h+='<th class="'+align+'" onclick="sortTbl(\'tbl-eng\','+i+')">'+ec[i]+' ↕</th>';
+}
+h += '</tr></thead><tbody>';
+var totalCt=0;
+for(var i=0;i<ENGINES.length;i++){
+  var e=ENGINES[i],sc=SC[e],w=W[e],ct=CT[e];
+  if(ct!=null) totalCt+=ct;
+  h += '<tr>';
+  h += '<td style="font-weight:500">'+e+'</td>';
+  h += '<td class="text-r mono '+cls(sc)+'">'+(sc!=null?fS(sc,1):'N/A')+'</td>';
+  h += '<td class="text-r mono">'+(w!=null?f(w,3):'')+'</td>';
+  h += '<td class="text-r mono '+cls(ct)+'">'+(ct!=null?fS(ct,2):'')+'</td>';
+  h += '</tr>';
+}
+h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td></td><td></td>';
+h += '<td class="text-r mono '+cls(totalCt)+'">'+fS(totalCt,2)+'</td></tr>';
+h += '</tbody></table></div></div>';
 
-  // ── Price Chart (SMA overlay) ──────────────────────────────────────
-  // We show a simple current-price vs SMAs comparison bar chart
-  if (price && (tech.sma20 || tech.sma50 || tech.sma200)) {{
-    html += `<div class="card">
-      <h2 class="text-lg font-semibold mb-3">Price vs Moving Averages</h2>
-      <div style="height:260px"><canvas id="priceChart"></canvas></div>
-    </div>`;
-  }}
+// ── NEWS & SENTIMENT ────────────────────────────────
+h += '<div class="card"><h2>News & Sentiment</h2>';
+if(NEWS.length>0){
+  // Analyst consensus
+  if(FIN.recommendation){
+    h += '<div style="font-size:12px;margin-bottom:10px;color:var(--t2)">Wall St: <span style="color:var(--t1);font-weight:600;text-transform:uppercase">'+FIN.recommendation+'</span>';
+    if(FIN.num_analysts) h += ' ('+FIN.num_analysts+' analysts)';
+    if(FIN.target_mean) h += ' · Target: '+fD(FIN.target_mean);
+    h += '</div>';
+  }
+  for(var i=0;i<NEWS.length;i++){
+    var n=NEWS[i];
+    var sc=n.sentiment==='POSITIVE'?'sentiment-pos':n.sentiment==='NEGATIVE'?'sentiment-neg':'sentiment-neu';
+    h += '<div class="news-item"><span class="sentiment-chip '+sc+'"></span><span style="flex:1">'+n.title+'</span>';
+    h += '<span class="news-src">'+(n.publisher||'')+'</span>';
+    if(n.date) h+='<span class="news-src">'+n.date+'</span>';
+    h += '</div>';
+  }
+  // Sentiment summary
+  var sp=0,sn=0,sne=0;
+  for(var i=0;i<NEWS.length;i++){
+    if(NEWS[i].sentiment==='POSITIVE')sp++;
+    else if(NEWS[i].sentiment==='NEGATIVE')sn++;
+    else sne++;
+  }
+  h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">Sentiment: <span class="pos">+'+sp+'</span> / <span class="neg">-'+sn+'</span> / <span class="muted">='+sne+'</span></div>';
+} else {
+  h += '<div class="empty">No news data available</div>';
+}
+h += '</div>';
 
-  // ── Provenance ─────────────────────────────────────────────────────
-  html += `<div class="card !bg-gray-900/50 text-xs text-gray-500 flex flex-wrap gap-x-6 gap-y-1">
-    <span>Engine: ATLAS V8</span>
-    <span>Reliability: ${{reliability != null ? fmt(reliability,2) : 'N/A'}}</span>
-    <span>Mode: ${{execMode}}</span>
-    <span>TQ Category: ${{s.tq_category || 'N/A'}}</span>
-    ${{prov.latency_sec ? '<span>Latency: ' + fmt(prov.latency_sec, 1) + 's</span>' : ''}}
-    ${{prov.timestamp_utc ? '<span>Generated: ' + prov.timestamp_utc + '</span>' : ''}}
-    <span class="ml-auto">This is model output, NOT financial advice.</span>
-  </div>`;
+h += '<hr class="section-sep">';
 
-  document.getElementById('app').innerHTML = html;
+// ── SHOW YOUR WORK (collapsible) ────────────────────
+h += '<div class="card">';
+h += '<button class="collapse-btn" onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');this.textContent=b.classList.contains(\'open\')?\'▾ Hide Derivation\':\'▸ Show Your Work\'">▸ Show Your Work</button>';
+h += '<div class="collapse-body">';
 
-  // ── Render Chart ───────────────────────────────────────────────────
-  const chartEl = document.getElementById('priceChart');
-  if (chartEl) {{
-    const labels = [];
-    const values = [];
-    const colors = [];
-    const items = [
-      ['SMA 200', tech.sma200, 'rgba(239,68,68,0.7)'],
-      ['SMA 50',  tech.sma50,  'rgba(234,179,8,0.7)'],
-      ['SMA 20',  tech.sma20,  'rgba(59,130,246,0.7)'],
-      ['Price',   price,       'rgba(16,185,129,0.9)'],
-    ];
-    for (const [l, v, c] of items) {{
-      if (v != null) {{ labels.push(l); values.push(v); colors.push(c); }}
-    }}
-    new Chart(chartEl, {{
-      type: 'bar',
-      data: {{
-        labels,
-        datasets: [{{ data: values, backgroundColor: colors, borderRadius: 6, barThickness: 40 }}]
-      }},
-      options: {{
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {{
-          legend: {{ display: false }},
-          tooltip: {{ callbacks: {{ label: ctx => '$' + ctx.parsed.y.toFixed(2) }} }}
-        }},
-        scales: {{
-          y: {{
-            grid: {{ color: 'rgba(255,255,255,0.05)' }},
-            ticks: {{ color: '#9ca3af', callback: v => '$' + v }}
-          }},
-          x: {{ grid: {{ display: false }}, ticks: {{ color: '#9ca3af' }} }}
-        }}
-      }}
-    }});
-  }}
-}}
+// Composite derivation
+h += '<div class="formula">';
+h += '<span class="hl">COMPOSITE SCORE DERIVATION</span>\n';
+h += 'C_raw = Σ(wᵢ × Sᵢ)\n\n';
+var computedRaw = 0;
+for(var i=0;i<ENGINES.length;i++){
+  var e=ENGINES[i],sc=SC[e]||0,w=W[e]||0,ct=CT[e]||0;
+  computedRaw += ct;
+  var cCls = ct>=0?'pos':'neg';
+  h += '  '+e.padEnd(14)+f(w,3)+' × '+(sc>=0?'+':'')+f(sc,1).padStart(6)+' = <span class="'+cCls+'">'+(ct>=0?'+':'')+f(ct,2).padStart(7)+'</span>\n';
+}
+h += '  '+'─'.repeat(44)+'\n';
+h += '  C_raw (computed) = <span class="hl">'+fS(computedRaw,2)+'</span>\n';
+if(cRaw!=null){
+  var rawDelta = Math.abs(computedRaw - cRaw);
+  h += '  C_raw (reported) = '+fS(cRaw,2);
+  if(rawDelta > 0.5) h += '  <span class="neg">Δ '+f(rawDelta,2)+'</span>';
+  h += '\n';
+}
+h += '\n';
 
-render();
+// Risk Governor
+h += '<span class="hl">RISK GOVERNOR</span>\n';
+if(gate!=null){
+  h += '  Gate = '+f(gate,2)+'\n';
+  var computedAdj = (cRaw||computedRaw) * gate;
+  h += '  C_adjusted = C_raw × Gate = '+fS(cRaw!=null?cRaw:computedRaw,2)+' × '+f(gate,2)+' = <span class="hl">'+fS(computedAdj,2)+'</span>\n';
+  if(cAdj!=null){
+    var adjDelta = Math.abs(computedAdj - cAdj);
+    h += '  C_adjusted (reported) = '+fS(cAdj,1);
+    if(adjDelta > 1.0) h += '  <span class="warn">Δ '+f(adjDelta,1)+'</span> (includes additional adjustments)';
+    h += '\n';
+  }
+} else {
+  h += '  Gate value not available\n';
+}
+h += '\n';
+
+// Trade Quality
+h += '<span class="hl">TRADE QUALITY</span>\n';
+h += '  TQ ≈ |C_adj|/100 × DC/100 × Reliability\n';
+if(cAdj!=null && dc!=null && rel!=null){
+  var computedTQ = (Math.abs(cAdj)/100) * (dc/100) * rel;
+  h += '  TQ = |'+fS(cAdj,1)+'|/100 × '+f(dc,0)+'/100 × '+f(rel,2)+'\n';
+  h += '  TQ (approx) = <span class="hl">'+f(computedTQ,4)+'</span>\n';
+  if(tq!=null){
+    var tqDelta = Math.abs(computedTQ - tq);
+    h += '  TQ (reported) = '+f(tq,3);
+    if(tqDelta > 0.01) h += '  <span class="warn">Δ '+f(tqDelta,4)+'</span> (engine uses additional factors)';
+    h += '\n';
+  }
+} else {
+  h += '  Insufficient data for computation\n';
+}
+h += '</div>';
+h += '</div></div>';
+
+// ── PROVENANCE FOOTER ───────────────────────────────
+h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
+h += '<span>ATLAS V8</span>';
+if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
+h += '<span>'+mode+'</span>';
+if(dc!=null) h += '<span>DC '+f(dc,0)+'%</span>';
+if(S.tq_category) h += '<span>'+S.tq_category+'</span>';
+if(P.latency_sec) h += '<span>'+f(P.latency_sec,1)+'s</span>';
+h += '<span style="margin-left:auto">This is model output, NOT financial advice.</span>';
+h += '</div>';
+
+document.getElementById('app').innerHTML = h;
+
+// ── CHARTS ──────────────────────────────────────────
+var chTheme = {
+  textStyle:{color:'#8b949e',fontFamily:'Inter,sans-serif',fontSize:11},
+  tooltip:{backgroundColor:'#161b22',borderColor:'#30363d',textStyle:{color:'#e6edf3',fontSize:12}},
+};
+
+// Price Context Chart
+(function(){
+  var el = document.getElementById('ch-price');
+  if(!el) return;
+  var items = [];
+  if(TECH.sma200!=null) items.push({name:'SMA 200',value:TECH.sma200,color:'#f85149'});
+  if(S.stop_loss) items.push({name:'Stop',value:S.stop_loss,color:'#f8514980'});
+  if(TECH.sma50!=null) items.push({name:'SMA 50',value:TECH.sma50,color:'#d29922'});
+  if(S.entry) items.push({name:'Entry',value:S.entry,color:'#d2992280'});
+  if(TECH.sma20!=null) items.push({name:'SMA 20',value:TECH.sma20,color:'#58a6ff'});
+  if(price!=null) items.push({name:'Price',value:price,color:'#3fb950'});
+  if(S.take_profit) items.push({name:'Target Low',value:S.take_profit[0],color:'#3fb95080'});
+  items.sort(function(a,b){return a.value-b.value});
+  var ch = echarts.init(el);
+  ch.setOption({
+    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return p[0].name+': $'+Number(p[0].value).toFixed(2)}},
+    grid:{left:80,right:20,top:10,bottom:24},
+    xAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
+    yAxis:{type:'category',data:items.map(function(x){return x.name}),axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+    series:[{
+      type:'bar',
+      data:items.map(function(x){return{value:x.value,itemStyle:{color:x.color,borderRadius:[0,2,2,0]}}}),
+      barWidth:14,
+      label:{show:true,position:'right',formatter:function(p){return'$'+Number(p.value).toFixed(2)},color:'#8b949e',fontSize:10,fontFamily:'JetBrains Mono,monospace'}
+    }],
+    animationDuration:400
+  });
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+
+// Engine Waterfall Chart
+(function(){
+  var el = document.getElementById('ch-waterfall');
+  if(!el) return;
+  // Build waterfall data
+  var names=[],baseD=[],posD=[],negD=[];
+  var running=0;
+  for(var i=0;i<ENGINES.length;i++){
+    var e=ENGINES[i],ct=CT[e]||0;
+    names.push(e);
+    if(ct>=0){
+      baseD.push(running);
+      posD.push(ct);
+      negD.push(0);
+    } else {
+      baseD.push(running+ct);
+      posD.push(0);
+      negD.push(Math.abs(ct));
+    }
+    running+=ct;
+  }
+  // Total bar
+  names.push('TOTAL');
+  if(running>=0){baseD.push(0);posD.push(running);negD.push(0)}
+  else{baseD.push(running);posD.push(0);negD.push(Math.abs(running))}
+
+  var ch = echarts.init(el);
+  ch.setOption({
+    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){
+      var n=p[0].axisValue,val=0;
+      for(var i=0;i<p.length;i++){if(p[i].seriesIndex>0)val+=p[i].value*(p[i].seriesIndex===1?1:-1)}
+      if(n==='TOTAL')val=running;
+      return n+': '+(val>=0?'+':'')+val.toFixed(2);
+    }},
+    grid:{left:80,right:30,top:10,bottom:24},
+    xAxis:{type:'value',splitLine:{lineStyle:{color:'#21262d'}},axisLabel:{color:'#8b949e',fontSize:10},axisLine:{lineStyle:{color:'#21262d'}}},
+    yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+    series:[
+      {type:'bar',stack:'w',data:baseD,itemStyle:{color:'transparent'},emphasis:{itemStyle:{color:'transparent'}},barWidth:12},
+      {type:'bar',stack:'w',name:'pos',data:posD.map(function(v){return{value:v,itemStyle:{color:v>0?'#3fb950':'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
+      {type:'bar',stack:'w',name:'neg',data:negD.map(function(v){return{value:v,itemStyle:{color:v>0?'#f85149':'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
+    ],
+    animationDuration:400
+  });
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+
+// Regime Vector Chart
+(function(){
+  var el = document.getElementById('ch-regime');
+  if(!el) return;
+  var names=[],vals=[],colors=[];
+  for(var i=0;i<RF.length;i++){
+    var key=RF[i][0],label=RF[i][1],v=RV[key];
+    if(v==null) continue;
+    names.push(label);
+    vals.push(Number((v*100).toFixed(0)));
+    // Red for high-risk features, blue for trend
+    colors.push(key==='TS'?'#58a6ff':(v>0.5?'#f85149':v>0.25?'#d29922':'#3fb950'));
+  }
+  if(!names.length) return;
+  var ch = echarts.init(el);
+  ch.setOption({
+    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return p[0].name+': '+p[0].value+'%'}},
+    grid:{left:100,right:30,top:10,bottom:24},
+    xAxis:{type:'value',max:100,axisLabel:{formatter:'{value}%',color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
+    yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+    series:[{
+      type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[0,2,2,0]}}}),
+      barWidth:10,
+      label:{show:true,position:'right',formatter:'{c}%',color:'#8b949e',fontSize:10,fontFamily:'JetBrains Mono,monospace'}
+    }],
+    animationDuration:400
+  });
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+
+// DCF Chart
+(function(){
+  var el = document.getElementById('ch-dcf');
+  if(!el||!DCF) return;
+  var names=['Bear','Base','Bull'];
+  var vals=[DCF.bear,DCF.base,DCF.bull];
+  var colors=['#f85149','#d29922','#3fb950'];
+  var ch = echarts.init(el);
+  var opt = {
+    tooltip:{trigger:'axis',formatter:function(p){
+      var s='';
+      for(var i=0;i<p.length;i++){
+        if(p[i].value!=null) s+=p[i].name+': $'+Number(p[i].value).toFixed(2);
+        if(price&&p[i].value){var up=((p[i].value-price)/price*100);s+=' ('+(up>=0?'+':'')+up.toFixed(1)+'%)';}
+        s+='<br>';
+      }
+      return s;
+    }},
+    grid:{left:60,right:20,top:30,bottom:24},
+    xAxis:{type:'category',data:names,axisLabel:{color:'#8b949e'},axisLine:{lineStyle:{color:'#21262d'}}},
+    yAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
+    series:[{
+      type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[2,2,0,0]}}}),
+      barWidth:36,
+      label:{show:true,position:'top',formatter:function(p){return'$'+Number(p.value).toFixed(0)},color:'#e6edf3',fontSize:11,fontFamily:'JetBrains Mono,monospace'}
+    }]
+  };
+  // Current price reference line
+  if(price) opt.series.push({type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:'#58a6ff',type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'Price $'+f(price,2),color:'#58a6ff',fontSize:10,fontFamily:'JetBrains Mono,monospace'}}]},data:[]});
+  opt.animationDuration = 400;
+  ch.setOption(opt);
+  window.addEventListener('resize',function(){ch.resize()});
+})();
+
+// ── Table Sorting ───────────────────────────────────
+var sortState = {};
+function sortTbl(id, col) {
+  var tbl = document.getElementById(id);
+  if (!tbl) return;
+  var tbody = tbl.querySelector('tbody');
+  var rows = Array.from(tbody.querySelectorAll('tr'));
+  // Keep last row (TOTAL) in place for engine table
+  var lastRow = null;
+  if (id === 'tbl-eng' && rows.length > 0) {
+    var lastTd = rows[rows.length-1].querySelector('td');
+    if (lastTd && lastTd.textContent.trim() === 'TOTAL') {
+      lastRow = rows.pop();
+    }
+  }
+  // Keep first row (subject) highlighted for peers table
+  var firstRow = null;
+  if (id === 'tbl-peers' && rows.length > 0 && rows[0].classList.contains('tr-hl')) {
+    firstRow = rows.shift();
+  }
+  var key = id + '-' + col;
+  var asc = sortState[key] !== 'asc';
+  sortState[key] = asc ? 'asc' : 'desc';
+  rows.sort(function(a, b) {
+    var at = a.querySelectorAll('td')[col].textContent.trim();
+    var bt = b.querySelectorAll('td')[col].textContent.trim();
+    var an = parseFloat(at.replace(/[^0-9.\-]/g, ''));
+    var bn = parseFloat(bt.replace(/[^0-9.\-]/g, ''));
+    if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+    return asc ? at.localeCompare(bt) : bt.localeCompare(at);
+  });
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+  if (firstRow) tbody.appendChild(firstRow);
+  for (var i = 0; i < rows.length; i++) tbody.appendChild(rows[i]);
+  if (lastRow) tbody.appendChild(lastRow);
+}
 </script>
 </body>
 </html>"""
