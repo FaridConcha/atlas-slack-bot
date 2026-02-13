@@ -20,7 +20,6 @@ import signal
 import time
 import threading
 import traceback
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 # Force flush on every print so Render logs appear in real time
@@ -35,6 +34,7 @@ from atlas_engine import run_atlas
 from data_fetcher import fetch_live_data
 from v8_data import fetch_v8_data
 from v8_report import format_v8_report
+from web_report import generate_and_store_report
 import gemini_qa
 
 # Load environment variables (don't override existing — Render sets them via dashboard)
@@ -269,6 +269,45 @@ def handle_atlas_mention(event, say, client):
             except Exception:
                 pass
 
+        # Generate web report (non-blocking — errors must not break Slack flow)
+        report_url = None
+        try:
+            company_name = (v8_extended.get('company') or {}).get('name')
+            provenance = {
+                "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "data_confidence": summary.get("data_confidence"),
+                "fallback_mode": "LIVE" if USE_LIVE_DATA else "STATIC_FALLBACK",
+            }
+            web_result = generate_and_store_report(
+                symbol=symbol,
+                company_name=company_name,
+                thread_ts=thread_ts,
+                summary=summary,
+                v8_extended=v8_extended,
+                provenance=provenance,
+            )
+            report_url = web_result["report_url"]
+            print(f"[BOT] Web report ready: {report_url}")
+        except Exception as e:
+            print(f"[BOT] Web report generation failed (non-fatal): {e}")
+
+        # Inject web report link into first and last Slack messages
+        if report_url and v8_messages:
+            header_link = f":mag: *Full Report* (charts + tables + full calc breakdown): <{report_url}|Open dashboard>\n\n"
+            footer_link = f"\n\n:arrow_upper_right: More detail: <{report_url}|Full web report>"
+            # Prepend link to first message
+            first = v8_messages[0]
+            if isinstance(first, str):
+                v8_messages[0] = header_link + first
+            elif isinstance(first, dict):
+                v8_messages[0]['text'] = header_link + first.get('text', '')
+            # Append link to last message
+            last = v8_messages[-1]
+            if isinstance(last, str):
+                v8_messages[-1] = last + footer_link
+            elif isinstance(last, dict):
+                v8_messages[-1]['text'] = last.get('text', '') + footer_link
+
         # Cache data for AI follow-up Q&A
         if GROQ_API_KEY:
             _thread_cache[thread_ts] = {
@@ -290,6 +329,7 @@ def handle_atlas_mention(event, say, client):
         # Final confirmation
         say(
             text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered"
+                + (f"\n:mag: <{report_url}|View full web report>" if report_url else "")
                 + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GROQ_API_KEY else ""),
             thread_ts=thread_ts
         )
@@ -451,19 +491,15 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop.")
     print()
 
-    # Health check server for Render (keeps the service alive)
-    class HealthHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"ATLAS is running")
-        def log_message(self, format, *args):
-            pass  # Suppress logs
+    # FastAPI web server for reports + health check (replaces basic HTTP health server)
+    import uvicorn
+    from web_server import app as web_app
 
     port = int(os.environ.get("PORT", 10000))
-    health_server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    threading.Thread(target=health_server.serve_forever, daemon=True).start()
-    print(f"Health check listening on port {port}")
+    uvicorn_config = uvicorn.Config(web_app, host="0.0.0.0", port=port, log_level="warning")
+    uvicorn_server = uvicorn.Server(uvicorn_config)
+    threading.Thread(target=uvicorn_server.run, daemon=True).start()
+    print(f"Web server (reports + health) listening on port {port}")
 
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
