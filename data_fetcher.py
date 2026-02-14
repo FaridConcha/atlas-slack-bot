@@ -25,6 +25,48 @@ import yfinance as yf
 import numpy as np
 
 
+def resolve_price(info, hist=None):
+    """Resolve the best available price from yfinance info dict.
+
+    Fallback chain:
+        currentPrice → preMarketPrice → postMarketPrice → regularMarketPrice
+        → previousClose → regularMarketPreviousClose → last OHLCV close → open → 0
+    """
+    for key in (
+        'currentPrice',
+        'preMarketPrice',
+        'postMarketPrice',
+        'regularMarketPrice',
+        'previousClose',
+        'regularMarketPreviousClose',
+    ):
+        val = info.get(key)
+        if val is not None and val > 0:
+            return float(val)
+
+    # Try last OHLCV bar
+    if hist is not None and not getattr(hist, 'empty', True):
+        try:
+            last_close = float(hist['Close'].iloc[-1])
+            if last_close > 0:
+                return last_close
+        except Exception:
+            pass
+        try:
+            last_open = float(hist['Open'].iloc[-1])
+            if last_open > 0:
+                return last_open
+        except Exception:
+            pass
+
+    # Try info 'open' as last resort
+    open_val = info.get('open')
+    if open_val is not None and open_val > 0:
+        return float(open_val)
+
+    return 0
+
+
 def _validate_symbol(symbol):
     """Validate ticker symbol: 1-5 alphanumeric chars, letters and optional dots/hyphens."""
     import re
@@ -84,12 +126,12 @@ def _fetch_ohlcv(ticker, symbol, data_dir):
     """Fetch 1 year of daily OHLCV data."""
     print(f"[ATLAS]   Fetching {symbol} price history...")
     try:
-        hist = ticker.history(period="1y", interval="1d", timeout=30)
+        hist = ticker.history(period="1y", interval="1d", prepost=True, timeout=30)
 
         if hist.empty:
             print(f"[ATLAS]   WARNING: No price data for {symbol}")
             # Write minimal data
-            hist = ticker.history(period="6mo", interval="1d", timeout=30)
+            hist = ticker.history(period="6mo", interval="1d", prepost=True, timeout=30)
 
         filepath = os.path.join(data_dir, "ohlcv.csv")
         with open(filepath, 'w', newline='') as f:
@@ -218,7 +260,7 @@ def _fetch_consensus(ticker, symbol, data_dir):
         target_price = info.get('targetMeanPrice', 0) or 0
         target_high = info.get('targetHighPrice', 0) or 0
         target_low = info.get('targetLowPrice', 0) or 0
-        current_price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+        current_price = resolve_price(info)
         num_analysts = info.get('numberOfAnalystOpinions', 0) or 0
         recommendation = info.get('recommendationKey', 'none')
 

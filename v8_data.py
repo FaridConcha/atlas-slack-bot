@@ -16,6 +16,8 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
+from data_fetcher import resolve_price
+
 
 # ============================================================================
 # SECTOR PEER MAPPING
@@ -309,15 +311,15 @@ def fetch_v8_data(symbol, fred_api_key=None):
 
     # Fetch OHLCV for technicals (1 year)
     try:
-        hist = ticker.history(period="1y", interval="1d", timeout=30)
+        hist = ticker.history(period="1y", interval="1d", prepost=True, timeout=30)
     except Exception:
         hist = None
 
     print(f"[V8]   Building company info...")
-    company = _build_company_info(info, symbol)
+    company = _build_company_info(info, symbol, hist=hist)
 
     print(f"[V8]   Building financials...")
-    financials = _build_financials(ticker, info)
+    financials = _build_financials(ticker, info, hist=hist)
 
     print(f"[V8]   Building earnings history...")
     earnings = _build_earnings(ticker)
@@ -367,9 +369,9 @@ def fetch_v8_data(symbol, fred_api_key=None):
 # COMPANY INFO
 # ============================================================================
 
-def _build_company_info(info, symbol):
+def _build_company_info(info, symbol, hist=None):
     """Extract company overview from yfinance info."""
-    price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+    price = resolve_price(info, hist)
     return {
         'symbol': symbol,
         'name': info.get('longName', '') or info.get('shortName', symbol),
@@ -388,7 +390,7 @@ def _build_company_info(info, symbol):
 # DETAILED FINANCIALS
 # ============================================================================
 
-def _build_financials(ticker, info):
+def _build_financials(ticker, info, hist=None):
     """Comprehensive financial metrics."""
     mc = info.get('marketCap', 0) or 1
     revenue = info.get('totalRevenue', 0) or 0
@@ -397,7 +399,7 @@ def _build_financials(ticker, info):
     total_debt = info.get('totalDebt', 0) or 0
     total_cash = info.get('totalCash', 0) or 0
     ebitda = info.get('ebitda', 0) or 0
-    price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+    price = resolve_price(info, hist)
     shares = mc / price if price > 0 else 1
 
     # Interest coverage from operating income / interest expense
@@ -513,6 +515,7 @@ def _build_technicals(hist, info):
     }
 
     if hist is None or len(hist) < 30:
+        default['price'] = resolve_price(info)
         return default
 
     closes = hist['Close'].values.astype(float)
@@ -683,7 +686,7 @@ def _fetch_single_peer(sym):
         return {
             'symbol': sym,
             'name': i.get('shortName', sym),
-            'price': i.get('currentPrice', 0) or i.get('regularMarketPrice', 0) or 0,
+            'price': resolve_price(i),
             'market_cap': i.get('marketCap', 0) or 0,
             'revenue_growth': round((i.get('revenueGrowth', 0) or 0) * 100, 1),
             'profit_margin': round((i.get('profitMargins', 0) or 0) * 100, 1),
@@ -1083,7 +1086,7 @@ def _build_dcf(info, financials):
     """Simplified DCF fair value estimate."""
     try:
         mc = info.get('marketCap', 0) or 0
-        price = info.get('currentPrice', 0) or info.get('regularMarketPrice', 0) or 0
+        price = resolve_price(info)
         revenue = financials.get('revenue_ttm', 0)
         fcf = financials.get('free_cash_flow', 0)
         rev_growth = financials.get('revenue_growth', 5) / 100  # As decimal
