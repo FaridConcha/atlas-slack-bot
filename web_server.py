@@ -50,7 +50,7 @@ def html_report(report_id: str):
 # Only substitution: __PAYLOAD_JSON__ replaced at serve time.
 # ---------------------------------------------------------------------------
 _DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -74,12 +74,25 @@ _DASHBOARD_TEMPLATE = r"""<!DOCTYPE html>
   --acc:    #58a6ff;
   --r:      4px;
 }
-html{background:var(--bg);color:var(--t1)}
+[data-theme="light"]{
+  --bg:     #f0f2f5;
+  --bg1:    #ffffff;
+  --bg2:    #f6f8fa;
+  --border: #d0d7de;
+  --t1:     #1f2328;
+  --t2:     #656d76;
+  --t3:     #8b949e;
+  --pos:    #1a7f37;
+  --neg:    #cf222e;
+  --warn:   #9a6700;
+  --acc:    #0969da;
+}
+html{background:var(--bg);color:var(--t1);transition:background .15s,color .15s}
 body{font:13px/1.6 'Inter',system-ui,sans-serif;max-width:1400px;margin:0 auto;padding:16px 20px 48px}
 .mono{font-family:'JetBrains Mono',monospace;font-size:12px;font-variant-numeric:tabular-nums}
 h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--t3);margin-bottom:12px}
 a{color:var(--acc);text-decoration:none}
-.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px;transition:background .15s,border-color .15s}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
@@ -100,11 +113,11 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 .skel{height:200px;display:flex;align-items:center;justify-content:center;color:var(--t3)}
 .chart-box{height:240px;min-height:200px}
 .metrics-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.metric{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;min-width:100px;flex:1}
+.metric{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;min-width:100px;flex:1;transition:background .15s,border-color .15s}
 .metric-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);margin-bottom:2px}
 .metric-value{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
 .section-sep{border:none;border-top:1px solid var(--border);margin:20px 0}
-.collapse-btn{background:none;border:1px solid var(--border);color:var(--t2);padding:6px 14px;border-radius:var(--r);cursor:pointer;font:12px/1 'Inter',sans-serif;font-weight:500}
+.collapse-btn{background:none;border:1px solid var(--border);color:var(--t2);padding:6px 14px;border-radius:var(--r);cursor:pointer;font:12px/1 'Inter',sans-serif;font-weight:500;transition:color .15s,border-color .15s}
 .collapse-btn:hover{color:var(--t1);border-color:var(--t3)}
 .collapse-body{display:none;margin-top:12px}
 .collapse-body.open{display:block}
@@ -118,9 +131,50 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 .news-item:last-child{border-bottom:none}
 .news-src{color:var(--t3);font-size:11px;white-space:nowrap}
 .empty{text-align:center;padding:32px;color:var(--t3);font-size:12px}
+/* Section labels */
+.section-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);padding:20px 0 8px;display:flex;align-items:center;gap:12px}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+/* Theme toggle */
+.theme-toggle{position:fixed;top:16px;right:16px;z-index:100;background:var(--bg1);border:1px solid var(--border);color:var(--t2);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.theme-toggle:hover{color:var(--t1);border-color:var(--t1)}
+/* Accessibility */
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){*{animation-duration:0s!important;transition-duration:0s!important}}
+/* ── Semantic Token Aliases ── */
+:root{
+  --bg-primary:var(--bg);--bg-secondary:var(--bg1);--bg-tertiary:var(--bg2);
+  --text-primary:var(--t1);--text-secondary:var(--t2);--text-muted:var(--t3);
+  --accent-primary:var(--acc);--accent-muted:rgba(88,166,255,.15);
+  --positive:var(--pos);--negative:var(--neg);--warning:var(--warn);
+  --card-elevation:0 1px 3px rgba(0,0,0,.12),0 1px 2px rgba(0,0,0,.08);
+}
+[data-theme="light"]{
+  --card-elevation:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --accent-muted:rgba(9,105,218,.1);
+}
+/* ── Quant Appendix Expanded ── */
+.appendix-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-left:12px}
+.appendix-toggle button{background:var(--bg2);border:none;color:var(--t2);padding:4px 12px;font:11px/1.4 'Inter',sans-serif;font-weight:500;cursor:pointer;transition:all .15s}
+.appendix-toggle button.active{background:var(--acc);color:#fff}
+.appendix-toggle button:hover:not(.active){color:var(--t1)}
+.def-tbl{width:auto;border-collapse:collapse;margin:8px 0 16px}
+.def-tbl th{background:var(--bg2);color:var(--t3);font-size:10px;text-transform:uppercase;letter-spacing:.06em;padding:6px 12px;text-align:left;border-bottom:1px solid var(--border)}
+.def-tbl td{padding:4px 12px;font-size:11px;border-bottom:1px solid rgba(33,38,45,.3)}
+.def-tbl td:first-child{font-family:'JetBrains Mono',monospace;font-weight:500;color:var(--acc);white-space:nowrap}
+.mblk{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin:8px 0 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.8;color:var(--t2);overflow-x:auto;white-space:pre}
+.mblk .hl{color:var(--t1);font-weight:500}.mblk .pos{color:var(--pos)}.mblk .neg{color:var(--neg)}.mblk .warn{color:var(--warn)}
+.mnote{font-size:11px;color:var(--t3);font-style:italic;padding:4px 0;line-height:1.6}
+.mhdr{font-size:12px;font-weight:600;color:var(--t1);letter-spacing:.06em;padding:16px 0 6px;border-bottom:1px solid var(--border);margin-bottom:8px}
+.recon{background:rgba(210,153,34,.08);border:1px solid rgba(210,153,34,.2);border-radius:var(--r);padding:8px 12px;font-size:11px;color:var(--warn);margin:8px 0;line-height:1.6}
+.gate-pass{display:inline-block;padding:2px 8px;border-radius:var(--r);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;background:rgba(63,185,80,.1);color:var(--pos);border:1px solid rgba(63,185,80,.2)}
+.gate-fail{display:inline-block;padding:2px 8px;border-radius:var(--r);font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;background:rgba(248,81,73,.1);color:var(--neg);border:1px solid rgba(248,81,73,.2)}
+.cap-gauge{display:flex;align-items:center;gap:8px;margin:6px 0}
+.cap-bar{flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden}
+.cap-fill{height:100%;border-radius:4px;transition:width .5s}
 </style>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" aria-label="Toggle light/dark theme"></button>
 <div id="app"><div class="skel">Loading report…</div></div>
 <script>
 const D = __PAYLOAD_JSON__;
@@ -147,6 +201,41 @@ const MKT = V8.market||{};
 const ECON = V8.economic||{};
 const RISKS = S.risk_drivers||[];
 const CONTRA = S.contradictions||[];
+
+// ── Theme ─────────────────────────────────────────
+(function(){
+  var saved = localStorage.getItem('atlas-theme');
+  var sys = window.matchMedia('(prefers-color-scheme:light)').matches?'light':'dark';
+  var t = saved||sys;
+  document.documentElement.setAttribute('data-theme',t);
+  var btn = document.getElementById('theme-toggle');
+  function upd(){btn.textContent=t==='dark'?'\u2600':'\u263E';}
+  upd();
+  btn.addEventListener('click',function(){
+    t=t==='dark'?'light':'dark';
+    document.documentElement.setAttribute('data-theme',t);
+    localStorage.setItem('atlas-theme',t);
+    upd();
+    initCharts();
+  });
+})();
+
+// ── Theme Colors for ECharts ──────────────────────
+function TC(){
+  var cs=getComputedStyle(document.documentElement);
+  return{
+    t1:cs.getPropertyValue('--t1').trim()||'#e6edf3',
+    t2:cs.getPropertyValue('--t2').trim()||'#8b949e',
+    t3:cs.getPropertyValue('--t3').trim()||'#484f58',
+    border:cs.getPropertyValue('--border').trim()||'#21262d',
+    bg1:cs.getPropertyValue('--bg1').trim()||'#0d1117',
+    bg2:cs.getPropertyValue('--bg2').trim()||'#161b22',
+    pos:cs.getPropertyValue('--pos').trim()||'#3fb950',
+    neg:cs.getPropertyValue('--neg').trim()||'#f85149',
+    warn:cs.getPropertyValue('--warn').trim()||'#d29922',
+    acc:cs.getPropertyValue('--acc').trim()||'#58a6ff'
+  };
+}
 
 // ── Utilities ───────────────────────────────────────
 function f(v,d){if(v==null||isNaN(v))return'N/A';return Number(v).toFixed(d==null?1:d)}
@@ -184,8 +273,8 @@ h += '<span class="pill '+pillV(verdict)+'" style="margin-left:auto;font-size:12
 h += '</div>';
 h += '<div style="font-size:11px;color:var(--t3);margin-bottom:16px">';
 h += 'ATLAS V10';
-if(D.created_at) h += ' · '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
-if(P.fallback_mode) h += ' · Data: '+P.fallback_mode;
+if(D.created_at) h += ' &middot; '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+if(P.fallback_mode) h += ' &middot; Data: '+P.fallback_mode;
 h += '</div>';
 
 // METRICS STRIP
@@ -205,13 +294,15 @@ for(var i=0;i<ms.length;i++){
 }
 h += '</div>';
 
-// ── V9 OWNER'S VIEW ────────────────────────────────
+// ════════════════════════════════════════════════════
+// SECTION: OWNER ASSESSMENT
+// ════════════════════════════════════════════════════
 if(V9.v9_decision){
+  h += '<div class="section-label">V10 Owner Assessment</div>';
   h += '<div class="card" style="border-color:var(--acc);border-width:1px">';
-  h += '<h2 style="color:var(--acc)">V10 Owner Assessment</h2>';
   h += '<div class="g2" style="align-items:start">';
 
-  // Left: Scorecards + Decision
+  // Left: Scorecards + Decision + Quality Donut
   h += '<div>';
 
   // Decision banner
@@ -227,6 +318,9 @@ if(V9.v9_decision){
   h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.capital_allocation)+'</span> <span style="color:var(--t2)">Capital Allocation</span> <span class="mono" style="color:var(--t1)">'+f(V9.capital_allocation)+'/5</span></div>';
   h += '</div>';
 
+  // Quality Score Donut
+  h += '<div id="ch-donut" style="height:200px;margin-top:8px"></div>';
+
   // Conviction bar
   var convW = Math.max(4, Math.min(100, V9.conviction||0));
   var convC = convW>=70?'var(--pos)':convW>=40?'var(--warn)':'var(--neg)';
@@ -238,7 +332,7 @@ if(V9.v9_decision){
 
   h += '</div>';
 
-  // Right: Margin of Safety + Intrinsic Value
+  // Right: Margin of Safety + Intrinsic Value + MOS Band
   h += '<div>';
 
   // MOS Gauge
@@ -251,6 +345,47 @@ if(V9.v9_decision){
   h += '<div class="mono" style="font-size:32px;font-weight:700;color:'+mosC+'">'+( iv>0?(mos>=0?'+':'')+f(mos,1)+'%':'N/A')+'</div>';
   h += '<div style="font-size:11px;color:var(--t3);margin-top:4px">Required: '+f(reqMos,0)+'% ('+( V9.business_type||'')+')</div>';
   h += '</div>';
+
+  // MOS Band Visualization
+  if(iv>0 && price){
+    var ivBear = V9.intrinsic_value_bear||0;
+    var ivBull = V9.intrinsic_value_bull||0;
+    if(ivBear>0 && ivBull>0){
+      var bandMin = Math.min(ivBear, price)*0.85;
+      var bandMax = Math.max(ivBull, price)*1.05;
+      var range = bandMax-bandMin;
+      var bearPct = ((ivBear-bandMin)/range*100).toFixed(1);
+      var basePct = ((iv-bandMin)/range*100).toFixed(1);
+      var bullPct = ((ivBull-bandMin)/range*100).toFixed(1);
+      var pricePct = ((price-bandMin)/range*100).toFixed(1);
+      var reqLine = iv*(1-(V9.required_mos||0));
+      var reqPct = ((reqLine-bandMin)/range*100).toFixed(1);
+
+      h += '<div style="margin-top:16px">';
+      h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Valuation Band</div>';
+      h += '<div style="position:relative;height:48px;margin:0 0 8px">';
+      // IV range bar
+      h += '<div style="position:absolute;left:'+bearPct+'%;right:'+(100-bullPct)+'%;height:20px;top:14px;background:linear-gradient(90deg,var(--neg),var(--warn),var(--pos));border-radius:4px;opacity:0.25"></div>';
+      // Base IV marker
+      h += '<div style="position:absolute;left:'+basePct+'%;top:8px;width:2px;height:32px;background:var(--warn)"></div>';
+      h += '<div style="position:absolute;left:'+basePct+'%;top:0;transform:translateX(-50%);font-size:9px;color:var(--warn);white-space:nowrap" class="mono">IV $'+f(iv,0)+'</div>';
+      // Required MOS line
+      h += '<div style="position:absolute;left:'+reqPct+'%;top:14px;width:1px;height:20px;border-left:2px dashed var(--t3)"></div>';
+      // Price marker
+      h += '<div style="position:absolute;left:'+pricePct+'%;top:10px;width:12px;height:28px;transform:translateX(-50%)">';
+      h += '<div style="width:12px;height:12px;background:var(--acc);border-radius:50%;border:2px solid var(--bg1)"></div>';
+      h += '<div style="font-size:9px;color:var(--acc);white-space:nowrap;text-align:center;margin-top:2px" class="mono">$'+f(price,0)+'</div>';
+      h += '</div>';
+      h += '</div>';
+      // Labels
+      h += '<div style="display:flex;justify-content:space-between;font-size:9px" class="mono">';
+      h += '<span class="neg">Bear $'+f(ivBear,0)+'</span>';
+      h += '<span style="color:var(--t3)">Req MOS $'+f(reqLine,0)+'</span>';
+      h += '<span class="pos">Bull $'+f(ivBull,0)+'</span>';
+      h += '</div>';
+      h += '</div>';
+    }
+  }
 
   // Intrinsic value vs price
   if(iv>0 && price){
@@ -265,12 +400,11 @@ if(V9.v9_decision){
     h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--t1)">$'+f(price,2)+'</div>';
     h += '</div>';
     h += '</div>';
-    // IV range
-    var ivBear = V9.intrinsic_value_bear||0;
-    var ivBull = V9.intrinsic_value_bull||0;
-    if(ivBear>0){
+    var ivBear2 = V9.intrinsic_value_bear||0;
+    var ivBull2 = V9.intrinsic_value_bull||0;
+    if(ivBear2>0){
       h += '<div style="margin-top:8px;font-size:10px;color:var(--t3);text-align:center">';
-      h += 'IV Range: <span class="mono neg">$'+f(ivBear,2)+'</span> — <span class="mono pos">$'+f(ivBull,2)+'</span>';
+      h += 'IV Range: <span class="mono neg">$'+f(ivBear2,2)+'</span> &mdash; <span class="mono pos">$'+f(ivBull2,2)+'</span>';
       h += '</div>';
     }
     h += '</div>';
@@ -286,7 +420,7 @@ if(V9.v9_decision){
     h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Permanent Loss Risks</div>';
     for(var i=0;i<plr.length&&i<4;i++){
       var rC = plr[i][1]==='High'?'neg':plr[i][1]==='Medium'?'warn':'muted';
-      h += '<div style="font-size:12px;padding:3px 0"><span class="pill pill-'+rC+'" style="font-size:10px;min-width:50px;text-align:center">'+plr[i][1]+'</span> <span style="font-weight:500">'+plr[i][0]+'</span> <span class="muted"> — '+plr[i][2]+'</span></div>';
+      h += '<div style="font-size:12px;padding:3px 0"><span class="pill pill-'+rC+'" style="font-size:10px;min-width:50px;text-align:center">'+plr[i][1]+'</span> <span style="font-weight:500">'+plr[i][0]+'</span> <span class="muted"> &mdash; '+plr[i][2]+'</span></div>';
     }
     h += '</div>';
   }
@@ -294,17 +428,16 @@ if(V9.v9_decision){
   // Temperament note
   var vix = S.vix||0;
   h += '<div style="margin-top:12px;padding:8px 12px;background:var(--bg2);border-radius:var(--r);font-size:11px;color:var(--t2);font-style:italic">';
-  if(vix>28) h += '\ud83c\udf21\ufe0f Market sentiment: Fear elevated. Historically, fear creates opportunity for patient capital.';
-  else if(vix<14) h += '\ud83c\udf21\ufe0f Market sentiment: Extreme optimism. Exercise caution — complacency breeds risk.';
+  if(vix>28) h += 'Market sentiment: Fear elevated. Historically, fear creates opportunity for patient capital.';
+  else if(vix<14) h += 'Market sentiment: Extreme optimism. Exercise caution &mdash; complacency breeds risk.';
   else h += 'Default action in absence of clear margin of safety is inaction.';
   h += '</div>';
 
-  // V9 Narrative (LLM-generated)
+  // V10 Narrative (LLM-generated, web report only)
   var nar = V9.v9_narrative||'';
   if(nar){
     h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
     h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">V10 Narrative Assessment</div>';
-    // Format sections: bold the headings
     nar = nar.replace(/^(INVESTMENT SUMMARY)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(RECOMMENDED ACTION)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(DECISION TRIGGERS)/m,'<strong style="color:var(--t1)">$1</strong>');
@@ -316,9 +449,12 @@ if(V9.v9_decision){
   h += '</div>'; // end card
 }
 
-h += '<hr class="section-sep">';
+// ════════════════════════════════════════════════════
+// SECTION: ENGINE & SIGNAL ANALYSIS
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Engine &amp; Signal Analysis</div>';
 
-// ── CHARTS ROW: Price Levels + Engine Waterfall ─────
+// CHARTS ROW: Price Levels + Engine Waterfall
 h += '<div class="g2">';
 
 // Price Context
@@ -342,7 +478,7 @@ if(hasContribs){
 h += '</div>';
 h += '</div>'; // end g2
 
-// ── CHARTS ROW 2: Regime Vector + DCF ───────────────
+// CHARTS ROW 2: Regime Vector + TQ Radar
 h += '<div class="g2">';
 
 // Regime Vector
@@ -356,23 +492,46 @@ if(hasRV){
 }
 h += '</div>';
 
-// DCF
+// Trade Quality Radar
+h += '<div class="card"><h2>Trade Quality Decomposition</h2>';
+if(comp!=null && dc!=null && rel!=null){
+  h += '<div id="ch-radar" class="chart-box" style="height:260px"></div>';
+} else {
+  h += '<div class="empty">Insufficient data for TQ decomposition</div>';
+}
+h += '</div>';
+h += '</div>';
+
+// DCF Row
+h += '<div class="g2">';
 h += '<div class="card"><h2>DCF Fair Value</h2>';
 if(DCF && (DCF.bear||DCF.base||DCF.bull)){
   h += '<div id="ch-dcf" class="chart-box"></div>';
   if(DCF.assumptions){
     var a=DCF.assumptions;
-    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% · FCF Mgn '+f(a.fcf_margin)+'% · WACC '+f(a.discount_rate)+'% · Terminal '+f(a.terminal_growth)+'%</div>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% &middot; FCF Mgn '+f(a.fcf_margin)+'% &middot; WACC '+f(a.discount_rate)+'% &middot; Terminal '+f(a.terminal_growth)+'%</div>';
   }
 } else {
   h += '<div class="empty">DCF not available for this ticker</div>';
 }
 h += '</div>';
+
+// IV Sensitivity Heatmap
+h += '<div class="card"><h2>Intrinsic Value Sensitivity</h2>';
+if(DCF && DCF.base && DCF.assumptions && DCF.assumptions.discount_rate && DCF.assumptions.terminal_growth){
+  h += '<div id="ch-heatmap" class="chart-box" style="height:300px"></div>';
+  h += '<div style="font-size:10px;color:var(--t3);margin-top:4px;font-style:italic">Fair value at varying WACC and terminal growth. Highlighted cell = base assumption.</div>';
+} else {
+  h += '<div class="empty">DCF assumptions needed for sensitivity analysis</div>';
+}
+h += '</div>';
 h += '</div>';
 
-h += '<hr class="section-sep">';
+// ════════════════════════════════════════════════════
+// SECTION: TECHNICALS
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Technical Analysis</div>';
 
-// ── TECHNICALS ──────────────────────────────────────
 h += '<div class="card"><h2>Technical Indicators</h2>';
 if(TECH.rsi_14||TECH.sma20){
   h += '<div class="g4" style="font-size:12px;margin-bottom:12px">';
@@ -388,24 +547,23 @@ if(TECH.rsi_14||TECH.sma20){
     ['SMA 20',TECH.sma20!=null?fD(TECH.sma20):'N/A',price&&TECH.sma20?(price>TECH.sma20?'pos':'neg'):''],
     ['SMA 50',TECH.sma50!=null?fD(TECH.sma50):'N/A',price&&TECH.sma50?(price>TECH.sma50?'pos':'neg'):''],
     ['SMA 200',TECH.sma200!=null?fD(TECH.sma200):'N/A',price&&TECH.sma200?(price>TECH.sma200?'pos':'neg'):''],
-    ['52W Range',TECH.fifty_two_week_low!=null?fD(TECH.fifty_two_week_low)+' – '+fD(TECH.fifty_two_week_high):'N/A',''],
+    ['52W Range',TECH.fifty_two_week_low!=null?fD(TECH.fifty_two_week_low)+' \u2013 '+fD(TECH.fifty_two_week_high):'N/A',''],
   ];
   for(var i=0;i<tm.length;i++){
     h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+tm[i][0]+'</div><div class="mono '+tm[i][2]+'" style="font-size:13px;font-weight:500">'+tm[i][1]+'</div></div>';
   }
   h += '</div>';
-  // Support / Resistance
   var sups=(TECH.support_levels||[]).slice(0,3);
   var ress=(TECH.resistance_levels||[]).slice(0,3);
   if(sups.length||ress.length){
     h+='<div class="g2" style="font-size:12px">';
     h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Resistance</div>';
     for(var i=0;i<ress.length;i++) h+='<div class="mono neg">'+fD(ress[i])+'</div>';
-    if(!ress.length) h+='<span class="muted">—</span>';
+    if(!ress.length) h+='<span class="muted">&mdash;</span>';
     h+='</div>';
     h+='<div><div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Support</div>';
     for(var i=0;i<sups.length;i++) h+='<div class="mono pos">'+fD(sups[i])+'</div>';
-    if(!sups.length) h+='<span class="muted">—</span>';
+    if(!sups.length) h+='<span class="muted">&mdash;</span>';
     h+='</div></div>';
   }
 } else {
@@ -413,7 +571,11 @@ if(TECH.rsi_14||TECH.sma20){
 }
 h += '</div>';
 
-// ── FUNDAMENTALS ────────────────────────────────────
+// ════════════════════════════════════════════════════
+// SECTION: FUNDAMENTALS & VALUATION
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Fundamentals &amp; Valuation</div>';
+
 h += '<div class="card"><h2>Fundamentals</h2>';
 if(FIN.revenue_ttm||FIN.net_income_ttm||FIN.gross_margin!=null){
   h += '<div class="g4" style="font-size:12px">';
@@ -444,7 +606,7 @@ if(FIN.revenue_ttm||FIN.net_income_ttm||FIN.gross_margin!=null){
 }
 h += '</div>';
 
-// ── VALUATION ───────────────────────────────────────
+// Valuation
 h += '<div class="card"><h2>Valuation Multiples</h2>';
 if(FIN.trailing_pe||FIN.forward_pe||FIN.price_to_book){
   h += '<div class="g4" style="font-size:12px">';
@@ -467,17 +629,15 @@ if(FIN.trailing_pe||FIN.forward_pe||FIN.price_to_book){
 }
 h += '</div>';
 
-h += '<hr class="section-sep">';
-
-// ── TRADE PLAN ──────────────────────────────────────
+// Trade Plan
 if(S.stop_loss||S.entry){
   h += '<div class="card"><h2>Trade Plan</h2>';
   h += '<div class="g4" style="font-size:12px">';
   var tp = [
     ['Entry',S.entry?fD(S.entry):'N/A'],
     ['Stop Loss',S.stop_loss?fD(S.stop_loss):'N/A'],
-    ['Target',S.take_profit?fD(S.take_profit[0])+' – '+fD(S.take_profit[1]):'N/A'],
-    ['Buy Zone',S.buy_zone?fD(S.buy_zone[0])+' – '+fD(S.buy_zone[1]):'N/A'],
+    ['Target',S.take_profit?fD(S.take_profit[0])+' \u2013 '+fD(S.take_profit[1]):'N/A'],
+    ['Buy Zone',S.buy_zone?fD(S.buy_zone[0])+' \u2013 '+fD(S.buy_zone[1]):'N/A'],
     ['Mode',mode],
     ['Position $',S.position_size?fM(S.position_size):'N/A'],
     ['Position %',S.position_pct!=null?f(S.position_pct,1)+'%':'N/A'],
@@ -489,17 +649,20 @@ if(S.stop_loss||S.entry){
   h += '</div></div>';
 }
 
-// ── PEER COMPARISON TABLE ───────────────────────────
+// ════════════════════════════════════════════════════
+// SECTION: PEER POSITIONING
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Peer Positioning</div>';
+
 h += '<div class="card"><h2>Peer Comparison</h2>';
 if(PEERS.length>0){
   h += '<div style="overflow-x:auto"><table id="tbl-peers"><thead><tr>';
   var pc = ['Ticker','Price','Mkt Cap','Rev Growth','Margin','Fwd PE','ROE'];
   for(var i=0;i<pc.length;i++){
     var align=i===0?'':'text-r';
-    h+='<th class="'+align+'" onclick="sortTbl(\'tbl-peers\','+i+')">'+pc[i]+' ↕</th>';
+    h+='<th class="'+align+'" onclick="sortTbl(\'tbl-peers\','+i+')">'+pc[i]+' \u21C5</th>';
   }
   h += '</tr></thead><tbody>';
-  // Subject row
   h += '<tr class="tr-hl"><td class="mono" style="font-weight:600">'+D.symbol+'</td>';
   h += '<td class="text-r mono">'+fD(price)+'</td>';
   h += '<td class="text-r mono">'+fM(FIN.market_cap||CO.market_cap)+'</td>';
@@ -520,18 +683,22 @@ if(PEERS.length>0){
     h += '</tr>';
   }
   h += '</tbody></table></div>';
+  // Peer Scatter Plot
+  h += '<div id="ch-scatter" class="chart-box" style="height:300px;margin-top:12px"></div>';
+  // Margin vs Growth Quadrant
+  h += '<div id="ch-quadrant" class="chart-box" style="height:300px;margin-top:12px"></div>';
 } else {
   h += '<div class="empty">No peer data available</div>';
 }
 h += '</div>';
 
-// ── ENGINE SCORES TABLE ─────────────────────────────
+// Engine Detail
 h += '<div class="card"><h2>Engine Detail</h2>';
 h += '<div style="overflow-x:auto"><table id="tbl-eng"><thead><tr>';
 var ec = ['Engine','Raw Score','Weight','Contribution'];
 for(var i=0;i<ec.length;i++){
   var align=i===0?'':'text-r';
-  h+='<th class="'+align+'" onclick="sortTbl(\'tbl-eng\','+i+')">'+ec[i]+' ↕</th>';
+  h+='<th class="'+align+'" onclick="sortTbl(\'tbl-eng\','+i+')">'+ec[i]+' \u21C5</th>';
 }
 h += '</tr></thead><tbody>';
 var totalCt=0;
@@ -549,14 +716,17 @@ h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</
 h += '<td class="text-r mono '+cls(totalCt)+'">'+fS(totalCt,2)+'</td></tr>';
 h += '</tbody></table></div></div>';
 
-// ── NEWS & SENTIMENT ────────────────────────────────
-h += '<div class="card"><h2>News & Sentiment</h2>';
+// ════════════════════════════════════════════════════
+// SECTION: SENTIMENT & NEWS
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Sentiment &amp; News</div>';
+
+h += '<div class="card"><h2>News &amp; Sentiment</h2>';
 if(NEWS.length>0){
-  // Analyst consensus
   if(FIN.recommendation){
     h += '<div style="font-size:12px;margin-bottom:10px;color:var(--t2)">Wall St: <span style="color:var(--t1);font-weight:600;text-transform:uppercase">'+FIN.recommendation+'</span>';
     if(FIN.num_analysts) h += ' ('+FIN.num_analysts+' analysts)';
-    if(FIN.target_mean) h += ' · Target: '+fD(FIN.target_mean);
+    if(FIN.target_mean) h += ' &middot; Target: '+fD(FIN.target_mean);
     h += '</div>';
   }
   for(var i=0;i<NEWS.length;i++){
@@ -567,7 +737,6 @@ if(NEWS.length>0){
     if(n.date) h+='<span class="news-src">'+n.date+'</span>';
     h += '</div>';
   }
-  // Sentiment summary
   var sp=0,sn=0,sne=0;
   for(var i=0;i<NEWS.length;i++){
     if(NEWS[i].sentiment==='POSITIVE')sp++;
@@ -580,7 +749,7 @@ if(NEWS.length>0){
 }
 h += '</div>';
 
-// ── EARNINGS HISTORY ────────────────────────────────
+// Earnings History
 if(EARN.length>0){
   h += '<div class="card"><h2>Earnings History</h2>';
   h += '<div id="ch-earn" class="chart-box" style="height:180px"></div>';
@@ -604,16 +773,15 @@ if(EARN.length>0){
     h += '</tr>';
   }
   h += '</tbody></table></div>';
-  // Beat rate summary
   var beats=0,total=EARN.length;
   for(var i=0;i<total;i++){if(EARN[i].beat)beats++;}
   h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">Beat Rate: <span class="'+(beats/total>=0.67?'pos':'warn')+'">'+beats+'/'+total+' ('+Math.round(beats/total*100)+'%)</span></div>';
   h += '</div>';
 }
 
-// ── INSTITUTIONAL OWNERSHIP ────────────────────────
+// Institutional Ownership
 if(INST.institutional_pct||INST.short_pct){
-  h += '<div class="card"><h2>Ownership & Short Interest</h2>';
+  h += '<div class="card"><h2>Ownership &amp; Short Interest</h2>';
   h += '<div class="g4" style="font-size:12px">';
   var im = [
     ['Institutional',INST.institutional_pct!=null?f(INST.institutional_pct)+'%':'N/A',''],
@@ -625,23 +793,22 @@ if(INST.institutional_pct||INST.short_pct){
     h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+im[i][0]+'</div><div class="mono '+im[i][2]+'" style="font-size:13px;font-weight:500">'+im[i][1]+'</div></div>';
   }
   h += '</div>';
-  // Interpretation
   h += '<div style="font-size:11px;color:var(--t3);margin-top:8px">';
   if(INST.institutional_pct>70) h += 'High institutional ownership suggests strong professional interest. ';
-  if(INST.short_pct>10) h += '<span class="neg">Elevated short interest (>10%) signals significant bearish positioning.</span> ';
-  else if(INST.short_pct>5) h += 'Moderate short interest — worth monitoring. ';
-  if(INST.short_ratio>5) h += 'Short ratio >5 days suggests potential for short squeeze. ';
+  if(INST.short_pct>10) h += '<span class="neg">Elevated short interest (&gt;10%) signals significant bearish positioning.</span> ';
+  else if(INST.short_pct>5) h += 'Moderate short interest &mdash; worth monitoring. ';
+  if(INST.short_ratio>5) h += 'Short ratio &gt;5 days suggests potential for short squeeze. ';
   h += '</div>';
   h += '</div>';
 }
 
-h += '<hr class="section-sep">';
+// ════════════════════════════════════════════════════
+// SECTION: RISK & MACRO
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Risk &amp; Macro Context</div>';
 
-// ── RISK ANALYSIS ──────────────────────────────────
 h += '<div class="card"><h2>Risk Analysis</h2>';
 h += '<div class="g2" style="align-items:start">';
-
-// Left: Quantitative risk metrics
 h += '<div>';
 h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Risk Metrics</div>';
 var sr = S.risk_structural||0;
@@ -652,7 +819,6 @@ h += '<div>Tactical Risk: <span class="mono '+(tr>0.5?'neg':tr>0.3?'warn':'pos')
 h += '<div>Data Confidence: <span class="mono '+(dc>=70?'pos':dc>=40?'warn':'neg')+'" style="font-weight:600">'+f(dc,0)+'%</span></div>';
 h += '<div>Regime Reliability: <span class="mono" style="font-weight:600">'+f(rel,2)+'</span></div>';
 h += '</div>';
-// Risk visual bar
 h += '<div style="margin-top:12px">';
 var riskTotal = Math.min(1,(sr+tr)/2);
 var rC2 = riskTotal>0.5?'var(--neg)':riskTotal>0.3?'var(--warn)':'var(--pos)';
@@ -660,9 +826,9 @@ h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin
 h += '<div style="height:10px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="width:'+(riskTotal*100)+'%;height:100%;background:'+rC2+';border-radius:5px;transition:width 0.5s"></div></div>';
 h += '<div class="mono" style="font-size:11px;color:'+rC2+';margin-top:2px">'+f(riskTotal*100,0)+'%</div>';
 h += '</div>';
+// Systemic Risk Dial
+h += '<div id="ch-risk-dial" style="height:140px;margin-top:12px"></div>';
 h += '</div>';
-
-// Right: Risk drivers + contradictions
 h += '<div>';
 if(RISKS.length>0){
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Risk Drivers</div>';
@@ -680,7 +846,7 @@ if(CONTRA.length>0){
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;margin-top:12px">Contradictions</div>';
   for(var i=0;i<CONTRA.length&&i<4;i++){
     var ct2 = typeof CONTRA[i]==='object'?(CONTRA[i].description||CONTRA[i].name||JSON.stringify(CONTRA[i])):String(CONTRA[i]);
-    h += '<div style="font-size:12px;padding:3px 0;color:var(--warn)">⚠ '+ct2+'</div>';
+    h += '<div style="font-size:12px;padding:3px 0;color:var(--warn)">\u26A0 '+ct2+'</div>';
   }
 }
 if(RISKS.length===0&&CONTRA.length===0){
@@ -689,26 +855,23 @@ if(RISKS.length===0&&CONTRA.length===0){
 h += '</div>';
 h += '</div></div>';
 
-h += '<hr class="section-sep">';
-
-// ── SECTOR PERFORMANCE ─────────────────────────────
+// Sector Performance
 var allSectors = (SECT.all_sectors||[]);
 if(allSectors.length>0){
   h += '<div class="card"><h2>Sector Performance</h2>';
-  // Highlight target sector
   var tgtSect = SECT.target||{};
   if(tgtSect.name){
     h += '<div style="font-size:12px;margin-bottom:12px;color:var(--t2)">'+D.symbol+' sector: <span style="color:var(--t1);font-weight:600">'+tgtSect.name+'</span>';
-    h += ' · 1W: <span class="mono '+cls(tgtSect['1w'])+'">'+fP(tgtSect['1w'])+'</span>';
-    h += ' · 1M: <span class="mono '+cls(tgtSect['1m'])+'">'+fP(tgtSect['1m'])+'</span>';
-    h += ' · YTD: <span class="mono '+cls(tgtSect['ytd'])+'">'+fP(tgtSect['ytd'])+'</span>';
+    h += ' &middot; 1W: <span class="mono '+cls(tgtSect['1w'])+'">'+fP(tgtSect['1w'])+'</span>';
+    h += ' &middot; 1M: <span class="mono '+cls(tgtSect['1m'])+'">'+fP(tgtSect['1m'])+'</span>';
+    h += ' &middot; YTD: <span class="mono '+cls(tgtSect['ytd'])+'">'+fP(tgtSect['ytd'])+'</span>';
     h += '</div>';
   }
   h += '<div style="overflow-x:auto"><table id="tbl-sect"><thead><tr>';
-  h += '<th onclick="sortTbl(\'tbl-sect\',0)">Sector ↕</th>';
-  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',1)">1W ↕</th>';
-  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',2)">1M ↕</th>';
-  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',3)">YTD ↕</th>';
+  h += '<th onclick="sortTbl(\'tbl-sect\',0)">Sector \u21C5</th>';
+  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',1)">1W \u21C5</th>';
+  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',2)">1M \u21C5</th>';
+  h += '<th class="text-r" onclick="sortTbl(\'tbl-sect\',3)">YTD \u21C5</th>';
   h += '</tr></thead><tbody>';
   for(var i=0;i<allSectors.length;i++){
     var sec = allSectors[i];
@@ -723,7 +886,7 @@ if(allSectors.length>0){
   h += '</tbody></table></div></div>';
 }
 
-// ── MARKET OVERVIEW ────────────────────────────────
+// Market Overview
 var mktIndices = MKT.indices||[];
 var mktBonds = MKT.bonds||[];
 var mktCommod = MKT.commodities||[];
@@ -731,8 +894,6 @@ var mktFx = MKT.fx||[];
 var mktCrypto = MKT.crypto||[];
 if(mktIndices.length||mktBonds.length||mktCommod.length){
   h += '<div class="card"><h2>Market Overview</h2>';
-
-  // Indices
   if(mktIndices.length){
     h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Major Indices</div>';
     h += '<div class="g4" style="font-size:12px;margin-bottom:16px">';
@@ -741,31 +902,26 @@ if(mktIndices.length||mktBonds.length||mktCommod.length){
       h += '<div style="padding:4px 0">';
       h += '<div style="font-size:10px;color:var(--t3)">'+ix.name+'</div>';
       h += '<div class="mono" style="font-size:13px;font-weight:500">'+fD(ix.price)+'</div>';
-      h += '<div class="mono '+cls(ix['1d'])+'" style="font-size:11px">1D: '+fP(ix['1d'])+' · YTD: '+fP(ix['ytd'])+'</div>';
+      h += '<div class="mono '+cls(ix['1d'])+'" style="font-size:11px">1D: '+fP(ix['1d'])+' &middot; YTD: '+fP(ix['ytd'])+'</div>';
       h += '</div>';
     }
     h += '</div>';
   }
-
-  // Bonds
   if(mktBonds.length){
-    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Treasury & Credit</div>';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Treasury &amp; Credit</div>';
     h += '<div class="g4" style="font-size:12px;margin-bottom:16px">';
     for(var i=0;i<mktBonds.length;i++){
       var bd=mktBonds[i];
       h += '<div style="padding:4px 0">';
       h += '<div style="font-size:10px;color:var(--t3)">'+bd.name+'</div>';
       h += '<div class="mono" style="font-size:13px;font-weight:500">'+f(bd.value,2)+'%</div>';
-      if(bd['1d_change']!=null) h += '<div class="mono '+cls(bd['1d_change'])+'" style="font-size:11px">Δ '+fS(bd['1d_change'],2)+'</div>';
+      if(bd['1d_change']!=null) h += '<div class="mono '+cls(bd['1d_change'])+'" style="font-size:11px">\u0394 '+fS(bd['1d_change'],2)+'</div>';
       h += '</div>';
     }
     h += '</div>';
   }
-
-  // Commodities + FX + Crypto in a grid
   if(mktCommod.length||mktFx.length||mktCrypto.length){
     h += '<div class="g3" style="align-items:start">';
-
     if(mktCommod.length){
       h += '<div>';
       h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Commodities</div>';
@@ -778,7 +934,6 @@ if(mktIndices.length||mktBonds.length||mktCommod.length){
       }
       h += '</div>';
     }
-
     if(mktFx.length){
       h += '<div>';
       h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Foreign Exchange</div>';
@@ -791,7 +946,6 @@ if(mktIndices.length||mktBonds.length||mktCommod.length){
       }
       h += '</div>';
     }
-
     if(mktCrypto.length){
       h += '<div>';
       h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Crypto</div>';
@@ -804,13 +958,12 @@ if(mktIndices.length||mktBonds.length||mktCommod.length){
       }
       h += '</div>';
     }
-
     h += '</div>';
   }
   h += '</div>';
 }
 
-// ── ECONOMIC CONTEXT ───────────────────────────────
+// Economic Context
 var econInd = ECON.indicators||[];
 if(econInd.length||ECON.fed_funds_rate!=null){
   h += '<div class="card"><h2>Economic Context</h2>';
@@ -839,13 +992,16 @@ if(econInd.length||ECON.fed_funds_rate!=null){
   h += '</div>';
 }
 
-// ── EXTENDED VALUATION: DCF Walkthrough ────────────
+// ════════════════════════════════════════════════════
+// SECTION: EXTENDED DATA
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Extended Data</div>';
+
+// DCF Walkthrough
 if(DCF && DCF.assumptions){
-  h += '<div class="card"><h2>DCF Model — Full Assumptions</h2>';
+  h += '<div class="card"><h2>DCF Model &mdash; Full Assumptions</h2>';
   var a=DCF.assumptions;
   h += '<div class="g2" style="align-items:start">';
-
-  // Left: Assumptions table
   h += '<div>';
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Model Inputs</div>';
   var dcfParams = [
@@ -861,8 +1017,6 @@ if(DCF && DCF.assumptions){
   }
   h += '</tbody></table>';
   h += '</div>';
-
-  // Right: Scenario outcomes
   h += '<div>';
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Scenario Output</div>';
   var dcfScen = [
@@ -882,8 +1036,6 @@ if(DCF && DCF.assumptions){
   if(price) h += '<div style="margin-top:8px;font-size:11px;color:var(--t3)">Current Price: $'+f(price,2)+'</div>';
   h += '</div>';
   h += '</div>';
-
-  // Sensitivity note
   h += '<div style="margin-top:12px;padding:8px 12px;background:var(--bg2);border-radius:var(--r);font-size:11px;color:var(--t2);font-style:italic">';
   h += 'DCF is a simplified 5-year model. Revenue growth decays toward terminal rate. FCF margin held constant. ';
   h += 'A 1% change in WACC shifts fair value by ~15-20%. Treat as directional guidance, not precision.';
@@ -891,9 +1043,9 @@ if(DCF && DCF.assumptions){
   h += '</div>';
 }
 
-// ── EXTENDED FINANCIALS: Balance Sheet & Per-Share ──
+// Balance Sheet
 if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
-  h += '<div class="card"><h2>Balance Sheet & Per-Share Data</h2>';
+  h += '<div class="card"><h2>Balance Sheet &amp; Per-Share Data</h2>';
   h += '<div class="g4" style="font-size:12px">';
   var bsm = [
     ['Total Cash',fM(FIN.total_cash),''],
@@ -916,10 +1068,46 @@ if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
   for(var i=0;i<bsm.length;i++){
     h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+bsm[i][0]+'</div><div class="mono '+bsm[i][2]+'" style="font-size:13px;font-weight:500">'+bsm[i][1]+'</div></div>';
   }
-  h += '</div></div>';
+  h += '</div>';
+
+  // Capital Structure Stability Gauge
+  if(FIN.net_debt_ebitda!=null || FIN.interest_coverage!=null || FIN.debt_equity!=null){
+    h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Capital Structure Stability</div>';
+    var _csm = [];
+    if(FIN.net_debt_ebitda!=null){
+      var _ndV = Math.min(100, Math.max(0, FIN.net_debt_ebitda/5*100));
+      var _ndC = FIN.net_debt_ebitda>3?'var(--neg)':FIN.net_debt_ebitda>2?'var(--warn)':'var(--pos)';
+      var _ndL = FIN.net_debt_ebitda>3?'Aggressive':FIN.net_debt_ebitda>2?'Moderate':'Conservative';
+      _csm.push(['Net Debt/EBITDA', f(FIN.net_debt_ebitda,1)+'x', _ndV, _ndC, _ndL]);
+    }
+    if(FIN.interest_coverage!=null){
+      var _icV = Math.min(100, Math.max(0, (1 - Math.min(1, FIN.interest_coverage/20))*100));
+      var _icC = FIN.interest_coverage<3?'var(--neg)':FIN.interest_coverage<8?'var(--warn)':'var(--pos)';
+      var _icL = FIN.interest_coverage<3?'Stressed':FIN.interest_coverage<8?'Adequate':'Strong';
+      _csm.push(['Interest Coverage', f(FIN.interest_coverage,1)+'x', _icV, _icC, _icL]);
+    }
+    if(FIN.debt_equity!=null){
+      var _deV = Math.min(100, Math.max(0, FIN.debt_equity/3*100));
+      var _deC = FIN.debt_equity>2?'var(--neg)':FIN.debt_equity>1?'var(--warn)':'var(--pos)';
+      var _deL = FIN.debt_equity>2?'High Leverage':FIN.debt_equity>1?'Moderate':'Low Leverage';
+      _csm.push(['Debt/Equity', f(FIN.debt_equity,2)+'x', _deV, _deC, _deL]);
+    }
+    for(var i=0;i<_csm.length;i++){
+      h += '<div class="cap-gauge">';
+      h += '<div style="font-size:10px;color:var(--t3);min-width:110px">'+_csm[i][0]+'</div>';
+      h += '<div class="cap-bar"><div class="cap-fill" style="width:'+_csm[i][2]+'%;background:'+_csm[i][3]+'"></div></div>';
+      h += '<div class="mono" style="font-size:11px;font-weight:500;min-width:50px;text-align:right;color:'+_csm[i][3]+'">'+_csm[i][1]+'</div>';
+      h += '<div style="font-size:9px;color:var(--t3);min-width:70px">'+_csm[i][4]+'</div>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
 }
 
-// ── COMPANY PROFILE ────────────────────────────────
+// Company Profile
 if(CO.name){
   h += '<div class="card"><h2>Company Profile</h2>';
   h += '<div class="g4" style="font-size:12px">';
@@ -937,7 +1125,6 @@ if(CO.name){
     h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+cpm[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+cpm[i][1]+'</div></div>';
   }
   h += '</div>';
-  // 52-week range bar
   if(CO.fifty_two_week_low!=null&&CO.fifty_two_week_high!=null&&price){
     var rangeLow=CO.fifty_two_week_low,rangeHigh=CO.fifty_two_week_high;
     var rangePos=Math.max(0,Math.min(100,((price-rangeLow)/(rangeHigh-rangeLow))*100));
@@ -953,7 +1140,6 @@ if(CO.name){
     h += '<div class="mono" style="text-align:center;font-size:11px;color:var(--acc);margin-top:4px">$'+f(price,2)+' ('+f(rangePos,0)+'% of range)</div>';
     h += '</div>';
   }
-  // Analyst consensus
   if(FIN.target_mean||FIN.recommendation){
     h += '<div style="margin-top:12px;padding:8px 12px;background:var(--bg2);border-radius:var(--r)">';
     h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">Wall Street Consensus</div>';
@@ -964,36 +1150,45 @@ if(CO.name){
       h += '<span class="mono" style="font-size:13px;margin-left:8px">Target: $'+f(FIN.target_mean,2)+'</span>';
       if(tgtUp!=null) h += ' <span class="mono '+cls(tgtUp)+'">('+fS(tgtUp)+'%)</span>';
     }
-    if(FIN.target_low&&FIN.target_high) h += '<div class="mono" style="font-size:11px;color:var(--t3);margin-top:4px">Range: $'+f(FIN.target_low,2)+' — $'+f(FIN.target_high,2)+'</div>';
+    if(FIN.target_low&&FIN.target_high) h += '<div class="mono" style="font-size:11px;color:var(--t3);margin-top:4px">Range: $'+f(FIN.target_low,2)+' &mdash; $'+f(FIN.target_high,2)+'</div>';
     h += '</div>';
   }
   h += '</div>';
 }
 
-h += '<hr class="section-sep">';
+// ════════════════════════════════════════════════════
+// SECTION: QUANT APPENDIX
+// ════════════════════════════════════════════════════
+h += '<div class="section-label">Quant Appendix</div>';
 
-// ── SHOW YOUR WORK (collapsible) ────────────────────
 h += '<div class="card">';
-h += '<button class="collapse-btn" onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');this.textContent=b.classList.contains(\'open\')?\'▾ Hide Derivation\':\'▸ Show Your Work\'">▸ Show Your Work</button>';
-h += '<div class="collapse-body">';
+h += '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">';
+h += '<button class="collapse-btn" id="syw-btn" onclick="var b=document.getElementById(\'syw-body\');var m=document.getElementById(\'syw-mode\');b.classList.toggle(\'open\');m.style.display=b.classList.contains(\'open\')?\'inline-flex\':\'none\';this.textContent=b.classList.contains(\'open\')?\'\u25BE Hide Derivation\':\'\u25B8 Show Your Work\'" aria-expanded="false" aria-controls="syw-body">\u25B8 Show Your Work</button>';
+h += '<div class="appendix-toggle" id="syw-mode" style="display:none" role="tablist" aria-label="Derivation detail level">';
+h += '<button class="active" role="tab" aria-selected="true" onclick="sywToggle(\'standard\')">Standard</button>';
+h += '<button role="tab" aria-selected="false" onclick="sywToggle(\'expanded\')">Expanded</button>';
+h += '</div>';
+h += '</div>';
+h += '<div class="collapse-body" id="syw-body" role="region">';
+h += '<div id="syw-standard">';
 
 // Composite derivation
 h += '<div class="formula">';
 h += '<span class="hl">COMPOSITE SCORE DERIVATION</span>\n';
-h += 'C_raw = Σ(wᵢ × Sᵢ)\n\n';
+h += 'C_raw = \u03A3(w\u1D62 \u00D7 S\u1D62)\n\n';
 var computedRaw = 0;
 for(var i=0;i<ENGINES.length;i++){
   var e=ENGINES[i],sc=SC[e]||0,w=W[e]||0,ct=CT[e]||0;
   computedRaw += ct;
   var cCls = ct>=0?'pos':'neg';
-  h += '  '+e.padEnd(14)+f(w,3)+' × '+(sc>=0?'+':'')+f(sc,1).padStart(6)+' = <span class="'+cCls+'">'+(ct>=0?'+':'')+f(ct,2).padStart(7)+'</span>\n';
+  h += '  '+e.padEnd(14)+f(w,3)+' \u00D7 '+(sc>=0?'+':'')+f(sc,1).padStart(6)+' = <span class="'+cCls+'">'+(ct>=0?'+':'')+f(ct,2).padStart(7)+'</span>\n';
 }
-h += '  '+'─'.repeat(44)+'\n';
+h += '  '+'\u2500'.repeat(44)+'\n';
 h += '  C_raw (computed) = <span class="hl">'+fS(computedRaw,2)+'</span>\n';
 if(cRaw!=null){
   var rawDelta = Math.abs(computedRaw - cRaw);
   h += '  C_raw (reported) = '+fS(cRaw,2);
-  if(rawDelta > 0.5) h += '  <span class="neg">Δ '+f(rawDelta,2)+'</span>';
+  if(rawDelta > 0.5) h += '  <span class="neg">\u0394 '+f(rawDelta,2)+'</span>';
   h += '\n';
 }
 h += '\n';
@@ -1003,11 +1198,11 @@ h += '<span class="hl">RISK GOVERNOR</span>\n';
 if(gate!=null){
   h += '  Gate = '+f(gate,2)+'\n';
   var computedAdj = (cRaw||computedRaw) * gate;
-  h += '  C_adjusted = C_raw × Gate = '+fS(cRaw!=null?cRaw:computedRaw,2)+' × '+f(gate,2)+' = <span class="hl">'+fS(computedAdj,2)+'</span>\n';
+  h += '  C_adjusted = C_raw \u00D7 Gate = '+fS(cRaw!=null?cRaw:computedRaw,2)+' \u00D7 '+f(gate,2)+' = <span class="hl">'+fS(computedAdj,2)+'</span>\n';
   if(cAdj!=null){
     var adjDelta = Math.abs(computedAdj - cAdj);
     h += '  C_adjusted (reported) = '+fS(cAdj,1);
-    if(adjDelta > 1.0) h += '  <span class="warn">Δ '+f(adjDelta,1)+'</span> (includes additional adjustments)';
+    if(adjDelta > 1.0) h += '  <span class="warn">\u0394 '+f(adjDelta,1)+'</span> (includes additional adjustments)';
     h += '\n';
   }
 } else {
@@ -1017,15 +1212,15 @@ h += '\n';
 
 // Trade Quality
 h += '<span class="hl">TRADE QUALITY</span>\n';
-h += '  TQ ≈ |C_adj|/100 × DC/100 × Reliability\n';
+h += '  TQ \u2248 |C_adj|/100 \u00D7 DC/100 \u00D7 Reliability\n';
 if(cAdj!=null && dc!=null && rel!=null){
   var computedTQ = (Math.abs(cAdj)/100) * (dc/100) * rel;
-  h += '  TQ = |'+fS(cAdj,1)+'|/100 × '+f(dc,0)+'/100 × '+f(rel,2)+'\n';
+  h += '  TQ = |'+fS(cAdj,1)+'|/100 \u00D7 '+f(dc,0)+'/100 \u00D7 '+f(rel,2)+'\n';
   h += '  TQ (approx) = <span class="hl">'+f(computedTQ,4)+'</span>\n';
   if(tq!=null){
     var tqDelta = Math.abs(computedTQ - tq);
     h += '  TQ (reported) = '+f(tq,3);
-    if(tqDelta > 0.01) h += '  <span class="warn">Δ '+f(tqDelta,4)+'</span> (engine uses additional factors)';
+    if(tqDelta > 0.01) h += '  <span class="warn">\u0394 '+f(tqDelta,4)+'</span> (engine uses additional factors)';
     h += '\n';
   }
 } else {
@@ -1039,8 +1234,8 @@ if(V9.v9_decision){
   h += '<span class="hl">V10 OWNER DECISION HIERARCHY</span>\n\n';
   h += '  Step 1: Business Quality Gate\n';
   h += '    Quality = <span class="hl">'+f(V9.business_quality)+'/5</span>';
-  if(V9.business_quality<1.5) h += '  <span class="neg">FAIL → PASS</span>';
-  else h += '  <span class="pos">PASS → continue</span>';
+  if(V9.business_quality<1.5) h += '  <span class="neg">FAIL \u2192 PASS</span>';
+  else h += '  <span class="pos">PASS \u2192 continue</span>';
   h += '\n\n';
   h += '  Step 2: Intrinsic Value Comparison\n';
   var iv9 = V9.intrinsic_value_base||0;
@@ -1053,7 +1248,7 @@ if(V9.v9_decision){
     else h += '  <span class="neg">NOT MET</span>';
     h += '\n\n';
   } else {
-    h += '    IV not available → RESEARCH\n\n';
+    h += '    IV not available \u2192 RESEARCH\n\n';
   }
   h += '  Step 3: Capital Allocation\n';
   h += '    Score = <span class="hl">'+f(V9.capital_allocation)+'/5</span>';
@@ -1067,16 +1262,323 @@ if(V9.v9_decision){
   else h += '  <span class="pos">clear</span>';
   h += '\n\n';
   h += '  Step 5: Conviction\n';
-  h += '    = BQ×5 + Moat×4 + CA×4 + MOS×0.5 + RiskAdj\n';
+  h += '    = BQ\u00D75 + Moat\u00D74 + CA\u00D74 + MOS\u00D70.5 + RiskAdj\n';
   h += '    = <span class="hl">'+f(V9.conviction,0)+'/100</span>\n\n';
-  h += '  <span class="hl">→ DECISION: '+(V9.v9_decision)+'</span>\n';
+  h += '  <span class="hl">\u2192 DECISION: '+(V9.v9_decision)+'</span>\n';
   h += '    '+(V9.decision_reason||'')+'\n';
   h += '</div>';
 }
 
-h += '</div></div>';
+h += '</div>'; // end syw-standard
 
-// ── PROVENANCE FOOTER ───────────────────────────────
+// ════════════════════════════════════════════════════
+// EXPANDED QUANT APPENDIX
+// ════════════════════════════════════════════════════
+h += '<div id="syw-expanded" style="display:none">';
+
+// ── A) Symbol Definitions ──
+h += '<div class="mhdr">SYMBOL DEFINITIONS</div>';
+h += '<table class="def-tbl"><thead><tr><th>Symbol</th><th>Definition</th><th>Domain</th></tr></thead><tbody>';
+var _defs = [
+  ['w\u1D62', 'Dynamic weight for engine i, learned via meta-learning', '0 to 1, \u03A3w\u1D62 = 1'],
+  ['S\u1D62', 'Raw score from engine i (trend, valuation, etc.)', '\u2212100 to +100'],
+  ['C_raw', 'Composite raw score = \u03A3(w\u1D62 \u00D7 S\u1D62)', '\u2212100 to +100'],
+  ['Gate', 'Risk governor multiplier from regime analysis', '0 to 1'],
+  ['C_adj', 'Risk-adjusted composite = C_raw \u00D7 Gate', '\u2212100 to +100'],
+  ['DC', 'Data confidence (% of required data available)', '0 to 100%'],
+  ['Reliability', 'Regime classification confidence', '0 to 1'],
+  ['TQ', 'Trade quality = signal strength \u00D7 data quality', '0 to 1'],
+  ['IV', 'Intrinsic value from DCF model', 'USD'],
+  ['MOS', 'Margin of safety = (IV \u2212 Price) / IV', '%'],
+  ['BQ', 'Business quality score', '0 to 5'],
+  ['Moat', 'Moat durability score', '0 to 5'],
+  ['CA', 'Capital allocation score', '0 to 5'],
+  ['RiskAdj', 'Risk adjustment factor in conviction calc', 'Internal'],
+];
+for(var i=0;i<_defs.length;i++){
+  h += '<tr><td>'+_defs[i][0]+'</td><td>'+_defs[i][1]+'</td><td style="color:var(--t3)">'+_defs[i][2]+'</td></tr>';
+}
+h += '</tbody></table>';
+
+// ── B) Composite Score Deep Dive ──
+h += '<div class="mhdr">COMPOSITE SCORE \u2014 FULL DERIVATION</div>';
+h += '<div class="mnote">The composite score aggregates 8 independent engines. Each engine produces a raw score S\u1D62 in [\u2212100, +100]. Weights w\u1D62 are determined by the meta-learning layer based on historical regime performance and sum to 1.0.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  C_raw = \u03A3 (w\u1D62 \u00D7 S\u1D62)  for i \u2208 {trend, valuation, consensus, volatility, macro, liquidity, global, correlation}\n\n';
+h += '<span class="hl">SUBSTITUTION</span>\n';
+h += '  Engine          Weight    Score       w\u1D62 \u00D7 S\u1D62 = Contribution\n';
+h += '  ' + '\u2500'.repeat(66) + '\n';
+var _xCR = 0, _xWS = 0;
+for(var i=0;i<ENGINES.length;i++){
+  var _e=ENGINES[i], _sc=SC[_e]||0, _w=W[_e]||0, _ct=CT[_e]||0;
+  _xCR += _ct; _xWS += _w;
+  var _cc = _ct>=0?'pos':'neg';
+  h += '  '+_e.padEnd(14)+f(_w,3).padStart(7)+'  '+((_sc>=0)?'+':'')+f(_sc,1).padStart(7)+'    '+f(_w,3)+' \u00D7 '+((_sc>=0)?'+':'')+f(_sc,1)+' = <span class="'+_cc+'">'+((_ct>=0)?'+':'')+f(_ct,2).padStart(8)+'</span>\n';
+}
+h += '  ' + '\u2500'.repeat(66) + '\n';
+h += '  Weight sum: \u03A3 w\u1D62 = <span class="hl">'+f(_xWS,3)+'</span>';
+if(Math.abs(_xWS-1.0)<0.01) h += '  <span class="pos">\u2713 valid (sums to 1)</span>';
+else h += '  <span class="warn">\u0394 from 1.0 = '+f(Math.abs(_xWS-1.0),3)+'</span>';
+h += '\n\n';
+h += '  C_raw (computed) = <span class="hl">'+fS(_xCR,2)+'</span>\n';
+if(cRaw!=null){
+  h += '  C_raw (reported) = <span class="hl">'+fS(cRaw,2)+'</span>\n';
+  var _rd = Math.abs(_xCR - cRaw);
+  if(_rd > 0.01) h += '  \u0394 = <span class="warn">'+f(_rd,2)+'</span>\n';
+}
+h += '</div>';
+if(cRaw!=null && Math.abs(_xCR - cRaw) > 0.5){
+  h += '<div class="recon">\u26A0 Computed C_raw diverges from reported by '+f(Math.abs(_xCR - cRaw),2)+'. Causes: intermediate rounding, normalization clamps after weighted sum, or float accumulation. Reported value reflects engine internal float.</div>';
+}
+h += '<div class="mnote">Engine definitions: <strong>trend</strong> = price momentum vs SMAs; <strong>valuation</strong> = relative/absolute multiples; <strong>consensus</strong> = analyst revisions; <strong>volatility</strong> = VIX regime; <strong>macro</strong> = rates/spreads/yield curve; <strong>liquidity</strong> = volume and flow; <strong>global</strong> = cross-market stress; <strong>correlation</strong> = inter-asset divergence. Scores shown are already normalized upstream.</div>';
+
+// ── C) Risk Governor Deep Dive ──
+h += '<div class="mhdr">RISK GOVERNOR \u2014 GATE MECHANISM</div>';
+h += '<div class="mnote">The risk governor dampens signal strength during systemic stress. Gate = 1.0 means no dampening; lower values reduce exposure proportionally. Gate is derived from the regime vector combining VIX level, credit spreads, yield curve inversion, and cross-correlation instability.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  C_adjusted = C_raw \u00D7 Gate\n\n';
+h += '<span class="hl">SUBSTITUTION</span>\n';
+if(gate!=null){
+  var _crU = cRaw!=null?cRaw:_xCR;
+  var _cA = _crU * gate;
+  h += '  C_adjusted = '+fS(_crU,2)+' \u00D7 '+f(gate,2)+'\n';
+  h += '  C_adjusted (computed) = <span class="hl">'+fS(_cA,2)+'</span>\n';
+  if(cAdj!=null){
+    h += '  C_adjusted (reported) = <span class="hl">'+fS(cAdj,1)+'</span>\n';
+    var _aD = Math.abs(_cA - cAdj);
+    if(_aD > 0.5) h += '  \u0394 = <span class="warn">'+f(_aD,1)+'</span>\n';
+  }
+  h += '\n  <span class="hl">GATE INTERPRETATION</span>\n';
+  if(gate >= 0.95) h += '  Gate \u2265 0.95 \u2192 <span class="pos">Minimal dampening. Regime is benign.</span>\n';
+  else if(gate >= 0.80) h += '  0.80 \u2264 Gate < 0.95 \u2192 <span class="warn">Moderate dampening. Some systemic stress detected.</span>\n';
+  else h += '  Gate < 0.80 \u2192 <span class="neg">Significant dampening. High systemic risk environment.</span>\n';
+  h += '\n  Meaning: Gate dampens exposure under systemic risk.\n';
+  h += '  A Gate of '+f(gate,2)+' reduces the raw signal by '+f((1-gate)*100,0)+'%.\n';
+} else {
+  h += '  Gate value not available in payload.\n';
+}
+h += '</div>';
+if(cAdj!=null && gate!=null){
+  var _aD2 = Math.abs((cRaw||_xCR)*gate - cAdj);
+  if(_aD2 > 1.0){
+    h += '<div class="recon">\u26A0 \u0394 of '+f(_aD2,1)+' between computed and reported C_adjusted. \u0394 includes secondary adjustments as reported: confidence scaling, contradiction penalties, and regime smoothing applied downstream of Gate multiplication.</div>';
+  }
+}
+
+// ── D) Trade Quality Deep Dive ──
+h += '<div class="mhdr">TRADE QUALITY \u2014 SIGNAL RELIABILITY</div>';
+h += '<div class="mnote">Trade Quality measures whether the current signal is actionable. It combines: signal magnitude (composite), data backing (data confidence), and regime classification reliability. TQ near 0 means signal too weak or data too thin to act.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  TQ = |C_adjusted| / 100 \u00D7 (DC / 100) \u00D7 Reliability\n\n';
+h += '<span class="hl">WHY ABSOLUTE VALUE?</span>\n';
+h += '  |C_adjusted| converts both bullish (+) and bearish (\u2212) signals to magnitude.\n';
+h += '  A strong bearish signal is just as tradeable as a strong bullish one.\n\n';
+h += '<span class="hl">SUBSTITUTION</span>\n';
+if(cAdj!=null && dc!=null && rel!=null){
+  var _tqC = (Math.abs(cAdj)/100) * (dc/100) * rel;
+  h += '  TQ = |'+fS(cAdj,1)+'| / 100 \u00D7 '+f(dc,0)+' / 100 \u00D7 '+f(rel,2)+'\n';
+  h += '     = '+f(Math.abs(cAdj),1)+' / 100 \u00D7 '+f(dc/100,2)+' \u00D7 '+f(rel,2)+'\n';
+  h += '     = '+f(Math.abs(cAdj)/100,4)+' \u00D7 '+f(dc/100,2)+' \u00D7 '+f(rel,2)+'\n';
+  h += '  TQ (computed) = <span class="hl">'+f(_tqC,4)+'</span>\n';
+  if(tq!=null){
+    h += '  TQ (reported) = <span class="hl">'+f(tq,3)+'</span>\n';
+    var _tqD = Math.abs(_tqC - tq);
+    if(_tqD > 0.001) h += '  \u0394 = <span class="warn">'+f(_tqD,4)+'</span>\n';
+  }
+  h += '\n  <span class="hl">INTERPRETATION</span>\n';
+  var _tqV = tq||_tqC;
+  if(_tqV >= 0.10) h += '  TQ \u2265 0.10 \u2192 <span class="pos">High quality. Signal actionable with normal sizing.</span>\n';
+  else if(_tqV >= 0.03) h += '  TQ \u2265 0.03 \u2192 <span class="warn">Moderate quality. Smaller position warranted.</span>\n';
+  else h += '  TQ < 0.03  \u2192 <span class="neg">Low quality. Insufficient signal or data for confident action.</span>\n';
+  h += '\n  Low TQ implies: weak signal, thin data, or unreliable regime \u2014\n';
+  h += '  position sizing should be reduced or action deferred.\n';
+} else {
+  h += '  Insufficient data for computation.\n';
+}
+h += '</div>';
+if(tq!=null && cAdj!=null && dc!=null && rel!=null){
+  var _tqC2 = (Math.abs(cAdj)/100) * (dc/100) * rel;
+  if(Math.abs(_tqC2 - tq) > 0.01){
+    h += '<div class="recon">\u26A0 Engine TQ includes additional factors beyond this three-variable approximation (e.g., regime stability bonus, contradiction penalty). The formula captures the primary structure.</div>';
+  }
+}
+
+// ── E) Intrinsic Value Math Primer ──
+h += '<div class="mhdr">INTRINSIC VALUE \u2014 DCF STRUCTURE</div>';
+h += '<div class="mnote">Intrinsic value is estimated via a discounted cash flow model. Future free cash flows are projected and discounted to present value. This shows the mathematical structure; the engine computes internally using its own growth/margin/discount assumptions.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">GENERAL DCF FORMULA</span>\n\n';
+h += '              n     FCF_t           TV\n';
+h += '  PV  =  \u03A3   \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500  +  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n';
+h += '         t=1 (1 + r)^t      (1 + r)^n\n\n';
+h += '<span class="hl">TERMINAL VALUE</span>\n';
+h += '  TV = FCF_n \u00D7 (1 + g) / (r \u2212 g)\n\n';
+h += '  where:\n';
+h += '    r   = discount rate (WACC)                 \n';
+h += '    g   = terminal growth rate (perpetuity)    \n';
+h += '    n   = projection period (5 years in ATLAS) \n';
+h += '    FCF_t = projected free cash flow in year t \n\n';
+if(DCF && DCF.assumptions){
+  var _a = DCF.assumptions;
+  h += '<span class="hl">ATLAS ASSUMPTIONS (THIS REPORT)</span>\n';
+  h += '  Discount rate (WACC)  = '+f(_a.discount_rate)+'%\n';
+  h += '  Terminal growth (g)   = '+f(_a.terminal_growth)+'%\n';
+  h += '  Revenue growth (Y1)   = '+f(_a.revenue_growth_y1)+'%\n';
+  h += '  FCF margin            = '+f(_a.fcf_margin)+'%\n\n';
+  h += '<span class="hl">SCENARIO OUTPUTS</span>\n';
+  if(DCF.bear) h += '  Bear case IV = <span class="neg">$'+f(DCF.bear,2)+'</span>\n';
+  if(DCF.base) h += '  Base case IV = <span class="warn">$'+f(DCF.base,2)+'</span>\n';
+  if(DCF.bull) h += '  Bull case IV = <span class="pos">$'+f(DCF.bull,2)+'</span>\n';
+  h += '\n  Note: A 1% change in WACC shifts fair value by ~15\u201320%.\n';
+  h += '  Model is a simplified 5-year projection. Treat as directional guidance.\n';
+} else {
+  h += '<span class="warn">DCF assumptions not available in this report snapshot.</span>\n';
+}
+h += '</div>';
+
+// ── F) Margin of Safety ──
+h += '<div class="mhdr">MARGIN OF SAFETY \u2014 VALUATION GAP</div>';
+h += '<div class="mnote">Margin of safety measures the discount between intrinsic value and market price. Positive MOS = stock trades below IV (undervalued). Negative MOS = stock trades above IV (overvalued). A minimum MOS is required before buying, varying by business quality.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  MOS = (IV \u2212 Price) / IV \u00D7 100%\n\n';
+var _iv = V9.intrinsic_value_base||0;
+if(_iv > 0 && price){
+  h += '<span class="hl">SUBSTITUTION</span>\n';
+  h += '  MOS = ($'+f(_iv,2)+' \u2212 $'+f(price,2)+') / $'+f(_iv,2)+'\n';
+  var _mosC = ((_iv - price) / _iv) * 100;
+  h += '      = $'+f(_iv - price,2)+' / $'+f(_iv,2)+'\n';
+  h += '  MOS (computed) = <span class="hl">'+fS(_mosC,1)+'%</span>\n';
+  if(V9.mos_pct!=null) h += '  MOS (reported) = <span class="hl">'+fS(V9.mos_pct,1)+'%</span>\n';
+  h += '\n  Required MOS = '+(f((V9.required_mos||0)*100,0))+'% (business type: '+(V9.business_type||'Normal')+')\n\n';
+  h += '  <span class="hl">INTERPRETATION</span>\n';
+  if(_mosC < 0){
+    h += '  <span class="neg">\u26A0 Negative MOS: Stock trades '+f(Math.abs(_mosC),1)+'% ABOVE intrinsic value.</span>\n';
+    h += '  Price would need to fall '+f(Math.abs(_mosC),0)+'% to reach IV, plus an additional\n';
+    h += '  '+(f((V9.required_mos||0)*100,0))+'% to reach the required margin of safety.\n';
+  } else if(_mosC < (V9.required_mos||0)*100){
+    h += '  <span class="warn">MOS exists ('+fS(_mosC,1)+'%) but below required threshold ('+(f((V9.required_mos||0)*100,0))+'%).</span>\n';
+    h += '  Stock is slightly undervalued but not enough to justify purchase with adequate safety.\n';
+  } else {
+    h += '  <span class="pos">MOS of '+fS(_mosC,1)+'% meets or exceeds required '+(f((V9.required_mos||0)*100,0))+'%.</span>\n';
+    h += '  Sufficient margin exists to absorb estimation errors and downside risk.\n';
+  }
+} else {
+  h += '  IV or price not available for computation.\n';
+}
+h += '</div>';
+
+// ── G) Conviction Calculation ──
+h += '<div class="mhdr">CONVICTION SCORE \u2014 WEIGHTED CONFIDENCE</div>';
+h += '<div class="mnote">Conviction combines business quality, competitive moat, capital allocation discipline, margin of safety, and risk adjustments into a single 0\u2013100 score. Higher conviction supports larger position sizing and longer holding periods.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  Conviction = BQ \u00D7 5 + Moat \u00D7 4 + CA \u00D7 4 + MOS_adj \u00D7 0.5 + RiskAdj\n\n';
+if(V9.business_quality!=null){
+  h += '<span class="hl">SUBSTITUTION</span>\n';
+  var _bq=V9.business_quality||0, _mo=V9.moat_durability||0, _ca=V9.capital_allocation||0, _mp=V9.mos_pct||0;
+  h += '  BQ component   = '+f(_bq,1)+' \u00D7 5   = <span class="hl">'+f(_bq*5,1)+'</span>\n';
+  h += '  Moat component  = '+f(_mo,1)+' \u00D7 4   = <span class="hl">'+f(_mo*4,1)+'</span>\n';
+  h += '  CA component    = '+f(_ca,1)+' \u00D7 4   = <span class="hl">'+f(_ca*4,1)+'</span>\n';
+  h += '  MOS component   = '+fS(_mp,1)+' \u00D7 0.5 = <span class="hl">'+f(_mp*0.5,1)+'</span>\n';
+  h += '  RiskAdj          = <span class="warn">included upstream (not separately exposed)</span>\n';
+  var _cpS = _bq*5 + _mo*4 + _ca*4 + _mp*0.5;
+  h += '  ' + '\u2500'.repeat(52) + '\n';
+  h += '  Partial sum (excl. RiskAdj) = <span class="hl">'+f(_cpS,1)+'</span>\n';
+  if(V9.conviction!=null){
+    h += '  Conviction (reported)       = <span class="hl">'+f(V9.conviction,0)+'/100</span>\n';
+    var _cD = V9.conviction - _cpS;
+    if(Math.abs(_cD) > 1) h += '  Implied RiskAdj \u2248 <span class="warn">'+fS(_cD,1)+'</span>\n';
+  }
+  h += '\n  <span class="hl">INTERPRETATION</span>\n';
+  var _cv = V9.conviction||0;
+  if(_cv >= 80) h += '  Conviction \u2265 80 \u2192 <span class="pos">Very high. Full position if MOS met.</span>\n';
+  else if(_cv >= 60) h += '  Conviction \u2265 60 \u2192 <span class="pos">Moderate-high. Standard position.</span>\n';
+  else if(_cv >= 40) h += '  Conviction \u2265 40 \u2192 <span class="warn">Moderate. Reduced position or watchlist.</span>\n';
+  else h += '  Conviction < 40 \u2192 <span class="neg">Low. Insufficient conviction for capital deployment.</span>\n';
+} else {
+  h += '  Business quality scores not available.\n';
+}
+h += '</div>';
+
+// ── H) Owner Decision Hierarchy (Expanded) ──
+if(V9.v9_decision){
+  h += '<div class="mhdr">V10 OWNER DECISION HIERARCHY \u2014 GATE LOGIC</div>';
+  h += '<div class="mnote">ATLAS V10 uses a sequential gate system (Buffett/Munger). Each gate must pass before the next is evaluated. Failure at any gate produces a PASS decision (do not buy). Capital is only deployed when ALL conditions are met.</div>';
+  h += '<div class="mblk">';
+  h += '<span class="hl">STEP 1 \u2014 BUSINESS QUALITY GATE</span>\n';
+  h += '  Test: BQ \u2265 1.5\n';
+  h += '  BQ = '+f(V9.business_quality,1)+'\n';
+  if(V9.business_quality >= 1.5) h += '  '+f(V9.business_quality,1)+' \u2265 1.5 \u2192 <span class="pos">PASS \u2192 continue to Step 2</span>\n';
+  else h += '  '+f(V9.business_quality,1)+' < 1.5 \u2192 <span class="neg">FAIL \u2192 exit: business quality too low</span>\n';
+  h += '\n';
+  h += '<span class="hl">STEP 2 \u2014 INTRINSIC VALUE COMPARISON</span>\n';
+  h += '  Test: MOS \u2265 Required MOS\n';
+  var _iv2 = V9.intrinsic_value_base||0;
+  if(_iv2 > 0){
+    h += '  IV (base DCF) = $'+f(_iv2,2)+'\n';
+    h += '  Price          = $'+f(price,2)+'\n';
+    h += '  MOS = ('+f(_iv2,2)+' \u2212 '+f(price,2)+') / '+f(_iv2,2)+' = '+fS(V9.mos_pct)+'%\n';
+    h += '  Required MOS   = '+(f((V9.required_mos||0)*100,0))+'%\n';
+    if((V9.mos_pct||0) >= (V9.required_mos||0)*100) h += '  '+fS(V9.mos_pct)+'% \u2265 '+(f((V9.required_mos||0)*100,0))+'% \u2192 <span class="pos">MET \u2192 continue to Step 3</span>\n';
+    else h += '  '+fS(V9.mos_pct)+'% < '+(f((V9.required_mos||0)*100,0))+'% \u2192 <span class="neg">NOT MET \u2192 insufficient margin of safety</span>\n';
+  } else {
+    h += '  IV not available \u2192 <span class="warn">cannot evaluate \u2192 RESEARCH</span>\n';
+  }
+  h += '\n';
+  h += '<span class="hl">STEP 3 \u2014 CAPITAL ALLOCATION</span>\n';
+  h += '  Test: CA \u2265 1.5\n';
+  h += '  CA = '+f(V9.capital_allocation,1)+'\n';
+  if(V9.capital_allocation >= 1.5) h += '  '+f(V9.capital_allocation,1)+' \u2265 1.5 \u2192 <span class="pos">PASS \u2192 continue to Step 4</span>\n';
+  else h += '  '+f(V9.capital_allocation,1)+' < 1.5 \u2192 <span class="neg">FAIL \u2192 poor capital stewardship</span>\n';
+  h += '\n';
+  h += '<span class="hl">STEP 4 \u2014 PERMANENT LOSS SCREEN</span>\n';
+  h += '  Test: Zero high-severity permanent loss risks\n';
+  var _hr = (V9.permanent_loss_risks||[]).filter(function(r){return r[1]==="High"}).length;
+  var _tr = (V9.permanent_loss_risks||[]).length;
+  h += '  Total risks flagged  = '+_tr+'\n';
+  h += '  High-severity risks  = '+_hr+'\n';
+  if(_hr === 0) h += '  0 high-severity \u2192 <span class="pos">CLEAR \u2192 continue to Step 5</span>\n';
+  else h += '  '+_hr+' high-severity \u2192 <span class="neg">FLAGGED \u2192 requires deeper analysis</span>\n';
+  h += '\n';
+  h += '<span class="hl">STEP 5 \u2014 CONVICTION ASSESSMENT</span>\n';
+  h += '  Conviction = '+f(V9.conviction,0)+'/100 (see derivation above)\n\n';
+  h += '<span class="hl">FINAL DECISION</span>\n';
+  h += '  \u2192 <span class="hl">'+(V9.v9_decision)+'</span>\n';
+  h += '  Reason: '+(V9.decision_reason||'N/A')+'\n';
+  var _fg = [];
+  if(V9.business_quality < 1.5) _fg.push('Business Quality ('+f(V9.business_quality,1)+' < 1.5)');
+  if(_iv2 > 0 && (V9.mos_pct||0) < (V9.required_mos||0)*100) _fg.push('Margin of Safety ('+fS(V9.mos_pct)+'% < '+(f((V9.required_mos||0)*100,0))+'%)');
+  if(V9.capital_allocation < 1.5) _fg.push('Capital Allocation ('+f(V9.capital_allocation,1)+' < 1.5)');
+  if(_hr > 0) _fg.push('Permanent Loss ('+_hr+' high-severity risks)');
+  if(_fg.length > 0){
+    h += '\n  <span class="neg">Failed gates:</span>\n';
+    for(var _fi=0;_fi<_fg.length;_fi++) h += '    \u2022 <span class="neg">'+_fg[_fi]+'</span>\n';
+  } else if(V9.v9_decision !== 'BUY'){
+    h += '\n  <span class="warn">All individual gates passed but decision is not BUY \u2014\n  additional engine-level conditions may apply.</span>\n';
+  }
+  h += '</div>';
+}
+
+// ── I) Reconciliation Notes ──
+h += '<div class="mhdr">RECONCILIATION NOTES</div>';
+h += '<div class="mnote">When computed values differ from reported values, the following factors apply:</div>';
+h += '<div style="padding:6px 0;font-size:11px;color:var(--t2);line-height:1.8">';
+h += '<div style="margin:4px 0">\u2022 <strong>Intermediate rounding</strong> \u2014 Engine computes with float64 internally; displayed values are rounded at each step, accumulating small deltas.</div>';
+h += '<div style="margin:4px 0">\u2022 <strong>Normalization clamps</strong> \u2014 Scores may be clamped to [\u2212100, +100] or [0, 1] at various stages not reflected in simplified formulas.</div>';
+h += '<div style="margin:4px 0">\u2022 <strong>Gate smoothing</strong> \u2014 Risk governor may apply temporal smoothing (EMA) rather than point-in-time multiplication.</div>';
+h += '<div style="margin:4px 0">\u2022 <strong>Secondary adjustments</strong> \u2014 Confidence scaling, contradiction penalties, and position-size clamps applied downstream. Not individually exposed in payload.</div>';
+h += '<div style="margin:4px 0">\u2022 <strong>Presentation rounding</strong> \u2014 Report rounds for display (e.g., C_adjusted to 1 decimal) while internal state carries 6+ decimal places.</div>';
+h += '</div>';
+
+h += '</div>'; // end syw-expanded
+
+h += '</div></div>'; // end collapse-body and card
+
+// PROVENANCE FOOTER
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
 h += '<span>ATLAS V10</span>';
 if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
@@ -1089,179 +1591,369 @@ h += '</div>';
 
 document.getElementById('app').innerHTML = h;
 
-// ── CHARTS ──────────────────────────────────────────
-var chTheme = {
-  textStyle:{color:'#8b949e',fontFamily:'Inter,sans-serif',fontSize:11},
-  tooltip:{backgroundColor:'#161b22',borderColor:'#30363d',textStyle:{color:'#e6edf3',fontSize:12}},
-};
+// ══════════════════════════════════════════════════════
+// CHARTS — all wrapped in initCharts() for theme reinit
+// ══════════════════════════════════════════════════════
+function initCharts(){
+  var c = TC();
 
-// Price Context Chart
-(function(){
-  var el = document.getElementById('ch-price');
-  if(!el) return;
-  var items = [];
-  if(TECH.sma200!=null) items.push({name:'SMA 200',value:TECH.sma200,color:'#f85149'});
-  if(S.stop_loss) items.push({name:'Stop',value:S.stop_loss,color:'#f8514980'});
-  if(TECH.sma50!=null) items.push({name:'SMA 50',value:TECH.sma50,color:'#d29922'});
-  if(S.entry) items.push({name:'Entry',value:S.entry,color:'#d2992280'});
-  if(TECH.sma20!=null) items.push({name:'SMA 20',value:TECH.sma20,color:'#58a6ff'});
-  if(price!=null) items.push({name:'Price',value:price,color:'#3fb950'});
-  if(S.take_profit) items.push({name:'Target Low',value:S.take_profit[0],color:'#3fb95080'});
-  items.sort(function(a,b){return a.value-b.value});
-  var ch = echarts.init(el);
-  ch.setOption({
-    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return p[0].name+': $'+Number(p[0].value).toFixed(2)}},
-    grid:{left:80,right:20,top:10,bottom:24},
-    xAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
-    yAxis:{type:'category',data:items.map(function(x){return x.name}),axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
-    series:[{
-      type:'bar',
-      data:items.map(function(x){return{value:x.value,itemStyle:{color:x.color,borderRadius:[0,2,2,0]}}}),
-      barWidth:14,
-      label:{show:true,position:'right',formatter:function(p){return'$'+Number(p.value).toFixed(2)},color:'#8b949e',fontSize:10,fontFamily:'JetBrains Mono,monospace'}
-    }],
-    animationDuration:400
-  });
-  window.addEventListener('resize',function(){ch.resize()});
-})();
+  // ── Price Context ──
+  (function(){
+    var el = document.getElementById('ch-price');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var items = [];
+    if(TECH.sma200!=null) items.push({name:'SMA 200',value:TECH.sma200,color:c.neg});
+    if(S.stop_loss) items.push({name:'Stop',value:S.stop_loss,color:c.neg+'80'});
+    if(TECH.sma50!=null) items.push({name:'SMA 50',value:TECH.sma50,color:c.warn});
+    if(S.entry) items.push({name:'Entry',value:S.entry,color:c.warn+'80'});
+    if(TECH.sma20!=null) items.push({name:'SMA 20',value:TECH.sma20,color:c.acc});
+    if(price!=null) items.push({name:'Price',value:price,color:c.pos});
+    if(S.take_profit) items.push({name:'Target Low',value:S.take_profit[0],color:c.pos+'80'});
+    items.sort(function(a,b){return a.value-b.value});
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'axis',axisPointer:{type:'shadow'},backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return p[0].name+': $'+Number(p[0].value).toFixed(2)}},
+      grid:{left:80,right:20,top:10,bottom:24},
+      xAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'category',data:items.map(function(x){return x.name}),axisLabel:{color:c.t2,fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+      series:[{type:'bar',data:items.map(function(x){return{value:x.value,itemStyle:{color:x.color,borderRadius:[0,2,2,0]}}}),barWidth:14,label:{show:true,position:'right',formatter:function(p){return'$'+Number(p.value).toFixed(2)},color:c.t2,fontSize:10,fontFamily:'JetBrains Mono,monospace'}}],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
 
-// Engine Waterfall Chart
-(function(){
-  var el = document.getElementById('ch-waterfall');
-  if(!el) return;
-  // Build waterfall data
-  var names=[],baseD=[],posD=[],negD=[];
-  var running=0;
-  for(var i=0;i<ENGINES.length;i++){
-    var e=ENGINES[i],ct=CT[e]||0;
-    names.push(e);
-    if(ct>=0){
-      baseD.push(running);
-      posD.push(ct);
-      negD.push(0);
-    } else {
-      baseD.push(running+ct);
-      posD.push(0);
-      negD.push(Math.abs(ct));
+  // ── Engine Waterfall ──
+  (function(){
+    var el = document.getElementById('ch-waterfall');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var names=[],baseD=[],posD=[],negD=[];
+    var running=0;
+    for(var i=0;i<ENGINES.length;i++){
+      var e=ENGINES[i],ct=CT[e]||0;
+      names.push(e);
+      if(ct>=0){baseD.push(running);posD.push(ct);negD.push(0)}
+      else{baseD.push(running+ct);posD.push(0);negD.push(Math.abs(ct))}
+      running+=ct;
     }
-    running+=ct;
-  }
-  // Total bar
-  names.push('TOTAL');
-  if(running>=0){baseD.push(0);posD.push(running);negD.push(0)}
-  else{baseD.push(running);posD.push(0);negD.push(Math.abs(running))}
+    names.push('TOTAL');
+    if(running>=0){baseD.push(0);posD.push(running);negD.push(0)}
+    else{baseD.push(running);posD.push(0);negD.push(Math.abs(running))}
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'axis',axisPointer:{type:'shadow'},backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){var n=p[0].axisValue,val=0;for(var i=0;i<p.length;i++){if(p[i].seriesIndex>0)val+=p[i].value*(p[i].seriesIndex===1?1:-1)}if(n==='TOTAL')val=running;return n+': '+(val>=0?'+':'')+val.toFixed(2)}},
+      grid:{left:80,right:30,top:10,bottom:24},
+      xAxis:{type:'value',splitLine:{lineStyle:{color:c.border}},axisLabel:{color:c.t2,fontSize:10},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:c.t2,fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+      series:[
+        {type:'bar',stack:'w',data:baseD,itemStyle:{color:'transparent'},emphasis:{itemStyle:{color:'transparent'}},barWidth:12},
+        {type:'bar',stack:'w',name:'pos',data:posD.map(function(v){return{value:v,itemStyle:{color:v>0?c.pos:'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
+        {type:'bar',stack:'w',name:'neg',data:negD.map(function(v){return{value:v,itemStyle:{color:v>0?c.neg:'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
+      ],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
 
-  var ch = echarts.init(el);
-  ch.setOption({
-    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){
-      var n=p[0].axisValue,val=0;
-      for(var i=0;i<p.length;i++){if(p[i].seriesIndex>0)val+=p[i].value*(p[i].seriesIndex===1?1:-1)}
-      if(n==='TOTAL')val=running;
-      return n+': '+(val>=0?'+':'')+val.toFixed(2);
-    }},
-    grid:{left:80,right:30,top:10,bottom:24},
-    xAxis:{type:'value',splitLine:{lineStyle:{color:'#21262d'}},axisLabel:{color:'#8b949e',fontSize:10},axisLine:{lineStyle:{color:'#21262d'}}},
-    yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
-    series:[
-      {type:'bar',stack:'w',data:baseD,itemStyle:{color:'transparent'},emphasis:{itemStyle:{color:'transparent'}},barWidth:12},
-      {type:'bar',stack:'w',name:'pos',data:posD.map(function(v){return{value:v,itemStyle:{color:v>0?'#3fb950':'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
-      {type:'bar',stack:'w',name:'neg',data:negD.map(function(v){return{value:v,itemStyle:{color:v>0?'#f85149':'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
-    ],
-    animationDuration:400
-  });
-  window.addEventListener('resize',function(){ch.resize()});
-})();
+  // ── Regime Vector ──
+  (function(){
+    var el = document.getElementById('ch-regime');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var names=[],vals=[],colors=[];
+    for(var i=0;i<RF.length;i++){
+      var key=RF[i][0],label=RF[i][1],v=RV[key];
+      if(v==null) continue;
+      names.push(label);
+      vals.push(Number((v*100).toFixed(0)));
+      colors.push(key==='TS'?c.acc:(v>0.5?c.neg:v>0.25?c.warn:c.pos));
+    }
+    if(!names.length) return;
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'axis',axisPointer:{type:'shadow'},backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return p[0].name+': '+p[0].value+'%'}},
+      grid:{left:100,right:30,top:10,bottom:24},
+      xAxis:{type:'value',max:100,axisLabel:{formatter:'{value}%',color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:c.t2,fontSize:11},axisLine:{show:false},axisTick:{show:false}},
+      series:[{type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[0,2,2,0]}}}),barWidth:10,label:{show:true,position:'right',formatter:'{c}%',color:c.t2,fontSize:10,fontFamily:'JetBrains Mono,monospace'}}],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
 
-// Regime Vector Chart
-(function(){
-  var el = document.getElementById('ch-regime');
-  if(!el) return;
-  var names=[],vals=[],colors=[];
-  for(var i=0;i<RF.length;i++){
-    var key=RF[i][0],label=RF[i][1],v=RV[key];
-    if(v==null) continue;
-    names.push(label);
-    vals.push(Number((v*100).toFixed(0)));
-    // Red for high-risk features, blue for trend
-    colors.push(key==='TS'?'#58a6ff':(v>0.5?'#f85149':v>0.25?'#d29922':'#3fb950'));
-  }
-  if(!names.length) return;
-  var ch = echarts.init(el);
-  ch.setOption({
-    tooltip:{trigger:'axis',axisPointer:{type:'shadow'},formatter:function(p){return p[0].name+': '+p[0].value+'%'}},
-    grid:{left:100,right:30,top:10,bottom:24},
-    xAxis:{type:'value',max:100,axisLabel:{formatter:'{value}%',color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
-    yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:'#8b949e',fontSize:11},axisLine:{show:false},axisTick:{show:false}},
-    series:[{
-      type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[0,2,2,0]}}}),
-      barWidth:10,
-      label:{show:true,position:'right',formatter:'{c}%',color:'#8b949e',fontSize:10,fontFamily:'JetBrains Mono,monospace'}
-    }],
-    animationDuration:400
-  });
-  window.addEventListener('resize',function(){ch.resize()});
-})();
+  // ── DCF Chart ──
+  (function(){
+    var el = document.getElementById('ch-dcf');
+    if(!el||!DCF) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var names=['Bear','Base','Bull'];
+    var vals=[DCF.bear,DCF.base,DCF.bull];
+    var colors=[c.neg,c.warn,c.pos];
+    var ch = echarts.init(el);
+    var opt = {
+      tooltip:{trigger:'axis',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){var s='';for(var i=0;i<p.length;i++){if(p[i].value!=null)s+=p[i].name+': $'+Number(p[i].value).toFixed(2);if(price&&p[i].value){var up=((p[i].value-price)/price*100);s+=' ('+(up>=0?'+':'')+up.toFixed(1)+'%)';}s+='<br>';}return s}},
+      grid:{left:60,right:20,top:30,bottom:24},
+      xAxis:{type:'category',data:names,axisLabel:{color:c.t2},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      series:[{type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[2,2,0,0]}}}),barWidth:36,label:{show:true,position:'top',formatter:function(p){return'$'+Number(p.value).toFixed(0)},color:c.t1,fontSize:11,fontFamily:'JetBrains Mono,monospace'}}]
+    };
+    if(price) opt.series.push({type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:c.acc,type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'Price $'+f(price,2),color:c.acc,fontSize:10,fontFamily:'JetBrains Mono,monospace'}}]},data:[]});
+    opt.animationDuration = 400;
+    ch.setOption(opt);
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
 
-// DCF Chart
-(function(){
-  var el = document.getElementById('ch-dcf');
-  if(!el||!DCF) return;
-  var names=['Bear','Base','Bull'];
-  var vals=[DCF.bear,DCF.base,DCF.bull];
-  var colors=['#f85149','#d29922','#3fb950'];
-  var ch = echarts.init(el);
-  var opt = {
-    tooltip:{trigger:'axis',formatter:function(p){
-      var s='';
-      for(var i=0;i<p.length;i++){
-        if(p[i].value!=null) s+=p[i].name+': $'+Number(p[i].value).toFixed(2);
-        if(price&&p[i].value){var up=((p[i].value-price)/price*100);s+=' ('+(up>=0?'+':'')+up.toFixed(1)+'%)';}
-        s+='<br>';
+  // ── Earnings Surprise ──
+  (function(){
+    var el = document.getElementById('ch-earn');
+    if(!el||!EARN.length) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var dates=[],surprises=[],colors=[];
+    for(var i=EARN.length-1;i>=0;i--){
+      dates.push(EARN[i].date||'Q'+(EARN.length-i));
+      var s=EARN[i].surprise||0;
+      surprises.push(Number(s.toFixed(1)));
+      colors.push(EARN[i].beat?c.pos:c.neg);
+    }
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'axis',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return p[0].name+': '+(p[0].value>=0?'+':'')+p[0].value+'% '+(p[0].value>=0?'BEAT':'MISS')}},
+      grid:{left:60,right:20,top:10,bottom:24},
+      xAxis:{type:'category',data:dates,axisLabel:{color:c.t2,fontSize:10,rotate:30},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'value',axisLabel:{formatter:'{value}%',color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      series:[{type:'bar',data:surprises.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:v>=0?[2,2,0,0]:[0,0,2,2]}}}),barWidth:20,label:{show:true,position:'top',formatter:function(p){return(p.value>=0?'+':'')+p.value+'%'},color:c.t2,fontSize:9,fontFamily:'JetBrains Mono,monospace'}}],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Quality Score Donut ──
+  (function(){
+    var el = document.getElementById('ch-donut');
+    if(!el||!V9.business_quality) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'item',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return p.name+': '+p.value.toFixed(1)+'/5'}},
+      series:[{
+        type:'pie',radius:['50%','72%'],center:['50%','50%'],
+        label:{show:false},
+        data:[
+          {value:V9.business_quality||0,name:'Business Quality',itemStyle:{color:c.acc}},
+          {value:V9.moat_durability||0,name:'Moat Durability',itemStyle:{color:c.warn}},
+          {value:V9.capital_allocation||0,name:'Capital Allocation',itemStyle:{color:c.pos}},
+        ],
+        emphasis:{itemStyle:{shadowBlur:8,shadowColor:'rgba(0,0,0,0.3)'}},
+        animationDuration:600
+      }],
+      graphic:[{type:'text',left:'center',top:'center',style:{text:(V9.conviction||0)+'\nConviction',fill:c.t1,fontSize:14,fontFamily:'JetBrains Mono,monospace',fontWeight:600,textAlign:'center',lineHeight:20}}]
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── IV Sensitivity Heatmap ──
+  (function(){
+    var el = document.getElementById('ch-heatmap');
+    if(!el||!DCF||!DCF.assumptions) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var a=DCF.assumptions;
+    var baseR=a.discount_rate/100, baseG=a.terminal_growth/100;
+    if(baseR<=baseG||baseR<=0) return;
+    var baseFV=DCF.base;
+    if(!baseFV||baseFV<=0) return;
+    var baseTVratio=(1+baseG)/(baseR-baseG);
+
+    var rs=[baseR+0.02, baseR+0.01, baseR, baseR-0.01, baseR-0.02];
+    var gs=[baseG-0.01, baseG-0.005, baseG, baseG+0.005, baseG+0.01];
+    var rLabels=rs.map(function(r){return(r*100).toFixed(1)+'%'});
+    var gLabels=gs.map(function(g){return(g*100).toFixed(1)+'%'});
+
+    var data=[],min=Infinity,max=-Infinity;
+    for(var yi=0;yi<rs.length;yi++){
+      for(var xi=0;xi<gs.length;xi++){
+        var r=rs[yi], g=gs[xi];
+        if(r<=g||r<=0){data.push([xi,yi,null]);continue;}
+        var ratio=(1+g)/(r-g)/baseTVratio;
+        var fv=Math.round(baseFV*ratio*100)/100;
+        data.push([xi,yi,fv]);
+        if(fv<min)min=fv;
+        if(fv>max)max=fv;
       }
-      return s;
-    }},
-    grid:{left:60,right:20,top:30,bottom:24},
-    xAxis:{type:'category',data:names,axisLabel:{color:'#8b949e'},axisLine:{lineStyle:{color:'#21262d'}}},
-    yAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
-    series:[{
-      type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:[2,2,0,0]}}}),
-      barWidth:36,
-      label:{show:true,position:'top',formatter:function(p){return'$'+Number(p.value).toFixed(0)},color:'#e6edf3',fontSize:11,fontFamily:'JetBrains Mono,monospace'}
-    }]
-  };
-  // Current price reference line
-  if(price) opt.series.push({type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:'#58a6ff',type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'Price $'+f(price,2),color:'#58a6ff',fontSize:10,fontFamily:'JetBrains Mono,monospace'}}]},data:[]});
-  opt.animationDuration = 400;
-  ch.setOption(opt);
-  window.addEventListener('resize',function(){ch.resize()});
-})();
+    }
 
-// Earnings Surprise Chart
-(function(){
-  var el = document.getElementById('ch-earn');
-  if(!el||!EARN.length) return;
-  var dates=[],surprises=[],colors=[];
-  for(var i=EARN.length-1;i>=0;i--){
-    dates.push(EARN[i].date||'Q'+(EARN.length-i));
-    var s=EARN[i].surprise||0;
-    surprises.push(Number(s.toFixed(1)));
-    colors.push(EARN[i].beat?'#3fb950':'#f85149');
-  }
-  var ch = echarts.init(el);
-  ch.setOption({
-    tooltip:{trigger:'axis',formatter:function(p){return p[0].name+': '+(p[0].value>=0?'+':'')+p[0].value+'% '+(p[0].value>=0?'BEAT':'MISS')}},
-    grid:{left:60,right:20,top:10,bottom:24},
-    xAxis:{type:'category',data:dates,axisLabel:{color:'#8b949e',fontSize:10,rotate:30},axisLine:{lineStyle:{color:'#21262d'}}},
-    yAxis:{type:'value',axisLabel:{formatter:'{value}%',color:'#8b949e',fontSize:10},splitLine:{lineStyle:{color:'#21262d'}},axisLine:{lineStyle:{color:'#21262d'}}},
-    series:[{
-      type:'bar',data:surprises.map(function(v,i){return{value:v,itemStyle:{color:colors[i],borderRadius:v>=0?[2,2,0,0]:[0,0,2,2]}}}),
-      barWidth:20,
-      label:{show:true,position:'top',formatter:function(p){return(p.value>=0?'+':'')+p.value+'%'},color:'#8b949e',fontSize:9,fontFamily:'JetBrains Mono,monospace'}
-    }],
-    animationDuration:400
-  });
-  window.addEventListener('resize',function(){ch.resize()});
-})();
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{position:'top',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){if(p.value[2]==null)return'Invalid (r\u2264g)';return'WACC: '+rLabels[p.value[1]]+'<br>Terminal g: '+gLabels[p.value[0]]+'<br>Fair Value: $'+p.value[2].toFixed(2)+(price?'<br>vs Price: '+(((p.value[2]-price)/price)*100).toFixed(1)+'%':'')}},
+      grid:{left:70,right:20,top:10,bottom:70},
+      xAxis:{type:'category',data:gLabels,name:'Terminal Growth',nameLocation:'middle',nameGap:35,axisLabel:{color:c.t2,fontSize:10},nameTextStyle:{color:c.t3,fontSize:11},splitArea:{show:false}},
+      yAxis:{type:'category',data:rLabels,name:'WACC',nameLocation:'middle',nameGap:50,axisLabel:{color:c.t2,fontSize:10},nameTextStyle:{color:c.t3,fontSize:11},splitArea:{show:false}},
+      visualMap:{min:min,max:max,calculable:false,orient:'horizontal',left:'center',bottom:0,inRange:{color:[c.neg,c.warn,c.pos]},textStyle:{color:c.t2,fontSize:10},itemWidth:12,itemHeight:80},
+      series:[{
+        type:'heatmap',data:data,
+        label:{show:true,formatter:function(p){return p.value[2]!=null?'$'+Math.round(p.value[2]):''},color:c.t1,fontSize:10,fontFamily:'JetBrains Mono,monospace'},
+        emphasis:{itemStyle:{shadowBlur:8,shadowColor:'rgba(0,0,0,0.4)'}},
+        itemStyle:{borderWidth:2,borderColor:c.bg1}
+      }],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Peer Scatter Plot ──
+  (function(){
+    var el = document.getElementById('ch-scatter');
+    if(!el||!PEERS.length) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+
+    var allData = [];
+    // Add subject company
+    if(FIN.forward_pe&&FIN.revenue_growth!=null){
+      allData.push({
+        value:[FIN.forward_pe, FIN.revenue_growth, Math.max(5, Math.min(40, Math.sqrt((FIN.market_cap||CO.market_cap||1e9)/1e9)*4)), FIN.net_margin||0],
+        name:D.symbol,
+        itemStyle:{color:c.acc,borderColor:c.t1,borderWidth:2}
+      });
+    }
+    for(var i=0;i<PEERS.length;i++){
+      var p=PEERS[i];
+      if(p.forward_pe&&p.revenue_growth!=null){
+        var mc=p.market_cap||1e9;
+        var nm=p.profit_margin||0;
+        var col=nm>15?c.pos:nm>5?c.warn:c.neg;
+        allData.push({
+          value:[p.forward_pe, p.revenue_growth, Math.max(5, Math.min(30, Math.sqrt(mc/1e9)*4)), nm],
+          name:p.symbol||'',
+          itemStyle:{color:col,opacity:0.7}
+        });
+      }
+    }
+    if(!allData.length) return;
+
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return'<strong>'+p.name+'</strong><br>Fwd P/E: '+p.value[0].toFixed(1)+'x<br>Rev Growth: '+p.value[1].toFixed(1)+'%<br>Net Margin: '+p.value[3].toFixed(1)+'%'}},
+      grid:{left:60,right:30,top:20,bottom:50},
+      xAxis:{name:'Forward P/E',nameLocation:'middle',nameGap:30,type:'value',axisLabel:{color:c.t2,fontSize:10,formatter:'{value}x'},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLine:{lineStyle:{color:c.border}},nameTextStyle:{color:c.t3,fontSize:11}},
+      yAxis:{name:'Revenue Growth',nameLocation:'middle',nameGap:40,type:'value',axisLabel:{color:c.t2,fontSize:10,formatter:'{value}%'},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLine:{lineStyle:{color:c.border}},nameTextStyle:{color:c.t3,fontSize:11}},
+      series:[{type:'scatter',data:allData,symbolSize:function(d){return d[2]},label:{show:true,formatter:function(p){return p.name},position:'top',color:c.t2,fontSize:9,fontFamily:'JetBrains Mono,monospace'}}],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Margin vs Growth Quadrant ──
+  (function(){
+    var el = document.getElementById('ch-quadrant');
+    if(!el||!PEERS.length) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var qData = [];
+    // Add subject company
+    if(FIN.net_margin!=null && FIN.revenue_growth!=null){
+      qData.push({value:[FIN.revenue_growth, FIN.net_margin, Math.max(8,Math.min(40,Math.sqrt((FIN.market_cap||CO.market_cap||1e9)/1e9)*4))],name:D.symbol,itemStyle:{color:c.acc,borderColor:c.t1,borderWidth:2}});
+    }
+    for(var i=0;i<PEERS.length;i++){
+      var p=PEERS[i];
+      if(p.profit_margin!=null && p.revenue_growth!=null){
+        qData.push({value:[p.revenue_growth, p.profit_margin, Math.max(6,Math.min(30,Math.sqrt((p.market_cap||1e9)/1e9)*4))],name:p.symbol||'',itemStyle:{color:c.t2,opacity:0.7}});
+      }
+    }
+    if(!qData.length) return;
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12},formatter:function(p){return'<strong>'+p.name+'</strong><br>Rev Growth: '+p.value[0].toFixed(1)+'%<br>Net Margin: '+p.value[1].toFixed(1)+'%'}},
+      grid:{left:60,right:30,top:30,bottom:50},
+      xAxis:{name:'Revenue Growth %',nameLocation:'middle',nameGap:30,type:'value',axisLabel:{color:c.t2,fontSize:10,formatter:'{value}%'},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLine:{lineStyle:{color:c.border}},nameTextStyle:{color:c.t3,fontSize:11}},
+      yAxis:{name:'Net Margin %',nameLocation:'middle',nameGap:40,type:'value',axisLabel:{color:c.t2,fontSize:10,formatter:'{value}%'},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLine:{lineStyle:{color:c.border}},nameTextStyle:{color:c.t3,fontSize:11}},
+      series:[{type:'scatter',data:qData,symbolSize:function(d){return d[2]},label:{show:true,formatter:function(p){return p.name},position:'top',color:c.t2,fontSize:9,fontFamily:'JetBrains Mono,monospace'}}],
+      graphic:[
+        {type:'text',left:'85%',top:'5%',style:{text:'High Margin\nHigh Growth',fill:c.pos,fontSize:9,opacity:0.5,textAlign:'center',fontFamily:'Inter,sans-serif'}},
+        {type:'text',left:'10%',top:'5%',style:{text:'High Margin\nLow Growth',fill:c.warn,fontSize:9,opacity:0.5,textAlign:'center',fontFamily:'Inter,sans-serif'}},
+        {type:'text',left:'85%',bottom:'15%',style:{text:'Low Margin\nHigh Growth',fill:c.warn,fontSize:9,opacity:0.5,textAlign:'center',fontFamily:'Inter,sans-serif'}},
+        {type:'text',left:'10%',bottom:'15%',style:{text:'Low Margin\nLow Growth',fill:c.neg,fontSize:9,opacity:0.5,textAlign:'center',fontFamily:'Inter,sans-serif'}}
+      ],
+      animationDuration:400
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Trade Quality Radar ──
+  (function(){
+    var el = document.getElementById('ch-radar');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var compMag = comp!=null?Math.min(100, Math.abs(comp)):0;
+    var dcVal = dc||0;
+    var relVal = (rel||0)*100;
+    var tqVal = (tq||0)*1000; // scale for visibility (0-1 -> 0-1000, cap at 100)
+    tqVal = Math.min(100, tqVal);
+
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:12}},
+      radar:{
+        indicator:[
+          {name:'|Composite|',max:100},
+          {name:'Data Confidence',max:100},
+          {name:'Reliability',max:100},
+          {name:'Trade Quality',max:100}
+        ],
+        shape:'polygon',
+        splitNumber:4,
+        axisName:{color:c.t2,fontSize:10},
+        splitLine:{lineStyle:{color:c.border}},
+        splitArea:{areaStyle:{color:['transparent','transparent']}},
+        axisLine:{lineStyle:{color:c.border}}
+      },
+      series:[{
+        type:'radar',
+        data:[{
+          value:[compMag, dcVal, relVal, tqVal],
+          name:'Trade Quality',
+          areaStyle:{color:c.acc,opacity:0.15},
+          lineStyle:{color:c.acc,width:2},
+          itemStyle:{color:c.acc}
+        }],
+        animationDuration:600
+      }]
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Systemic Risk Dial (Gauge) ──
+  (function(){
+    var el = document.getElementById('ch-risk-dial');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var sr2 = S.risk_structural||0;
+    var tr2 = S.risk_tactical||0;
+    var rTotal = Math.min(100, ((sr2+tr2)/2)*100);
+    var ch = echarts.init(el);
+    ch.setOption({
+      series:[{
+        type:'gauge',
+        startAngle:180,endAngle:0,
+        min:0,max:100,
+        center:['50%','80%'],radius:'110%',
+        splitNumber:4,
+        axisLine:{lineStyle:{width:14,color:[[0.3,c.pos],[0.6,c.warn],[1,c.neg]]}},
+        axisTick:{show:false},
+        splitLine:{length:6,lineStyle:{color:'auto',width:2}},
+        axisLabel:{distance:-28,color:c.t3,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:function(v){return v+'%'}},
+        pointer:{length:'60%',width:4,itemStyle:{color:'auto'}},
+        anchor:{show:true,size:6,itemStyle:{borderWidth:2,borderColor:'auto'}},
+        title:{show:true,offsetCenter:[0,'-20%'],fontSize:10,color:c.t3,fontWeight:500},
+        detail:{valueAnimation:true,fontSize:16,fontFamily:'JetBrains Mono,monospace',fontWeight:700,offsetCenter:[0,'10%'],formatter:function(v){return v.toFixed(0)+'%'},color:rTotal>50?c.neg:rTotal>30?c.warn:c.pos},
+        data:[{value:Math.round(rTotal),name:'Systemic Risk'}],
+        animationDuration:800
+      }]
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+}
+
+// Initialize all charts
+initCharts();
 
 // ── Table Sorting ───────────────────────────────────
 var sortState = {};
@@ -1270,7 +1962,6 @@ function sortTbl(id, col) {
   if (!tbl) return;
   var tbody = tbl.querySelector('tbody');
   var rows = Array.from(tbody.querySelectorAll('tr'));
-  // Keep last row (TOTAL) in place for engine table
   var lastRow = null;
   if (id === 'tbl-eng' && rows.length > 0) {
     var lastTd = rows[rows.length-1].querySelector('td');
@@ -1278,7 +1969,6 @@ function sortTbl(id, col) {
       lastRow = rows.pop();
     }
   }
-  // Keep first row (subject) highlighted for peers table
   var firstRow = null;
   if (id === 'tbl-peers' && rows.length > 0 && rows[0].classList.contains('tr-hl')) {
     firstRow = rows.shift();
@@ -1298,6 +1988,17 @@ function sortTbl(id, col) {
   if (firstRow) tbody.appendChild(firstRow);
   for (var i = 0; i < rows.length; i++) tbody.appendChild(rows[i]);
   if (lastRow) tbody.appendChild(lastRow);
+}
+
+// ── Show Your Work: Standard / Expanded Toggle ──
+function sywToggle(mode){
+  var btns=document.querySelectorAll('#syw-mode button');
+  btns[0].className=mode==='standard'?'active':'';
+  btns[1].className=mode==='expanded'?'active':'';
+  btns[0].setAttribute('aria-selected',mode==='standard'?'true':'false');
+  btns[1].setAttribute('aria-selected',mode==='expanded'?'true':'false');
+  document.getElementById('syw-standard').style.display=mode==='standard'?'block':'none';
+  document.getElementById('syw-expanded').style.display=mode==='expanded'?'block':'none';
 }
 </script>
 </body>
