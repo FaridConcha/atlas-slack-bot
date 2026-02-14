@@ -8,6 +8,7 @@ V10 upgrade: Buffett-aligned reasoning order — business durability first,
 intrinsic value second, margin of safety third, then regime/timing last.
 """
 
+import re
 import time
 import logging
 
@@ -60,7 +61,7 @@ def init_groq(api_key):
     try:
         from groq import Groq
         _client = Groq(api_key=api_key)
-        print(f"[GROQ] Client initialized (key: {api_key[:8]}...)")
+        print("[GROQ] Client initialized (key: [REDACTED])")
         return True
     except Exception as e:
         print(f"[GROQ] Init FAILED: {e}")
@@ -206,6 +207,7 @@ def generate_v9_narrative(v9_scores, summary, v8_extended):
         if len(narrative) > 1200:
             narrative = narrative[:1150] + "\n\n_[Narrative truncated]_"
 
+        narrative = _sanitize_llm_output(narrative)
         print(f"[V10_NARRATIVE] Generated {len(narrative)} chars")
         return narrative
 
@@ -473,6 +475,25 @@ def build_context(symbol, summary, v8_extended):
 
 
 # ============================================================================
+# SANITIZATION HELPERS
+# ============================================================================
+
+_SLACK_MENTION_RE = re.compile(r'<!(?:channel|here|everyone)>|<@channel>')
+
+
+def _sanitize_question(text):
+    """Strip control characters and limit length for user questions."""
+    # Remove control characters (keep newlines and tabs)
+    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    return cleaned[:500]
+
+
+def _sanitize_llm_output(text):
+    """Strip Slack broadcast mentions from LLM output."""
+    return _SLACK_MENTION_RE.sub('', text)
+
+
+# ============================================================================
 # Q&A FUNCTION
 # ============================================================================
 
@@ -494,6 +515,9 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
 
     if _client is None:
         return ":warning: Groq AI is not configured. Set `GROQ_API_KEY` in your environment."
+
+    # Sanitize user input
+    question = _sanitize_question(question)
 
     # Rate limiting
     elapsed = time.time() - _last_call_time
@@ -538,7 +562,7 @@ def ask(question, symbol, summary, v8_extended, conversation_history=None):
             if len(answer) > 3800:
                 answer = answer[:3750] + "\n\n_[Response truncated]_"
 
-            return answer
+            return _sanitize_llm_output(answer)
 
         except Exception as e:
             last_error = e

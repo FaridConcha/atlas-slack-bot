@@ -67,6 +67,13 @@ CACHE_TTL_HOURS = 4
 CACHE_MAX_SIZE = 50
 _thread_cache = {}  # {thread_ts: {symbol, summary, v8_extended, timestamp, conversation_history}}
 
+# Per-user rate limiting
+_RATE_LIMIT_SECONDS = 60
+_user_last_analysis = {}  # {user_id: timestamp}
+
+# Slack broadcast mention pattern (strip from LLM output)
+_SLACK_BROADCAST_RE = re.compile(r'<!(?:channel|here|everyone)>|<@channel>')
+
 # Cold-start / shutdown state
 _boot_time = time.time()
 _boot_complete = False
@@ -90,6 +97,11 @@ def _cleanup_cache():
 
     if expired:
         print(f"[CACHE] Cleaned {len(expired)} thread(s). Active: {len(_thread_cache)}")
+
+
+def _sanitize_slack_output(text):
+    """Strip @channel/@here/@everyone broadcast mentions from text."""
+    return _SLACK_BROADCAST_RE.sub('', text)
 
 
 def parse_mention(text):
@@ -183,6 +195,19 @@ def handle_atlas_mention(event, say, client):
 
     # Parse which symbol they want
     symbol = parse_mention(text)
+
+    # Per-user rate limiting (skip for help command)
+    if 'HELP' not in text.upper():
+        now = time.time()
+        last = _user_last_analysis.get(user, 0)
+        if now - last < _RATE_LIMIT_SECONDS:
+            remaining = int(_RATE_LIMIT_SECONDS - (now - last))
+            say(
+                text=f":hourglass: Please wait {remaining}s before requesting another analysis.",
+                thread_ts=thread_ts,
+            )
+            return
+        _user_last_analysis[user] = now
 
     # Check for help command
     if 'HELP' in text.upper():
@@ -281,7 +306,7 @@ def handle_atlas_mention(event, say, client):
                     # Store narrative in v8_extended for web dashboard persistence
                     v9_scores['v9_narrative'] = v9_narrative
                     # Insert narrative as second message (after Owner Assessment)
-                    narrative_msg = f":classical_building: *V10 NARRATIVE ASSESSMENT — {symbol}*\n\n{v9_narrative}"
+                    narrative_msg = f":classical_building: *V10 NARRATIVE ASSESSMENT — {symbol}*\n\n{_sanitize_slack_output(v9_narrative)}"
                     v8_messages.insert(1, narrative_msg)
             except Exception as e:
                 print(f"[BOT] V10 narrative generation failed (non-fatal): {e}")
@@ -459,7 +484,7 @@ def handle_message_events(event, say, client, logger):
         except Exception:
             pass
 
-    say(text=answer, thread_ts=thread_ts)
+    say(text=_sanitize_slack_output(answer), thread_ts=thread_ts)
 
 
 # ============================================================================

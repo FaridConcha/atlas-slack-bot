@@ -74,6 +74,23 @@ def _make_serializable(obj: Any) -> Any:
     return str(obj)
 
 
+_REPORT_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,120}$')
+
+
+def _cleanup_old_reports():
+    """Delete reports older than 30 days."""
+    conn = _get_db()
+    try:
+        conn.execute(
+            "DELETE FROM reports WHERE created_at < datetime('now', '-30 days')"
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
 def generate_and_store_report(
     symbol: str,
     company_name: str | None,
@@ -120,11 +137,15 @@ def generate_and_store_report(
     report_url = f"{ATLAS_WEB_BASE_URL}/r/{report_id}"
     print(f"[WEB_REPORT] Stored {report_id} ({len(payload_json)} bytes) → {report_url}")
 
+    _cleanup_old_reports()
+
     return {"report_id": report_id, "report_url": report_url}
 
 
 def get_report(report_id: str) -> dict | None:
     """Fetch a stored report by ID. Returns parsed payload dict or None."""
+    if not _REPORT_ID_RE.match(report_id):
+        return None
     conn = _get_db()
     try:
         row = conn.execute(

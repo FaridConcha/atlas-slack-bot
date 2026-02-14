@@ -9,17 +9,45 @@ Run locally:
 
 Routes:
     GET /r/{report_id}          → HTML dashboard (ECharts + Tailwind CDN)
-    GET /api/r/{report_id}.json → Raw payload JSON
     GET /health                 → Health check
+    GET /robots.txt             → Disallow all crawlers
 """
 
 import json
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+import re
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 from web_report import get_report
 
+_REPORT_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,120}$')
+
 app = FastAPI(title="ATLAS Web Reports", docs_url=None, redoc_url=None)
+
+# GZip compression for large HTML responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    # Private, no-store for report pages
+    if request.url.path.startswith("/r/"):
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.get("/health")
@@ -27,16 +55,15 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/r/{report_id}.json")
-def api_report(report_id: str):
-    payload = get_report(report_id)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return JSONResponse(content=payload)
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots_txt():
+    return "User-agent: *\nDisallow: /"
 
 
 @app.get("/r/{report_id}", response_class=HTMLResponse)
 def html_report(report_id: str):
+    if not _REPORT_ID_RE.match(report_id):
+        raise HTTPException(status_code=400, detail="Invalid report ID")
     payload = get_report(report_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Report not found")

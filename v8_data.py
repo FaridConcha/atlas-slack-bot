@@ -265,18 +265,6 @@ def _safe_info(ticker):
         return {}
 
 
-def _pct_return(hist, days_back):
-    """Compute return from days_back to current."""
-    if hist is None or len(hist) < 2:
-        return 0.0
-    current = float(hist['Close'].iloc[-1])
-    idx = min(days_back, len(hist) - 1)
-    past = float(hist['Close'].iloc[-idx - 1]) if idx < len(hist) else float(hist['Close'].iloc[0])
-    if past == 0:
-        return 0.0
-    return round((current / past - 1) * 100, 2)
-
-
 def _score_sentiment(title):
     """Simple keyword-based sentiment scoring."""
     title_lower = title.lower()

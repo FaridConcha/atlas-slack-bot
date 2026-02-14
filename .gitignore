@@ -13,3 +13,9 @@ state/
 
 # Temp data
 /tmp/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+reports.db

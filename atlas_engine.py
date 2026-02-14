@@ -26,7 +26,6 @@ import csv
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-import os
 
 # ============================================================================
 # SECTION 1: IMPORTS + ATLAS_CONFIG
@@ -60,7 +59,7 @@ def safe_float(val, default=0.0):
     """Convert value to float safely."""
     try:
         return float(val) if val else default
-    except:
+    except (ValueError, TypeError):
         return default
 
 def sma(prices, period):
@@ -131,7 +130,7 @@ def slope(prices, period=5):
     try:
         coeffs = np.polyfit(x, y, 1)
         return coeffs[0]
-    except:
+    except (ValueError, TypeError):
         return 0.0
 
 # ============================================================================
@@ -1002,7 +1001,7 @@ def load_meta_state(state_dir):
         try:
             with open(state_path, 'r') as f:
                 return json.load(f)
-        except:
+        except (ValueError, TypeError):
             pass
 
     # Cold start defaults
