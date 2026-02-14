@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-ATLAS V8 — Full-Spectrum Report Formatter
-Transforms engine output + extended data into a 10-section Slack report.
+ATLAS V9 — Full-Spectrum Report Formatter
+Transforms engine output + extended data into an 11-section Slack report.
+
+V9 adds a Buffett-aligned Owner Assessment layer on top of V8 quant signals.
+Interpretation shifts from "signal says BUY" to "would a rational capital
+allocator buy this entire business at this price?"
 
 Each section is delivered as a separate threaded Slack message (<4000 chars each).
 Design: Dense data in tables, natural language in narratives, everything in context.
@@ -227,6 +231,432 @@ def _v8_verdict_label(score):
     if score >= 15:
         return "SELL"
     return "STRONG SELL"
+
+
+# ============================================================================
+# V9 OWNER INTELLIGENCE LAYER
+# ============================================================================
+
+def _compute_v9_owner_scores(summary, v8_data):
+    """
+    Compute Buffett-aligned owner intelligence scores.
+
+    Returns dict with:
+        business_quality (0-5), moat_durability (0-5),
+        capital_allocation (0-5), mos_pct (float),
+        intrinsic_value_base (float), v9_decision (str),
+        required_mos (float), business_type (str),
+        conviction (0-100), permanent_loss_risks (list)
+    """
+    fin = v8_data.get('financials', {})
+    co = v8_data.get('company', {})
+    dcf = v8_data.get('dcf', {})
+    inst = v8_data.get('institutional', {})
+    earnings = v8_data.get('earnings', [])
+    price = co.get('price', 0)
+
+    # --- Business Quality Score (0-5) ---
+    bq = 0.0
+    roe = fin.get('roe', 0)
+    if roe > 25:
+        bq += 1.2
+    elif roe > 15:
+        bq += 0.8
+    elif roe > 10:
+        bq += 0.4
+
+    nm = fin.get('net_margin', 0)
+    if nm > 20:
+        bq += 1.0
+    elif nm > 12:
+        bq += 0.6
+    elif nm > 5:
+        bq += 0.3
+
+    rg = fin.get('revenue_growth', 0)
+    if rg > 10:
+        bq += 0.8
+    elif rg > 3:
+        bq += 0.5
+    elif rg > 0:
+        bq += 0.2
+    elif rg < -5:
+        bq -= 0.5
+
+    fcf = fin.get('free_cash_flow', 0)
+    if fcf > 0:
+        bq += 0.5
+        fcf_yield = fin.get('fcf_yield', 0)
+        if fcf_yield > 5:
+            bq += 0.3
+    else:
+        bq -= 0.5
+
+    de = fin.get('debt_equity', 0)
+    if de < 0.5:
+        bq += 0.5
+    elif de < 1.0:
+        bq += 0.2
+    elif de > 2.0:
+        bq -= 0.5
+
+    if earnings:
+        beat_rate = sum(1 for e in earnings if e.get('beat', False)) / len(earnings)
+        if beat_rate > 0.75:
+            bq += 0.5
+        elif beat_rate > 0.5:
+            bq += 0.2
+        elif beat_rate < 0.25:
+            bq -= 0.3
+
+    business_quality = max(0, min(5, round(bq, 1)))
+
+    # --- Moat Durability Score (0-5) ---
+    moat = 0.0
+    gm = fin.get('gross_margin', 0)
+    if gm > 50:
+        moat += 1.5  # Strong pricing power
+    elif gm > 35:
+        moat += 1.0
+    elif gm > 20:
+        moat += 0.4
+
+    om = fin.get('operating_margin', 0)
+    if om > 25:
+        moat += 1.0
+    elif om > 15:
+        moat += 0.6
+    elif om > 8:
+        moat += 0.3
+
+    mc = fin.get('market_cap', 0) or co.get('market_cap', 0)
+    if mc > 200e9:
+        moat += 0.8  # Scale advantage
+    elif mc > 50e9:
+        moat += 0.5
+    elif mc > 10e9:
+        moat += 0.2
+
+    if roe > 20 and nm > 15:
+        moat += 0.7  # Sustainable competitive advantage indicator
+
+    ic = fin.get('interest_coverage', 0)
+    if ic > 15:
+        moat += 0.5
+    elif ic > 8:
+        moat += 0.3
+
+    moat_durability = max(0, min(5, round(moat, 1)))
+
+    # --- Capital Allocation Score (0-5) ---
+    ca = 0.0
+
+    # ROIC proxy vs WACC proxy
+    roic_proxy = roe * (1 - de / (1 + de)) if de >= 0 and (1 + de) > 0 else roe
+    wacc_proxy = 8.0  # Rough estimate
+    if roic_proxy > wacc_proxy * 2:
+        ca += 1.5
+    elif roic_proxy > wacc_proxy:
+        ca += 1.0
+    elif roic_proxy > 0:
+        ca += 0.3
+
+    # Buyback discipline
+    bb = fin.get('buyback_yield', 0)
+    fwd_pe = fin.get('forward_pe', 0)
+    if bb > 0:
+        if fwd_pe > 0 and fwd_pe < 20:
+            ca += 1.0  # Buying back at reasonable valuation
+        elif fwd_pe > 30:
+            ca += 0.2  # Buying back at high valuation — questionable
+        else:
+            ca += 0.6
+
+    # Dividend discipline
+    dy = fin.get('dividend_yield', 0)
+    pr = fin.get('payout_ratio', 0)
+    if dy > 0 and pr > 0 and pr < 60:
+        ca += 0.5  # Sustainable dividend
+    elif pr > 90:
+        ca -= 0.3  # Unsustainable payout
+
+    # Debt discipline
+    nd_ebitda = fin.get('net_debt_ebitda', 0)
+    if nd_ebitda < 1:
+        ca += 0.8
+    elif nd_ebitda < 2:
+        ca += 0.4
+    elif nd_ebitda > 4:
+        ca -= 0.5
+
+    # Conservative if large cash position
+    total_cash = fin.get('total_cash', 0)
+    total_debt = fin.get('total_debt', 0)
+    if total_cash > total_debt:
+        ca += 0.5
+
+    capital_allocation = max(0, min(5, round(ca, 1)))
+
+    # --- Business Type Classification ---
+    if business_quality >= 3.5 and moat_durability >= 3.5:
+        business_type = "Very Stable"
+        required_mos = 0.20
+    elif business_quality >= 2.0 and moat_durability >= 2.0:
+        business_type = "Normal"
+        required_mos = 0.30
+    else:
+        business_type = "Cyclical"
+        required_mos = 0.45
+
+    # --- Margin of Safety ---
+    base_iv = dcf.get('base', 0)
+    if base_iv > 0 and price > 0:
+        mos_pct = round((base_iv - price) / base_iv * 100, 1)
+    else:
+        mos_pct = 0
+
+    # --- Permanent Loss Risks ---
+    perm_risks = []
+    if de > 3:
+        perm_risks.append(("Excessive leverage", "High", "Debt covenant breach in downturn"))
+    if rg < -10:
+        perm_risks.append(("Secular decline", "High", "Revenue in structural free-fall"))
+    if nm < 0:
+        perm_risks.append(("Unprofitable operations", "High", "Cash burn without path to profitability"))
+    if fwd_pe > 50 and rg < 20:
+        perm_risks.append(("Valuation collapse risk", "Medium", "Growth doesn't justify extreme multiple"))
+    sp = inst.get('short_pct', 0)
+    if sp > 10:
+        perm_risks.append(("Heavy short positioning", "Medium", f"Short interest {sp:.1f}% signals structural concern"))
+    regime = summary.get('regime_label', '')
+    if regime in ('Crisis Trend', 'Credit Stress'):
+        perm_risks.append(("Macro regime stress", "Medium", f"Operating in {regime} environment"))
+    if ic > 0 and ic < 3:
+        perm_risks.append(("Debt service risk", "Medium", f"Interest coverage only {ic:.1f}x"))
+    if not perm_risks:
+        perm_risks.append(("General market risk", "Low", "Systemic drawdown exposure"))
+
+    # --- V9 Decision Logic ---
+    # Step 1: Business Quality Gate
+    if business_quality < 1.5:
+        v9_decision = "PASS"
+        decision_reason = "Business quality too low for capital allocation"
+    # Step 2: MOS Check
+    elif base_iv <= 0:
+        v9_decision = "RESEARCH"
+        decision_reason = "Insufficient data for intrinsic value estimate"
+    elif mos_pct < -20:
+        v9_decision = "PASS"
+        decision_reason = "Deeply overvalued relative to intrinsic value"
+    elif mos_pct < 0:
+        v9_decision = "WATCH"
+        decision_reason = "Trading above intrinsic value — no margin of safety"
+    elif mos_pct < required_mos * 100:
+        v9_decision = "WATCH"
+        decision_reason = f"MOS {mos_pct:.0f}% below required {required_mos*100:.0f}% for {business_type.lower()} business"
+    # Step 3: Capital allocation quality
+    elif capital_allocation < 1.5:
+        v9_decision = "RESEARCH"
+        decision_reason = "Adequate value but capital allocation concerns"
+    # Step 4: Permanent loss risk asymmetry
+    elif any(r[1] == "High" for r in perm_risks):
+        v9_decision = "RESEARCH"
+        decision_reason = "Material permanent loss risks require deeper analysis"
+    # Step 5: Full pass — good business, good price
+    else:
+        if mos_pct > required_mos * 100 * 1.5 and business_quality >= 3.5:
+            v9_decision = "BUY"
+            decision_reason = "Strong business with compelling margin of safety"
+        elif mos_pct > required_mos * 100:
+            v9_decision = "BUY"
+            decision_reason = "Adequate business quality and sufficient margin of safety"
+        else:
+            v9_decision = "HOLD"
+            decision_reason = "Fair value — maintain position, no new capital"
+
+    # --- Conviction Score (0-100) ---
+    conviction = 0
+    conviction += min(25, business_quality * 5)  # 0-25
+    conviction += min(20, moat_durability * 4)   # 0-20
+    conviction += min(20, capital_allocation * 4) # 0-20
+    conviction += min(20, max(0, mos_pct) * 0.5) # 0-20 (capped)
+    conviction += min(15, (5 - len([r for r in perm_risks if r[1] == "High"])) * 5)  # 0-15
+    conviction = max(0, min(100, round(conviction)))
+
+    return {
+        'business_quality': business_quality,
+        'moat_durability': moat_durability,
+        'capital_allocation': capital_allocation,
+        'mos_pct': mos_pct,
+        'intrinsic_value_base': base_iv,
+        'intrinsic_value_bear': dcf.get('bear', 0),
+        'intrinsic_value_bull': dcf.get('bull', 0),
+        'v9_decision': v9_decision,
+        'decision_reason': decision_reason,
+        'required_mos': required_mos,
+        'business_type': business_type,
+        'conviction': conviction,
+        'permanent_loss_risks': perm_risks[:5],
+    }
+
+
+def _stars(score, max_stars=5):
+    """Render score as filled/empty stars."""
+    filled = int(round(score))
+    return '\u2605' * filled + '\u2606' * (max_stars - filled)
+
+
+# ============================================================================
+# SECTION 0: V9 OWNER ASSESSMENT
+# ============================================================================
+
+def _section_owner_assessment(summary, v8_data):
+    """V9 Owner Assessment — Buffett-aligned business evaluation."""
+    co = v8_data.get('company', {})
+    fin = v8_data.get('financials', {})
+    v9 = _compute_v9_owner_scores(summary, v8_data)
+    symbol = co.get('symbol', '???')
+    name = co.get('name', symbol)
+    price = co.get('price', 0)
+    now = datetime.now().strftime('%b %d, %Y %I:%M %p ET')
+
+    decision = v9['v9_decision']
+    dec_emoji = {
+        'BUY': ':white_check_mark:', 'HOLD': ':pause_button:',
+        'WATCH': ':eyes:', 'RESEARCH': ':mag:', 'PASS': ':no_entry_sign:',
+        'TRIM': ':scissors:', 'EXIT': ':door:',
+    }.get(decision, ':grey_question:')
+
+    header = (
+        f"```\n"
+        f"{'=' * 52}\n"
+        f"  ATLAS V9 — OWNER ASSESSMENT\n"
+        f"  {symbol} — {name} — ${price:.2f}\n"
+        f"  As of {now}\n"
+        f"{'=' * 52}\n"
+        f"```\n"
+    )
+
+    # Scorecard
+    iv = v9['intrinsic_value_base']
+    mos = v9['mos_pct']
+    mos_str = f"{mos:+.1f}%" if iv > 0 else "N/A"
+
+    scorecard = (
+        f"```\n"
+        f"Business Quality:     {_stars(v9['business_quality'])}  {v9['business_quality']:.1f}/5\n"
+        f"Moat Durability:      {_stars(v9['moat_durability'])}  {v9['moat_durability']:.1f}/5\n"
+        f"Capital Allocation:   {_stars(v9['capital_allocation'])}  {v9['capital_allocation']:.1f}/5\n"
+        f"\n"
+        f"Intrinsic Value:      ${iv:.2f}  (base DCF)\n"
+        f"Current Price:        ${price:.2f}\n"
+        f"Margin of Safety:     {mos_str}\n"
+        f"Required MOS:         {v9['required_mos']*100:.0f}%  ({v9['business_type']})\n"
+        f"\n"
+        f"Conviction:           {v9['conviction']}/100\n"
+        f"```\n"
+    )
+
+    decision_block = f"{dec_emoji} *Decision: {decision}*\n> {v9['decision_reason']}\n"
+
+    # WHY (3 bullets)
+    why_bullets = []
+    bq = v9['business_quality']
+    if bq >= 3.5:
+        why_bullets.append(f"Business quality {bq:.1f}/5 — high-quality compounder with durable economics")
+    elif bq >= 2.0:
+        why_bullets.append(f"Business quality {bq:.1f}/5 — adequate but not exceptional")
+    else:
+        why_bullets.append(f"Business quality {bq:.1f}/5 — structural weaknesses in business model")
+
+    if iv > 0 and mos > 0:
+        why_bullets.append(f"Trading at {mos:.0f}% discount to intrinsic value (${iv:.2f}) — margin of safety present")
+    elif iv > 0:
+        why_bullets.append(f"Trading at {abs(mos):.0f}% premium to intrinsic value — no margin of safety")
+    else:
+        why_bullets.append("Insufficient data for reliable intrinsic value estimate")
+
+    ca = v9['capital_allocation']
+    if ca >= 3.5:
+        why_bullets.append(f"Capital allocation {ca:.1f}/5 — management creating per-share value")
+    elif ca >= 2.0:
+        why_bullets.append(f"Capital allocation {ca:.1f}/5 — reasonable but room for improvement")
+    else:
+        why_bullets.append(f"Capital allocation {ca:.1f}/5 — potential value destruction")
+
+    why_text = "\n".join(f"- {b}" for b in why_bullets[:3])
+
+    # RISKS (3 bullets)
+    risk_bullets = []
+    for rname, severity, rdesc in v9['permanent_loss_risks'][:3]:
+        risk_bullets.append(f"[{severity}] {rname} — {rdesc}")
+    risk_text = "\n".join(f"- {b}" for b in risk_bullets)
+
+    # WHAT WOULD CHANGE MY MIND
+    change_bullets = []
+    if decision in ('PASS', 'WATCH'):
+        if mos < v9['required_mos'] * 100:
+            needed_price = iv * (1 - v9['required_mos']) if iv > 0 else 0
+            if needed_price > 0:
+                change_bullets.append(f"Price decline to ~${needed_price:.0f} would provide adequate margin of safety")
+        change_bullets.append("Structural improvement in business quality or competitive position")
+    elif decision == 'BUY':
+        change_bullets.append(f"Erosion of margin of safety if price rises above ${iv:.0f}" if iv > 0 else "Loss of competitive advantage")
+        change_bullets.append("Deterioration in management capital allocation discipline")
+    else:
+        change_bullets.append("Clearer data on business durability and intrinsic value")
+        change_bullets.append("Resolution of identified permanent loss risks")
+
+    change_text = "\n".join(f"- {b}" for b in change_bullets[:2])
+
+    # Tactical overlay from engine
+    regime = summary.get('regime_label', 'N/A')
+    composite = summary.get('composite_raw', 0)
+    tq = summary.get('trade_quality', 0)
+    vix = summary.get('vix', 0)
+
+    # Engine conflict protocol
+    conflict_note = ""
+    if composite > 30 and mos < 0:
+        conflict_note = (
+            "\n:warning: *Engine Conflict:* Quant engine favors momentum, but intrinsic value "
+            "suggests full valuation. Under capital preservation framework, patience is warranted."
+        )
+    elif composite < -30 and mos > v9['required_mos'] * 100:
+        conflict_note = (
+            "\n:bulb: *Engine Conflict:* Engine reacting to short-term trend weakness. However, "
+            "intrinsic value provides significant margin of safety. Long-term case remains intact."
+        )
+
+    tactical = (
+        f"\n_Tactical Overlay (engine): Regime={regime} | Composite={composite:+.1f} | "
+        f"TQ={tq:.3f} | VIX={vix:.1f}_"
+    )
+
+    # Temperament note
+    if vix > 28:
+        temperament = "\n> :thermometer: *Market Sentiment:* Fear elevated. Historically, fear creates opportunity for patient capital."
+    elif vix < 14:
+        temperament = "\n> :thermometer: *Market Sentiment:* Extreme optimism. Exercise caution — complacency breeds risk."
+    else:
+        temperament = "\n> :thermometer: *Default action in absence of clear margin of safety is inaction.*"
+
+    parts = [
+        header,
+        scorecard,
+        decision_block,
+        "\n*Why:*",
+        why_text,
+        "\n*Permanent Loss Risks:*",
+        risk_text,
+        "\n*What Would Change My Mind:*",
+        change_text,
+        conflict_note,
+        tactical,
+        temperament,
+    ]
+
+    return "\n".join(parts)
 
 
 # ============================================================================
@@ -1107,9 +1537,10 @@ def _section_engine_final(summary, v8_data):
         lines.append(f"Mode:           {exec_mode}")
         lines.append("```")
 
-    # THE FINAL WORD
+    # THE FINAL WORD — V9 Owner's Perspective
     scores = _compute_v8_scores(summary, v8_data)
-    verdict = _v8_verdict_label(scores['composite'])
+    v9 = v8_data.get('v9_scores') or _compute_v9_owner_scores(summary, v8_data)
+    verdict = v9['v9_decision']
 
     sma50 = tech.get('sma50', 0) or summary.get('sma50', 0)
     sma200 = tech.get('sma200', 0) or summary.get('sma200', 0)
@@ -1118,73 +1549,84 @@ def _section_engine_final(summary, v8_data):
     lines.append(f"```")
     lines.append(f"{'=' * 50}")
     lines.append(f"  THE FINAL WORD ON {symbol}")
+    lines.append(f"  (V9 Owner's Perspective)")
     lines.append(f"{'=' * 50}")
     lines.append("")
 
-    # Verdict line
-    if 'BUY' in verdict:
-        if sma50 > 0 and price > sma50 * 1.03:
-            lines.append(f"VERDICT: {verdict} on pullbacks to ${sma50:.0f}")
-        else:
-            lines.append(f"VERDICT: {verdict} at current levels")
-    elif 'SELL' in verdict:
-        lines.append(f"VERDICT: {verdict} — reduce exposure")
-    elif verdict == 'HOLD':
-        lines.append(f"VERDICT: {verdict} — maintain, no new positions")
-    else:
-        lines.append(f"VERDICT: {verdict}")
-
+    # V9 Decision
+    lines.append(f"OWNER DECISION: {verdict}")
+    lines.append(f"  {v9['decision_reason']}")
     lines.append("")
 
-    # WHY section
-    lines.append("WHY:")
-    if scores['fundamental'] >= 60:
-        rg = fin.get('revenue_growth', 0)
-        fcf = fin.get('free_cash_flow', 0)
-        lines.append(f"  + Fundamentals: {_fmt_pct(rg, plus=True)} rev growth, {_fmt_mc(fcf)} FCF")
-    else:
-        lines.append(f"  - Fundamentals: score {scores['fundamental']}/100")
-
-    if scores['technical'] >= 55:
-        lines.append(f"  + Technicals: {tech.get('bullish_count', 0)} of {tech.get('bullish_count', 0) + tech.get('bearish_count', 0) + tech.get('neutral_count', 0)} indicators bullish")
-    else:
-        lines.append(f"  - Technicals: score {scores['technical']}/100")
-
-    if scores['sentiment'] >= 55:
-        lines.append(f"  + Sentiment: analyst consensus {fin.get('recommendation', 'N/A')}")
-    else:
-        lines.append(f"  - Sentiment: score {scores['sentiment']}/100")
-
-    if scores['macro'] >= 50:
-        lines.append(f"  + Macro: {regime} regime, VIX {summary.get('vix', 0):.1f}")
-    else:
-        lines.append(f"  - Macro: {regime} regime, VIX {summary.get('vix', 0):.1f}")
-
-    # ACTION PLAN
+    # Business case
+    lines.append("BUSINESS CASE:")
+    bq = v9['business_quality']
+    moat = v9['moat_durability']
+    ca = v9['capital_allocation']
+    mos = v9['mos_pct']
+    iv = v9['intrinsic_value_base']
+    lines.append(f"  Quality: {bq:.1f}/5  Moat: {moat:.1f}/5  CapAlloc: {ca:.1f}/5")
+    if iv > 0:
+        lines.append(f"  Intrinsic Value: ${iv:.2f}  |  MOS: {mos:+.1f}%")
     lines.append("")
-    lines.append("ACTION:")
-    if 'BUY' in verdict:
+
+    # Quant overlay
+    quant_verdict = _v8_verdict_label(scores['composite'])
+    lines.append("QUANT ENGINE OVERLAY:")
+    lines.append(f"  Signal: {quant_verdict} ({scores['composite']}/100)")
+    lines.append(f"  Regime: {regime} | VIX: {summary.get('vix', 0):.1f}")
+
+    # Conflict note
+    c_raw = summary.get('composite_raw', 0)
+    if c_raw > 30 and mos < 0:
+        lines.append("")
+        lines.append("  NOTE: Engine bullish but overvalued.")
+        lines.append("  Patience over momentum.")
+    elif c_raw < -30 and mos > v9['required_mos'] * 100:
+        lines.append("")
+        lines.append("  NOTE: Engine bearish but undervalued.")
+        lines.append("  Temporary weakness in durable business.")
+
+    # Tactical levels (secondary)
+    lines.append("")
+    lines.append("TACTICAL LEVELS (if deploying capital):")
+    if verdict == 'BUY':
         if sma50 > 0:
             lines.append(f"  Entry:  ${sma50:.0f} area (50d MA pullback)")
         if stop > 0:
             lines.append(f"  Stop:   ${stop:.2f}")
         if tp and tp[0] > 0:
             lines.append(f"  Target: ${tp[0]:.2f} - ${tp[1]:.2f}")
-    elif 'SELL' in verdict:
-        lines.append(f"  Reduce or hedge existing positions")
-        if stop > 0:
-            lines.append(f"  Hard stop at ${stop:.2f}")
-    else:
-        lines.append(f"  Wait for clearer direction")
+    elif verdict in ('WATCH', 'RESEARCH'):
+        if iv > 0:
+            needed = iv * (1 - v9['required_mos'])
+            lines.append(f"  Buy below: ~${needed:.0f} (MOS threshold)")
         if sma50 > 0:
-            lines.append(f"  Watch ${sma50:.0f} (50d MA) for signal")
+            lines.append(f"  Watch: ${sma50:.0f} (50d MA)")
+    elif verdict == 'PASS':
+        lines.append(f"  No deployment recommended")
+    else:
+        if stop > 0:
+            lines.append(f"  Protect capital: stop at ${stop:.2f}")
+
+    # Position sizing by conviction
+    conv = v9['conviction']
+    if conv >= 80:
+        size_note = "Candidate for top-10 holding"
+    elif conv >= 60:
+        size_note = "Meaningful but not core position"
+    elif conv >= 40:
+        size_note = "Opportunistic / small allocation"
+    else:
+        size_note = "Insufficient conviction for capital deployment"
+    lines.append(f"  Sizing: {size_note} (conviction {conv}/100)")
 
     lines.append("")
     lines.append(f"{'=' * 50}")
-    lines.append(f"ATLAS Confidence: {scores['composite']}/100")
     now = datetime.now().strftime('%b %d, %Y %I:%M %p ET')
     lines.append(f"Generated: {now}")
     lines.append("This is model output, NOT financial advice.")
+    lines.append("Stocks are fractional ownership in businesses.")
     lines.append(f"{'=' * 50}")
     lines.append("```")
 
@@ -1197,8 +1639,11 @@ def _section_engine_final(summary, v8_data):
 
 def format_v8_report(summary, v8_data):
     """
-    Generate complete V8 report as list of Slack messages.
-    10 messages covering all sections of the full-spectrum analysis.
+    Generate complete V9 report as list of Slack messages.
+    11 messages: Owner Assessment + 10 full-spectrum analysis sections.
+
+    V9 leads with business owner intelligence (Buffett-aligned),
+    then provides full quant detail for tactical overlay.
 
     Args:
         summary: dict from run_atlas() — engine output
@@ -1207,7 +1652,12 @@ def format_v8_report(summary, v8_data):
     Returns:
         list of strings, each under 4000 chars
     """
+    # Compute and attach V9 scores for downstream consumers (web dashboard, Q&A)
+    v9_scores = _compute_v9_owner_scores(summary, v8_data)
+    v8_data['v9_scores'] = v9_scores
+
     messages = [
+        _section_owner_assessment(summary, v8_data),   # V9: Owner's view first
         _section_verdict(summary, v8_data),
         _section_fundamentals(v8_data),
         _section_balance_sheet(v8_data),

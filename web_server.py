@@ -140,6 +140,7 @@ const CT = S.contributions||{};
 const RV = S.regime_vector||{};
 const ENGINES = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
 const RF = [['TS','Trend'],['CH','Choppiness'],['VL','VIX Level'],['VS','VIX Stress'],['CI','Corr Instab.'],['RS','Rates Shock'],['CS','Credit Stress'],['GR','Global Risk'],['BM_f','Bad Mix'],['BEI','Bond-Eq Flip']];
+const V9 = V8.v9_scores||{};
 
 // ── Utilities ───────────────────────────────────────
 function f(v,d){if(v==null||isNaN(v))return'N/A';return Number(v).toFixed(d==null?1:d)}
@@ -149,7 +150,7 @@ function fM(v){if(v==null||isNaN(v))return'N/A';var a=Math.abs(v);if(a>=1e12)ret
 function fD(v){return v!=null?'$'+f(v,2):'N/A'}
 function cls(v){return v>0?'pos':v<0?'neg':'muted'}
 function pill(v){return v>=60?'pill-pos':v>=40?'pill-warn':'pill-neg'}
-function pillV(verdict){var v=(verdict||'').toUpperCase();if(v.includes('BUY')||v.includes('LONG'))return'pill-pos';if(v.includes('HOLD')||v.includes('CASH')||v.includes('ASIDE'))return'pill-warn';return'pill-neg'}
+function pillV(verdict){var v=(verdict||'').toUpperCase();if(v==='BUY'||v.includes('STRONG BUY')||v.includes('LONG'))return'pill-pos';if(v==='HOLD'||v==='WATCH'||v==='RESEARCH'||v.includes('LEAN'))return'pill-warn';if(v==='PASS'||v==='EXIT'||v==='TRIM')return'pill-neg';if(v.includes('BUY'))return'pill-pos';if(v.includes('SELL'))return'pill-neg';return'pill-warn'}
 function norm(c){return c!=null?Math.max(0,Math.min(100,(c+100)/2)):50}
 
 var price = S.price||CO.price||null;
@@ -162,7 +163,7 @@ var regime = S.regime_label||'N/A';
 var rel = S.regime_reliability;
 var dc = S.data_confidence;
 var mode = S.execution_mode||'N/A';
-var verdict = S.verdict||'N/A';
+var verdict = V9.v9_decision||S.verdict||'N/A';
 var name = D.company_name||CO.name||D.symbol;
 
 // ── Build HTML ──────────────────────────────────────
@@ -176,7 +177,7 @@ if(price!=null) h += '<span class="mono" style="font-size:18px;font-weight:600">
 h += '<span class="pill '+pillV(verdict)+'" style="margin-left:auto;font-size:12px;padding:3px 10px">'+verdict+'</span>';
 h += '</div>';
 h += '<div style="font-size:11px;color:var(--t3);margin-bottom:16px">';
-h += 'ATLAS V8';
+h += 'ATLAS V9';
 if(D.created_at) h += ' · '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 if(P.fallback_mode) h += ' · Data: '+P.fallback_mode;
 h += '</div>';
@@ -197,6 +198,103 @@ for(var i=0;i<ms.length;i++){
   h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'">'+ms[i][1]+'</span></div></div>';
 }
 h += '</div>';
+
+// ── V9 OWNER'S VIEW ────────────────────────────────
+if(V9.v9_decision){
+  h += '<div class="card" style="border-color:var(--acc);border-width:1px">';
+  h += '<h2 style="color:var(--acc)">V9 Owner Assessment</h2>';
+  h += '<div class="g2" style="align-items:start">';
+
+  // Left: Scorecards + Decision
+  h += '<div>';
+
+  // Decision banner
+  var decPill = V9.v9_decision==='BUY'?'pill-pos':V9.v9_decision==='HOLD'?'pill-warn':V9.v9_decision==='WATCH'||V9.v9_decision==='RESEARCH'?'pill-warn':'pill-neg';
+  h += '<div style="margin-bottom:12px"><span class="pill '+decPill+'" style="font-size:14px;padding:4px 14px">'+V9.v9_decision+'</span>';
+  h += ' <span style="font-size:12px;color:var(--t2);margin-left:8px">'+( V9.decision_reason||'')+'</span></div>';
+
+  // Star ratings
+  function stars(score,max){max=max||5;var s='';for(var i=0;i<max;i++)s+=(i<Math.round(score)?'\u2605':'\u2606');return s;}
+  h += '<div style="font-size:13px;line-height:2">';
+  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.business_quality)+'</span> <span style="color:var(--t2)">Business Quality</span> <span class="mono" style="color:var(--t1)">'+f(V9.business_quality)+'/5</span></div>';
+  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.moat_durability)+'</span> <span style="color:var(--t2)">Moat Durability</span> <span class="mono" style="color:var(--t1)">'+f(V9.moat_durability)+'/5</span></div>';
+  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.capital_allocation)+'</span> <span style="color:var(--t2)">Capital Allocation</span> <span class="mono" style="color:var(--t1)">'+f(V9.capital_allocation)+'/5</span></div>';
+  h += '</div>';
+
+  // Conviction bar
+  var convW = Math.max(4, Math.min(100, V9.conviction||0));
+  var convC = convW>=70?'var(--pos)':convW>=40?'var(--warn)':'var(--neg)';
+  h += '<div style="margin-top:12px"><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">Conviction</span>';
+  h += '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">';
+  h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+convW+'%;height:100%;background:'+convC+';border-radius:4px"></div></div>';
+  h += '<span class="mono" style="font-size:13px;font-weight:600;color:'+convC+'">'+convW+'</span>';
+  h += '</div></div>';
+
+  h += '</div>';
+
+  // Right: Margin of Safety + Intrinsic Value
+  h += '<div>';
+
+  // MOS Gauge
+  var iv = V9.intrinsic_value_base||0;
+  var mos = V9.mos_pct||0;
+  var reqMos = (V9.required_mos||0)*100;
+  var mosC = mos>=reqMos?'var(--pos)':mos>=0?'var(--warn)':'var(--neg)';
+  h += '<div style="text-align:center;padding:8px 0">';
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Margin of Safety</div>';
+  h += '<div class="mono" style="font-size:32px;font-weight:700;color:'+mosC+'">'+( iv>0?(mos>=0?'+':'')+f(mos,1)+'%':'N/A')+'</div>';
+  h += '<div style="font-size:11px;color:var(--t3);margin-top:4px">Required: '+f(reqMos,0)+'% ('+( V9.business_type||'')+')</div>';
+  h += '</div>';
+
+  // Intrinsic value vs price
+  if(iv>0 && price){
+    h += '<div style="margin-top:12px;font-size:12px">';
+    h += '<div class="g2" style="gap:4px">';
+    h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
+    h += '<div style="font-size:10px;color:var(--t3)">INTRINSIC VALUE</div>';
+    h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--pos)">$'+f(iv,2)+'</div>';
+    h += '</div>';
+    h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
+    h += '<div style="font-size:10px;color:var(--t3)">CURRENT PRICE</div>';
+    h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--t1)">$'+f(price,2)+'</div>';
+    h += '</div>';
+    h += '</div>';
+    // IV range
+    var ivBear = V9.intrinsic_value_bear||0;
+    var ivBull = V9.intrinsic_value_bull||0;
+    if(ivBear>0){
+      h += '<div style="margin-top:8px;font-size:10px;color:var(--t3);text-align:center">';
+      h += 'IV Range: <span class="mono neg">$'+f(ivBear,2)+'</span> — <span class="mono pos">$'+f(ivBull,2)+'</span>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  h += '</div>'; // end g2
+
+  // Permanent Loss Risks
+  var plr = V9.permanent_loss_risks||[];
+  if(plr.length){
+    h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Permanent Loss Risks</div>';
+    for(var i=0;i<plr.length&&i<4;i++){
+      var rC = plr[i][1]==='High'?'neg':plr[i][1]==='Medium'?'warn':'muted';
+      h += '<div style="font-size:12px;padding:3px 0"><span class="pill pill-'+rC+'" style="font-size:10px;min-width:50px;text-align:center">'+plr[i][1]+'</span> <span style="font-weight:500">'+plr[i][0]+'</span> <span class="muted"> — '+plr[i][2]+'</span></div>';
+    }
+    h += '</div>';
+  }
+
+  // Temperament note
+  var vix = S.vix||0;
+  h += '<div style="margin-top:12px;padding:8px 12px;background:var(--bg2);border-radius:var(--r);font-size:11px;color:var(--t2);font-style:italic">';
+  if(vix>28) h += '\ud83c\udf21\ufe0f Market sentiment: Fear elevated. Historically, fear creates opportunity for patient capital.';
+  else if(vix<14) h += '\ud83c\udf21\ufe0f Market sentiment: Extreme optimism. Exercise caution — complacency breeds risk.';
+  else h += 'Default action in absence of clear margin of safety is inaction.';
+  h += '</div>';
+
+  h += '</div>'; // end card
+}
 
 h += '<hr class="section-sep">';
 
@@ -524,11 +622,53 @@ if(cAdj!=null && dc!=null && rel!=null){
   h += '  Insufficient data for computation\n';
 }
 h += '</div>';
+
+// V9 Owner Decision Derivation
+if(V9.v9_decision){
+  h += '<div class="formula" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">';
+  h += '<span class="hl">V9 OWNER DECISION HIERARCHY</span>\n\n';
+  h += '  Step 1: Business Quality Gate\n';
+  h += '    Quality = <span class="hl">'+f(V9.business_quality)+'/5</span>';
+  if(V9.business_quality<1.5) h += '  <span class="neg">FAIL → PASS</span>';
+  else h += '  <span class="pos">PASS → continue</span>';
+  h += '\n\n';
+  h += '  Step 2: Intrinsic Value Comparison\n';
+  var iv9 = V9.intrinsic_value_base||0;
+  if(iv9>0){
+    h += '    IV (base DCF) = $'+f(iv9,2)+'\n';
+    h += '    Price          = $'+f(price,2)+'\n';
+    h += '    MOS = (IV - Price) / IV = <span class="hl">'+fS(V9.mos_pct)+'%</span>\n';
+    h += '    Required MOS = '+(f((V9.required_mos||0)*100,0))+'% ('+( V9.business_type||'')+')';
+    if((V9.mos_pct||0) >= (V9.required_mos||0)*100) h += '  <span class="pos">MET</span>';
+    else h += '  <span class="neg">NOT MET</span>';
+    h += '\n\n';
+  } else {
+    h += '    IV not available → RESEARCH\n\n';
+  }
+  h += '  Step 3: Capital Allocation\n';
+  h += '    Score = <span class="hl">'+f(V9.capital_allocation)+'/5</span>';
+  if(V9.capital_allocation>=1.5) h += '  <span class="pos">Acceptable</span>';
+  else h += '  <span class="neg">Concern</span>';
+  h += '\n\n';
+  h += '  Step 4: Permanent Loss Screen\n';
+  var highRisks = (V9.permanent_loss_risks||[]).filter(function(r){return r[1]==="High"}).length;
+  h += '    High-severity risks = '+highRisks;
+  if(highRisks>0) h += '  <span class="warn">requires deeper analysis</span>';
+  else h += '  <span class="pos">clear</span>';
+  h += '\n\n';
+  h += '  Step 5: Conviction\n';
+  h += '    = BQ×5 + Moat×4 + CA×4 + MOS×0.5 + RiskAdj\n';
+  h += '    = <span class="hl">'+f(V9.conviction,0)+'/100</span>\n\n';
+  h += '  <span class="hl">→ DECISION: '+(V9.v9_decision)+'</span>\n';
+  h += '    '+(V9.decision_reason||'')+'\n';
+  h += '</div>';
+}
+
 h += '</div></div>';
 
 // ── PROVENANCE FOOTER ───────────────────────────────
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
-h += '<span>ATLAS V8</span>';
+h += '<span>ATLAS V9</span>';
 if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
 h += '<span>'+mode+'</span>';
 if(dc!=null) h += '<span>DC '+f(dc,0)+'%</span>';

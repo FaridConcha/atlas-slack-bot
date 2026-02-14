@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-ATLAS Slack Bot — V8 Full-Spectrum Intelligence
-Listens for @mentions and runs the ATLAS engine + V8 extended analysis,
+ATLAS Slack Bot — V9 Capital Allocation Intelligence
+Listens for @mentions and runs the ATLAS engine + V9 owner intelligence layer,
 pulling LIVE data from yfinance for any ticker.
 
-Output is a 10-section institutional-grade research report:
-verdict, fundamentals, valuation, technicals, peers, sentiment,
-risk factors, growth catalysts, macro context, and engine signal.
+V9 adds Buffett-aligned business owner assessment on top of V8 quant signals.
+Output is an 11-section report: owner assessment, verdict, fundamentals,
+valuation, technicals, peers, sentiment, risk, catalysts, macro, engine signal.
 
 Usage:
     python3 bot.py
@@ -188,7 +188,7 @@ def handle_atlas_mention(event, say, client):
     if 'HELP' in text.upper():
         say(
             text=(
-                "*ATLAS Trading Engine* :chart_with_upwards_trend:\n"
+                "*ATLAS V9 — Capital Allocation Intelligence* :chart_with_upwards_trend:\n"
                 "Mention me with any ticker symbol to get analysis:\n"
                 "  `@atlas AAPL` — Apple\n"
                 "  `@atlas TSLA` — Tesla\n"
@@ -196,7 +196,8 @@ def handle_atlas_mention(event, say, client):
                 "  `@atlas SPY` — S&P 500 ETF\n"
                 "  `@atlas` — Default (SPY)\n"
                 "  `@atlas help` — This message\n\n"
-                "Full report includes fundamentals, technicals, peers, news, macro, and more.\n"
+                "V9 report: Owner assessment (business quality, moat, margin of safety) + "
+                "full quant analysis (fundamentals, technicals, peers, news, macro).\n"
                 "Data is pulled live from Yahoo Finance.\n\n"
                 "After a report, reply in the thread to ask follow-up questions (AI-powered)."
             ),
@@ -212,7 +213,7 @@ def handle_atlas_mention(event, say, client):
     else:
         # Acknowledge immediately (warm path)
         say(
-            text=f":gear: Running ATLAS V8 on *{symbol}*... pulling live data & building full report (30-45 sec)",
+            text=f":gear: Running ATLAS V9 on *{symbol}*... pulling live data & building owner assessment + full report (30-45 sec)",
             thread_ts=thread_ts
         )
         progress_ts = None
@@ -231,7 +232,7 @@ def handle_atlas_mention(event, say, client):
         if cold and progress_ts:
             try:
                 client.chat_update(channel=channel, ts=progress_ts,
-                                   text=f":chart_with_upwards_trend: Live data fetched, running engine on *{symbol}*...")
+                                   text=f":chart_with_upwards_trend: Live data fetched, running V9 engine on *{symbol}*...")
             except Exception:
                 pass
 
@@ -247,7 +248,7 @@ def handle_atlas_mention(event, say, client):
         if cold and progress_ts:
             try:
                 client.chat_update(channel=channel, ts=progress_ts,
-                                   text=":brain: Engine complete, building report...")
+                                   text=":brain: Engine complete, building owner assessment...")
             except Exception:
                 pass
 
@@ -328,7 +329,7 @@ def handle_atlas_mention(event, say, client):
 
         # Final confirmation
         say(
-            text=f":white_check_mark: ATLAS V8 complete for *{symbol}* — {len(v8_messages)} sections delivered"
+            text=f":white_check_mark: ATLAS V9 complete for *{symbol}* — {len(v8_messages)} sections delivered"
                 + (f"\n:mag: <{report_url}|View full web report>" if report_url else "")
                 + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GROQ_API_KEY else ""),
             thread_ts=thread_ts
@@ -461,7 +462,7 @@ if __name__ == "__main__":
     os.makedirs(STATE_DIR, exist_ok=True)
 
     print("=" * 60)
-    print("ATLAS Slack Bot — V8 Full-Spectrum Mode")
+    print("ATLAS Slack Bot — V9 Capital Allocation Intelligence")
     print("=" * 60)
     print(f"Live data:  {'ENABLED (yfinance)' if USE_LIVE_DATA else 'DISABLED (static files)'}")
     print(f"FRED API:   {'Connected' if FRED_API_KEY else 'Not configured (using yfinance for macro)'}")

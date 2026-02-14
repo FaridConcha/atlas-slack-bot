@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-ATLAS — Groq AI Follow-Up Q&A Module
+ATLAS V9 — Groq AI Follow-Up Q&A Module
 Handles conversational follow-up questions in ATLAS report threads
 using Groq (Llama 3.3 70B, free tier — 30 RPM).
+
+V9 upgrade: Buffett-aligned reasoning order — business durability first,
+intrinsic value second, margin of safety third, then regime/timing last.
 """
 
 import time
@@ -16,18 +19,38 @@ _last_call_time = 0
 _MIN_CALL_INTERVAL = 3  # seconds between calls (free tier: 30 RPM)
 _MAX_RETRIES = 2        # retry on 429 with backoff
 
-SYSTEM_PROMPT = """You are ATLAS AI, an expert financial analyst assistant embedded in a trading research platform. You answer follow-up questions about a specific stock analysis performed by the ATLAS quantitative engine.
+SYSTEM_PROMPT = """You are ATLAS V9 — a disciplined long-term business analyst.
+
+You treat stocks as fractional ownership in businesses.
+You prioritize intrinsic value and margin of safety over momentum.
+You define risk as permanent capital loss, not volatility.
+You prefer wonderful businesses at fair prices over mediocre businesses at cheap prices.
+You are patient and rational.
+
+REASONING ORDER (always follow this hierarchy):
+1. Business durability — Is this a high-quality business with durable economics?
+2. Competitive advantage — Does the business have a moat that protects returns on capital?
+3. Capital allocation — Is management creating or destroying per-share value?
+4. Intrinsic value vs price — What is the margin of safety?
+5. Risk of permanent loss — What could cause irreversible capital destruction?
+6. THEN regime/timing — Use quant engine data as tactical overlay, never as primary thesis.
+
+Never start a response with "The trend is positive" or similar momentum-first framing.
+When quantitative signals conflict with intrinsic value, explain the discrepancy clearly.
+
+DECISIONS — Always frame conclusions as one of:
+PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT
 
 RULES:
-1. ONLY use the data provided in the ATLAS context below. Do not make up numbers, prices, or metrics.
-2. If the data does not contain enough information to answer, say so explicitly.
-3. Be concise and direct — traders value brevity. Use bullet points for comparisons.
-4. When discussing scores or signals, explain what drives them using the underlying data.
-5. For price levels (entry, stop, target), reference the exact numbers from the analysis.
-6. Never give personalized investment advice. Frame answers as "the data suggests" or "ATLAS indicates".
-7. Use Slack formatting: *bold* for emphasis, `code` for numbers/tickers, bullet points with -.
-8. Keep responses under 3500 characters.
-9. If asked about a different ticker not in the analysis, say: "This thread covers *{SYMBOL}*. Mention `@atlas {OTHER}` in any channel for a fresh analysis."
+1. ONLY use the data provided in the ATLAS context below. Never fabricate numbers.
+2. If data is insufficient, say so explicitly.
+3. Be concise but intellectually rigorous. Use bullet points for comparisons.
+4. Frame answers as "the data suggests" or "from an owner's perspective".
+5. Use Slack formatting: *bold* for emphasis, `code` for numbers/tickers, bullet points with -.
+6. Keep responses under 3500 characters.
+7. Default to inaction unless value is compelling.
+8. Never give short-term price predictions.
+9. If asked about a different ticker: "This thread covers *{SYMBOL}*. Mention `@atlas {OTHER}` in any channel for a fresh analysis."
 """
 
 
@@ -84,11 +107,30 @@ def build_context(symbol, summary, v8_extended):
     inst = v.get('institutional', {})
     dcf = v.get('dcf', {})
 
-    lines = [f"=== ATLAS ANALYSIS: {symbol} ==="]
+    lines = [f"=== ATLAS V9 ANALYSIS: {symbol} ==="]
 
-    # --- ENGINE VERDICT ---
+    # --- V9 OWNER ASSESSMENT (primary) ---
+    v9 = v.get('v9_scores', {})
+    if v9:
+        lines.append("")
+        lines.append("--- V9 OWNER ASSESSMENT ---")
+        lines.append(f"Decision: {v9.get('v9_decision', 'N/A')} — {v9.get('decision_reason', '')}")
+        lines.append(f"Business Quality: {v9.get('business_quality', 0):.1f}/5")
+        lines.append(f"Moat Durability: {v9.get('moat_durability', 0):.1f}/5")
+        lines.append(f"Capital Allocation: {v9.get('capital_allocation', 0):.1f}/5")
+        iv = v9.get('intrinsic_value_base', 0)
+        if iv > 0:
+            lines.append(f"Intrinsic Value (Base): ${iv:.2f}")
+            lines.append(f"Margin of Safety: {v9.get('mos_pct', 0):+.1f}%")
+            lines.append(f"Required MOS: {v9.get('required_mos', 0)*100:.0f}% ({v9.get('business_type', '')})")
+        lines.append(f"Conviction: {v9.get('conviction', 0)}/100")
+        perm_risks = v9.get('permanent_loss_risks', [])
+        if perm_risks:
+            lines.append(f"Permanent Loss Risks: {'; '.join(f'{r[0]} [{r[1]}]' for r in perm_risks[:3])}")
+
+    # --- ENGINE VERDICT (secondary — tactical overlay) ---
     lines.append("")
-    lines.append("--- ENGINE VERDICT ---")
+    lines.append("--- ENGINE VERDICT (Tactical Overlay) ---")
     composite = _safe_float(s.get('composite_raw'))
     adj = _safe_float(s.get('composite_adjusted'))
     tq = _safe_float(s.get('trade_quality'))
