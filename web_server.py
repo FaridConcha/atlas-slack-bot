@@ -277,6 +277,7 @@ function f(v,d){if(v==null||isNaN(v))return'N/A';return Number(v).toFixed(d==nul
 function fS(v,d){if(v==null||isNaN(v))return'N/A';d=d==null?1:d;return(v>=0?'+':'')+Number(v).toFixed(d)}
 function fP(v,d){if(v==null||isNaN(v))return'N/A';d=d==null?1:d;return(v>=0?'+':'')+Number(v).toFixed(d)+'%'}
 function fM(v){if(v==null||isNaN(v))return'N/A';var a=Math.abs(v);if(a>=1e12)return'$'+(v/1e12).toFixed(2)+'T';if(a>=1e9)return'$'+(v/1e9).toFixed(1)+'B';if(a>=1e6)return'$'+(v/1e6).toFixed(0)+'M';return'$'+Number(v).toLocaleString()}
+function fN(v){if(v==null||isNaN(v))return'N/A';var a=Math.abs(v);if(a>=1e12)return(v/1e12).toFixed(2)+'T';if(a>=1e9)return(v/1e9).toFixed(1)+'B';if(a>=1e6)return(v/1e6).toFixed(0)+'M';return Number(v).toLocaleString()}
 function fD(v){return v!=null?'$'+f(v,2):'N/A'}
 function cls(v){return v>0?'pos':v<0?'neg':'muted'}
 function pill(v){return v>=60?'pill-pos':v>=40?'pill-warn':'pill-neg'}
@@ -475,6 +476,10 @@ if(V9.v9_decision){
   // ════════════════════════════════════════════════════
   h += '<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">';
   h += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);margin-bottom:14px">V10 Owner Memorandum</div>';
+  var _dc = S.data_confidence||100;
+  if(_dc < 70){
+    h += '<div class="memo-aside" style="border-left-color:var(--warn);margin-bottom:12px">\u26A0 Data confidence '+f(_dc,0)+'% \u2014 below 70% threshold. Quantitative conclusions should be treated with additional skepticism. Missing data may bias valuation estimates.</div>';
+  }
   h += '<div class="memo">';
 
   // ── 1. BUSINESS OVERVIEW & ECONOMIC CHARACTER ──
@@ -575,15 +580,21 @@ if(V9.v9_decision){
     h += '<p>ATLAS estimates base-case intrinsic value at <span class="mono hl">$'+f(_ivB,2)+'</span>';
     if(_ivBear > 0 && _ivBull > 0) h += ', within a range of <span class="mono neg">$'+f(_ivBear,2)+'</span> (bear) to <span class="mono pos">$'+f(_ivBull,2)+'</span> (bull)';
     h += '. At the current price of <span class="mono hl">$'+f(price,2)+'</span>, the implied margin of safety is <span class="mono '+(_mosP>=0?'pos':'neg')+'">'+fS(_mosP,1)+'%</span>.</p>';
+    var _mosPriceBased = price > 0 ? ((_ivB - price) / price * 100) : 0;
+    h += '<div style="font-size:10px;color:var(--t3);margin:-6px 0 8px 0">IV-basis MOS: '+fS(_mosP,1)+'% | Price-basis MOS: '+fS(_mosPriceBased,1)+'%</div>';
 
     if(_mosP < 0){
-      h += '<p>A negative margin of safety means the market price exceeds the estimated intrinsic value by <span class="mono hl">'+f(Math.abs(_mosP),1)+'%</span>. ';
+      var _pricePremium = _ivB > 0 ? ((price - _ivB) / _ivB * 100) : 0;
+      h += '<p>A negative margin of safety means the market price exceeds estimated intrinsic value \u2014 the stock trades at a <span class="mono hl">'+f(_pricePremium,0)+'%</span> premium to IV (<span class="mono hl">$'+f(_ivB,2)+'</span>). ';
       h += 'Purchasing at this level requires the belief that intrinsic value is meaningfully higher than the model estimates \u2014 in other words, that the assumptions are too conservative. While this is possible, disciplined capital allocation demands that the burden of proof fall on the buyer, not the seller. ';
       h += 'When price exceeds estimated value, capital would be deployed without adequate protection against estimation error, competitive deterioration, or macroeconomic disruption.</p>';
 
-      var _fallNeeded = Math.abs(_mosP) + _reqM;
+      var _targetPrice = _ivB * (1 - _reqM / 100);
+      var _fallNeeded = (_targetPrice > 0 && price > 0)
+          ? Math.max(0, Math.min(100, (price - _targetPrice) / price * 100))
+          : 100;
       h += '<div class="memo-aside">';
-      h += 'To satisfy the required margin of safety of <span class="mono hl">'+f(_reqM,0)+'%</span> for a '+_btype+' business, the price would need to decline approximately <span class="mono hl">'+f(_fallNeeded,0)+'%</span> from current levels \u2014 or intrinsic value would need to grow correspondingly through improved business fundamentals.';
+      h += 'To satisfy the required margin of safety of <span class="mono hl">'+f(_reqM,0)+'%</span> for a '+_btype+' business, the price would need to decline approximately <span class="mono hl">'+f(_fallNeeded,0)+'%</span> from current levels (to approximately <span class="mono hl">$'+f(_targetPrice,2)+'</span>) \u2014 or intrinsic value would need to grow correspondingly through improved business fundamentals.';
       h += '</div>';
     } else if(_mosP < _reqM){
       h += '<p>The current margin of safety of <span class="mono hl">'+fS(_mosP,1)+'%</span> falls short of the required <span class="mono hl">'+f(_reqM,0)+'%</span> threshold for a '+_btype+' business. ';
@@ -665,6 +676,8 @@ if(V9.v9_decision){
       h += '. ';
       if(FIN.payout_ratio!=null && FIN.payout_ratio > 80) h += 'The elevated payout ratio limits reinvestment flexibility and may be unsustainable if earnings contract. ';
       else if(FIN.payout_ratio!=null && FIN.payout_ratio < 40) h += 'The low payout ratio suggests management retains the majority of earnings for reinvestment, which is appropriate only if reinvestment returns exceed the cost of capital. ';
+    } else if(FIN.dividend_yield==null){
+      h += 'Dividend yield data is unavailable or flagged as anomalous. ';
     }
     if(FIN.buyback_yield!=null && FIN.buyback_yield > 0) h += 'Share repurchases contribute an additional <span class="mono hl">'+f(FIN.buyback_yield)+'%</span> yield. Buybacks are value-accretive only when executed below intrinsic value \u2014 at current pricing, this discipline warrants scrutiny.';
     h += '</p>';
@@ -705,7 +718,7 @@ if(V9.v9_decision){
     h += '<p>The alternative \u2014 inaction \u2014 would forgo an investment where the price-to-value relationship favors the buyer. Patience is a virtue, but excessive caution when a clear margin of safety exists is itself a form of capital misallocation.</p>';
   } else if(_dec === 'PASS'){
     h += '<p>Capital allocation discipline dictates that this position not be initiated at the current price. ';
-    if(_mosP < 0) h += 'The stock trades <span class="mono hl">'+f(Math.abs(_mosP),1)+'%</span> above estimated intrinsic value, which means purchasing today embeds negative margin of safety. ';
+    if(_mosP < 0){ var _pp2 = _ivB > 0 ? ((price - _ivB) / _ivB * 100) : Math.abs(_mosP); h += 'The stock trades at a <span class="mono hl">'+f(_pp2,0)+'%</span> premium to estimated intrinsic value ($'+f(_ivB,2)+'), which means purchasing today embeds negative margin of safety. '; }
     else if(_mosP < _reqM) h += 'While the stock trades near or modestly below estimated intrinsic value, the margin of safety of <span class="mono hl">'+fS(_mosP,1)+'%</span> does not meet the <span class="mono hl">'+f(_reqM,0)+'%</span> required for a '+_btype+' business. ';
     h += 'Conviction stands at <span class="mono hl">'+f(_conv,0)+'/100</span>.</p>';
     h += '<p>'+(_reason?_reason+'. ':'')+'The opposite action \u2014 buying \u2014 would require either a materially lower price, materially higher intrinsic value estimates (driven by improved fundamentals), or a reassessment of business quality that justifies a narrower margin of safety. None of these conditions is currently met.</p>';
@@ -814,6 +827,15 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
   if(DCF.assumptions){
     var a=DCF.assumptions;
     h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% &middot; FCF Mgn '+f(a.fcf_margin)+'% &middot; WACC '+f(a.discount_rate)+'% &middot; Terminal '+f(a.terminal_growth)+'%</div>';
+    if(a.wacc_derived){
+      h += '<div style="font-size:10px;color:var(--t3)">WACC derived via CAPM: Rf 4% + \u03B2('+f(a.beta,2)+') \u00D7 ERP 5% = '+f(a.discount_rate,1)+'%</div>';
+    }
+    if(a.net_debt_subtracted!=null){
+      h += '<div style="font-size:10px;color:var(--t3)">Enterprise Value \u2192 Equity: Net debt of '+fM(a.net_debt_subtracted)+' subtracted from DCF enterprise value</div>';
+    }
+    if(a.terminal_value_pct > 70){
+      h += '<div class="warn-badge" style="margin-top:4px;padding:4px 8px;background:rgba(210,153,34,0.1);border:1px solid var(--warn);border-radius:var(--r);font-size:10px;color:var(--warn)">\u26A0 High terminal dependence: '+f(a.terminal_value_pct,0)+'% of fair value from terminal year</div>';
+    }
   }
 } else {
   h += '<div class="empty">DCF not available for this ticker</div>';
@@ -1713,10 +1735,10 @@ if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
     ['Forward EPS',FIN.forward_eps!=null?'$'+f(FIN.forward_eps,2):'N/A',''],
     ['Revenue/Share',FIN.revenue_per_share!=null?'$'+f(FIN.revenue_per_share,2):'N/A',''],
     ['Book Value/Share',FIN.book_value!=null?'$'+f(FIN.book_value,2):'N/A',''],
-    ['Shares Out.',FIN.shares_outstanding!=null?fM(FIN.shares_outstanding):'N/A',''],
+    ['Shares Out.',FIN.shares_outstanding!=null?fN(FIN.shares_outstanding):'N/A',''],
     ['Buyback Yield',FIN.buyback_yield!=null?f(FIN.buyback_yield)+'%':'N/A',FIN.buyback_yield>0?'pos':''],
-    ['Dividend Yield',FIN.dividend_yield!=null?f(FIN.dividend_yield,2)+'%':'N/A',''],
-    ['Payout Ratio',FIN.payout_ratio!=null?f(FIN.payout_ratio)+'%':'N/A',FIN.payout_ratio>80?'warn':''],
+    ['Dividend Yield',FIN.dividend_yield!=null&&FIN.dividend_yield>=0?f(FIN.dividend_yield,2)+'%':'N/A',''],
+    ['Payout Ratio',FIN.payout_ratio!=null&&FIN.payout_ratio>=0?f(FIN.payout_ratio)+'%':'N/A',FIN.payout_ratio!=null&&FIN.payout_ratio>80?'warn':''],
     ['EBITDA',fM(FIN.ebitda),''],
     ['Market Cap',fM(FIN.market_cap||CO.market_cap),''],
   ];

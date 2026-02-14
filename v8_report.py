@@ -373,8 +373,8 @@ def _compute_v9_owner_scores(summary, v8_data):
             ca += 0.6
 
     # Dividend discipline
-    dy = fin.get('dividend_yield', 0)
-    pr = fin.get('payout_ratio', 0)
+    dy = fin.get('dividend_yield') or 0
+    pr = fin.get('payout_ratio') or 0
     if dy > 0 and pr > 0 and pr < 60:
         ca += 0.5  # Sustainable dividend
     elif pr > 90:
@@ -415,6 +415,10 @@ def _compute_v9_owner_scores(summary, v8_data):
     else:
         mos_pct = 0
 
+    # Invariant: If price > IV, MOS must be negative
+    if price > base_iv and base_iv > 0 and mos_pct > 0:
+        mos_pct = -abs(mos_pct)
+
     # --- Permanent Loss Risks ---
     perm_risks = []
     if de > 3:
@@ -433,6 +437,9 @@ def _compute_v9_owner_scores(summary, v8_data):
         perm_risks.append(("Macro regime stress", "Medium", f"Operating in {regime} environment"))
     if ic > 0 and ic < 3:
         perm_risks.append(("Debt service risk", "Medium", f"Interest coverage only {ic:.1f}x"))
+    if base_iv > 0 and price > base_iv * 1.5:
+        perm_risks.append(("Severe overvaluation", "Medium",
+            f"Price {price/base_iv:.1f}x intrinsic value — overpayment risk material"))
     if not perm_risks:
         perm_risks.append(("General market risk", "Low", "Systemic drawdown exposure"))
 
@@ -483,17 +490,22 @@ def _compute_v9_owner_scores(summary, v8_data):
     conviction += min(15, (5 - len([r for r in perm_risks if r[1] == "High"])) * 5)  # 0-15
     conviction = max(0, min(100, round(conviction)))
 
+    # Price-based MOS for display
+    mos_price_based = round((base_iv - price) / price * 100, 1) if price > 0 else 0
+
     return {
         'business_quality': business_quality,
         'moat_durability': moat_durability,
         'capital_allocation': capital_allocation,
         'mos_pct': mos_pct,
+        'mos_price_based': mos_price_based,
         'intrinsic_value_base': base_iv,
         'intrinsic_value_bear': dcf.get('bear', 0),
         'intrinsic_value_bull': dcf.get('bull', 0),
         'v9_decision': v9_decision,
         'decision_reason': decision_reason,
         'required_mos': required_mos,
+        'required_price': round(base_iv * (1 - required_mos), 2) if base_iv > 0 else 0,
         'business_type': business_type,
         'conviction': conviction,
         'permanent_loss_risks': perm_risks[:5],
@@ -875,8 +887,8 @@ def _section_balance_sheet(v8_data):
         health = "Balance sheet warrants caution"
         detail = f"Leverage at {nd_ebitda:.1f}x EBITDA is elevated."
 
-    div_y = fin.get('dividend_yield', 0)
-    bb_y = fin.get('buyback_yield', 0)
+    div_y = fin.get('dividend_yield') or 0
+    bb_y = fin.get('buyback_yield') or 0
     total_return = div_y + bb_y
     if total_return > 3:
         cap_return = f"Total shareholder return yield of {total_return:.1f}% ({_fmt_pct(div_y)} dividend + {_fmt_pct(bb_y)} buyback) provides a structural tailwind."
@@ -1316,8 +1328,8 @@ def _generate_catalysts(summary, v8_data):
         catalysts.append(('Analyst Momentum', 'High', 'MEDIUM',
                           f"Consensus is {rec.replace('_', ' ')} — positive revision cycle"))
 
-    bb = fin.get('buyback_yield', 0)
-    dy = fin.get('dividend_yield', 0)
+    bb = fin.get('buyback_yield') or 0
+    dy = fin.get('dividend_yield') or 0
     if bb + dy > 2:
         catalysts.append(('Capital Return', 'Very High', 'MEDIUM',
                           f"{_fmt_pct(bb + dy)} total yield — structural EPS support"))

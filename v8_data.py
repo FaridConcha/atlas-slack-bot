@@ -375,6 +375,79 @@ def _build_company_info(info, symbol, hist=None):
 
 
 # ============================================================================
+# DATA SANITY HELPERS
+# ============================================================================
+
+def _sanitize_yield(info, price):
+    """Cross-validate dividend yield against dividendRate/price."""
+    raw_dy = info.get('dividendYield', 0) or 0
+    div_rate = info.get('dividendRate', 0) or 0
+
+    if price > 0 and div_rate > 0:
+        computed_dy = div_rate / price  # Always a decimal
+        # Pick whichever raw interpretation is closer to computed
+        if abs(raw_dy - computed_dy) <= abs(raw_dy * 100 - computed_dy * 100):
+            dividend_yield = raw_dy * 100  # raw was decimal, convert
+        else:
+            dividend_yield = raw_dy  # raw was already percentage
+    elif raw_dy > 1.0:
+        dividend_yield = raw_dy  # Already percentage (>100% yield impossible)
+    else:
+        dividend_yield = raw_dy * 100
+
+    # Final sanity cap
+    if dividend_yield > 25:
+        dividend_yield = None  # Flag as anomalous, display N/A
+    return dividend_yield
+
+
+def _sanitize_payout(info):
+    """Sanitize payout ratio — cap at 200%."""
+    raw_pr = info.get('payoutRatio', 0) or 0
+    if raw_pr > 2.0:
+        # Already percentage
+        payout = raw_pr
+    else:
+        payout = raw_pr * 100
+    if payout > 200:
+        return None
+    return payout
+
+
+def _validate_financials(fin, info, price):
+    """Post-hoc sanity checks. Nullify anomalous values."""
+    mc = fin.get('market_cap', 0)
+    shares = fin.get('shares_outstanding', 0)
+
+    # 1. Yield sanity: dividend_yield > 25% -> None
+    if fin.get('dividend_yield') is not None and fin['dividend_yield'] > 25:
+        fin['dividend_yield'] = None
+
+    # 2. Payout ratio sanity: > 200% -> None
+    if fin.get('payout_ratio') is not None and fin['payout_ratio'] > 200:
+        fin['payout_ratio'] = None
+
+    # 3. Share count cross-check: shares * price ~ market_cap (+-10%)
+    if shares > 0 and price > 0 and mc > 0:
+        implied_mc = shares * price
+        if abs(implied_mc - mc) / mc > 0.10:
+            fin['_shares_warning'] = True
+
+    # 4. EV consistency: EV ~ MC + net_debt (+-15%)
+    reported_ev = (info.get('enterpriseValue', 0) or 0)
+    computed_ev = mc + fin.get('net_debt', 0)
+    if reported_ev > 0 and computed_ev > 0:
+        if abs(reported_ev - computed_ev) / reported_ev > 0.15:
+            fin['_ev_warning'] = True
+
+    # 5. PEG: if 0, set to None (missing growth, not zero growth)
+    if fin.get('peg_ratio') == 0:
+        fin['peg_ratio'] = None
+
+    return fin
+
+
+# ============================================================================
 # DETAILED FINANCIALS
 # ============================================================================
 
@@ -407,7 +480,7 @@ def _build_financials(ticker, info, hist=None):
     except Exception:
         buyback_yield = 0
 
-    return {
+    result = {
         'revenue_ttm': revenue,
         'revenue_growth': (info.get('revenueGrowth', 0) or 0) * 100,
         'earnings_growth': (info.get('earningsGrowth', 0) or 0) * 100,
@@ -428,12 +501,12 @@ def _build_financials(ticker, info, hist=None):
         'debt_equity': (info.get('debtToEquity', 0) or 0) / 100,
         'current_ratio': info.get('currentRatio', 0) or 0,
         'interest_coverage': round(interest_coverage, 1),
-        'dividend_yield': (info.get('dividendYield', 0) or 0) * 100,
-        'payout_ratio': (info.get('payoutRatio', 0) or 0) * 100,
+        'dividend_yield': _sanitize_yield(info, price),
+        'payout_ratio': _sanitize_payout(info),
         'buyback_yield': round(buyback_yield, 2),
         'trailing_pe': info.get('trailingPE', 0) or 0,
         'forward_pe': info.get('forwardPE', 0) or 0,
-        'peg_ratio': info.get('pegRatio', 0) or 0,
+        'peg_ratio': info.get('pegRatio') or None,
         'price_to_book': info.get('priceToBook', 0) or 0,
         'price_to_sales': info.get('priceToSalesTrailing12Months', 0) or 0,
         'ev_ebitda': info.get('enterpriseToEbitda', 0) or 0,
@@ -450,6 +523,8 @@ def _build_financials(ticker, info, hist=None):
         'num_analysts': info.get('numberOfAnalystOpinions', 0) or 0,
         'recommendation': info.get('recommendationKey', 'none'),
     }
+
+    return _validate_financials(result, info, price)
 
 
 # ============================================================================
@@ -1098,7 +1173,23 @@ def _build_dcf(info, financials):
             return {'bear': 0, 'base': 0, 'bull': 0}
 
         fcf_margin = cash_proxy / revenue
-        discount_rate = 0.10
+
+        # WACC via CAPM (beta-aware)
+        beta = info.get('beta', 1.0) or 1.0
+        risk_free = 0.04   # 10Y treasury proxy
+        erp = 0.05         # equity risk premium
+        cost_of_equity = risk_free + beta * erp
+
+        de = financials.get('debt_equity', 0)
+        if de > 0:
+            debt_weight = de / (1 + de)
+            equity_weight = 1 - debt_weight
+            cost_of_debt = 0.05 * 0.75  # ~5% pre-tax, 25% tax shield
+            wacc = equity_weight * cost_of_equity + debt_weight * cost_of_debt
+        else:
+            wacc = cost_of_equity
+
+        discount_rate = max(0.06, min(0.15, wacc))  # Floor 6%, cap 15%
         terminal_growth = 0.03
 
         # 5-year FCF projections
@@ -1121,9 +1212,16 @@ def _build_dcf(info, financials):
 
         # Present value
         pv = sum(f / (1 + discount_rate) ** (i + 1) for i, f in enumerate(projected_fcf))
-        pv += terminal_value / (1 + discount_rate) ** 5
+        tv_pv = terminal_value / (1 + discount_rate) ** 5
+        pv += tv_pv
 
-        base_fv = pv / shares
+        # Terminal value as % of total DCF
+        terminal_pct = tv_pv / pv * 100 if pv > 0 else 0
+
+        # EV-to-Equity bridge: subtract net debt from enterprise value
+        net_debt = financials.get('net_debt', 0)
+        equity_value = max(0, pv - net_debt)
+        base_fv = equity_value / shares if shares > 0 else 0
 
         # Widen bear/bull range when using proxy cash flows
         bear_mult = 0.70 if cash_flow_source != 'fcf' else 0.80
@@ -1137,8 +1235,12 @@ def _build_dcf(info, financials):
             'assumptions': {
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),
-                'discount_rate': discount_rate * 100,
-                'terminal_growth': terminal_growth * 100,
+                'discount_rate': round(discount_rate * 100, 1),
+                'terminal_growth': round(terminal_growth * 100, 1),
+                'wacc_derived': True,
+                'beta': round(beta, 2),
+                'terminal_value_pct': round(terminal_pct, 1),
+                'net_debt_subtracted': round(net_debt, 0),
             },
         }
     except Exception:
