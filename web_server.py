@@ -1389,34 +1389,232 @@ if(mktIndices.length||mktBonds.length||mktCommod.length){
   h += '</div>';
 }
 
-// Economic Context
+// ── Economic Context (Expanded) ──────────────────────
 var econInd = ECON.indicators||[];
-if(econInd.length||ECON.fed_funds_rate!=null){
-  h += '<div class="card"><h2>Economic Context</h2>';
-  if(ECON.fed_funds_rate!=null){
-    h += '<div style="font-size:14px;margin-bottom:12px">Fed Funds Rate: <span class="mono" style="font-weight:700;color:var(--acc)">'+f(ECON.fed_funds_rate,2)+'%</span>';
-    if(ECON.source) h += ' <span style="font-size:10px;color:var(--t3)">('+ECON.source+')</span>';
-    h += '</div>';
-  }
-  if(econInd.length){
-    h += '<div style="overflow-x:auto"><table><thead><tr>';
-    h += '<th>Indicator</th><th class="text-r">Value</th><th class="text-r">Prior</th><th class="text-r">Change</th><th>Trend</th>';
-    h += '</tr></thead><tbody>';
-    for(var i=0;i<econInd.length;i++){
-      var ei=econInd[i];
-      var chg = ei.value&&ei.prior?(ei.value-ei.prior):null;
-      h += '<tr>';
-      h += '<td style="font-weight:500">'+ei.name+'</td>';
-      h += '<td class="text-r mono">'+f(ei.value,2)+(ei.unit||'')+'</td>';
-      h += '<td class="text-r mono muted">'+f(ei.prior,2)+(ei.unit||'')+'</td>';
-      h += '<td class="text-r mono '+cls(chg)+'">'+(chg!=null?fS(chg,2):'N/A')+'</td>';
-      h += '<td><span class="pill '+(ei.trend==='Improving'?'pill-pos':ei.trend==='Deteriorating'?'pill-neg':'pill-muted')+'" style="font-size:10px">'+(ei.trend||'')+'</span></td>';
-      h += '</tr>';
-    }
-    h += '</tbody></table></div>';
-  }
+h += '<div class="card"><h2>Economic Context</h2>';
+
+// Derive macro signals from available data
+var _bonds = MKT.bonds||[];
+var _y10 = null, _y2 = null;
+for(var bi=0;bi<_bonds.length;bi++){
+  if(_bonds[bi].name.indexOf('10-Year')>=0) _y10 = _bonds[bi].value;
+  if(_bonds[bi].name.indexOf('2-Year')>=0) _y2 = _bonds[bi].value;
+}
+var _yieldSpread = (_y10!=null && _y2!=null) ? (_y10 - _y2) : null;
+var _ffr = ECON.fed_funds_rate;
+var _vixE = S.vix||0;
+var _rsE = RV.RS||0;
+var _csE = RV.CS||0;
+var _grE = RV.GR||0;
+var _ciE = RV.CI||0;
+
+// Determine macro regime label
+var _macroRegime = 'Neutral';
+var _macroClass = 'pill-muted';
+if(_rsE > 0.5 || _csE > 0.5 || _grE > 0.5){
+  _macroRegime = 'Stress';
+  _macroClass = 'pill-neg';
+} else if(_vixE > 25 || (_yieldSpread!=null && _yieldSpread < 0)){
+  _macroRegime = 'Caution';
+  _macroClass = 'pill-warn';
+} else if(_vixE < 16 && _rsE < 0.2 && _csE < 0.2){
+  _macroRegime = 'Favorable';
+  _macroClass = 'pill-pos';
+}
+
+// ── Top banner: Macro Regime + Fed Rate + Yield Spread + VIX ──
+h += '<div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:16px">';
+h += '<div><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">Macro Regime</span><br>';
+h += '<span class="pill '+_macroClass+'" style="font-size:12px;font-weight:600">'+_macroRegime+'</span></div>';
+if(_ffr!=null){
+  h += '<div><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">Fed Funds Rate</span><br>';
+  h += '<span class="mono" style="font-size:16px;font-weight:700;color:var(--acc)">'+f(_ffr,2)+'%</span></div>';
+}
+if(_yieldSpread!=null){
+  var _ysC = _yieldSpread<0?'neg':_yieldSpread<0.5?'warn':'pos';
+  h += '<div><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">10Y\u20132Y Spread</span><br>';
+  h += '<span class="mono '+_ysC+'" style="font-size:16px;font-weight:700">'+fS(_yieldSpread,2)+'%</span>';
+  if(_yieldSpread < 0) h += ' <span class="pill pill-neg" style="font-size:9px">INVERTED</span>';
   h += '</div>';
 }
+if(_vixE){
+  var _vxCe = _vixE>28?'neg':_vixE>20?'warn':'pos';
+  h += '<div><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">VIX</span><br>';
+  h += '<span class="mono '+_vxCe+'" style="font-size:16px;font-weight:700">'+f(_vixE,1)+'</span></div>';
+}
+if(ECON.source) h += '<div style="margin-left:auto;font-size:10px;color:var(--t3);font-style:italic">Source: '+ECON.source+'</div>';
+h += '</div>';
+
+// ── Macro Interpretation Narrative ──
+h += '<div style="background:var(--bg1);border-radius:var(--r);padding:12px 14px;margin-bottom:16px;font-size:12px;line-height:1.7;color:var(--t2)">';
+h += '<span style="font-weight:600;color:var(--t1)">Macro Assessment:</span> ';
+if(_ffr!=null){
+  if(_ffr >= 5.0) h += 'The federal funds rate at '+f(_ffr,2)+'% represents a restrictive monetary policy stance, increasing the discount rate for long-duration assets and compressing equity multiples. ';
+  else if(_ffr >= 3.0) h += 'The federal funds rate at '+f(_ffr,2)+'% reflects a moderately tight policy environment. Rate-sensitive sectors face headwinds while financials may benefit from wider net interest margins. ';
+  else if(_ffr >= 1.0) h += 'With the fed funds rate at '+f(_ffr,2)+'%, monetary policy is accommodative relative to historical norms, generally supportive of equity valuations and growth-oriented assets. ';
+  else h += 'Near-zero rates at '+f(_ffr,2)+'% signal maximum monetary accommodation, favouring risk assets and compressing required returns across asset classes. ';
+}
+if(_yieldSpread!=null){
+  if(_yieldSpread < -0.5) h += 'The deeply inverted yield curve (10Y\u20132Y spread: '+fS(_yieldSpread,2)+'%) has historically preceded recessions, signaling markets expect rate cuts ahead due to economic weakness. ';
+  else if(_yieldSpread < 0) h += 'The inverted yield curve ('+fS(_yieldSpread,2)+'%) warrants caution \u2014 inversions have preceded every U.S. recession in the past 50 years, though timing varies. ';
+  else if(_yieldSpread < 0.5) h += 'The flat yield curve ('+fS(_yieldSpread,2)+'%) suggests markets are pricing in uncertainty about the rate trajectory, with limited term premium for duration risk. ';
+  else h += 'A positively sloped yield curve ('+fS(_yieldSpread,2)+'%) indicates a healthy term structure with appropriate risk premiums for duration. ';
+}
+if(_vixE){
+  if(_vixE > 30) h += 'Elevated VIX at '+f(_vixE,1)+' signals significant market fear and elevated implied volatility, which typically compresses entry prices but widens option premiums.';
+  else if(_vixE > 20) h += 'VIX above 20 ('+f(_vixE,1)+') reflects above-average uncertainty, suggesting markets are pricing in near-term risks.';
+  else if(_vixE < 14) h += 'VIX at '+f(_vixE,1)+' indicates market complacency. Historically low volatility often precedes sharp mean-reversion moves.';
+  else h += 'VIX at '+f(_vixE,1)+' is within the normal range, suggesting orderly market conditions.';
+}
+h += '</div>';
+
+// ── Yield Curve Visual ──
+if(_y10!=null && _y2!=null){
+  h += '<div style="margin-bottom:16px">';
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Yield Curve Snapshot</div>';
+  h += '<div id="ch-yield-curve" style="height:180px"></div>';
+  h += '</div>';
+}
+
+// ── Economic Cycle Phase + Engine Macro Signals ──
+var _gdpInd = null, _unempInd = null, _cpiInd = null;
+for(var ei2=0;ei2<econInd.length;ei2++){
+  if(econInd[ei2].name.indexOf('GDP')>=0) _gdpInd = econInd[ei2];
+  if(econInd[ei2].name.indexOf('Unemployment')>=0) _unempInd = econInd[ei2];
+  if(econInd[ei2].name==='CPI (YoY)') _cpiInd = econInd[ei2];
+}
+var _cyclePhase = 'Mid-Cycle';
+var _cycleDesc = '';
+var _cycleColor = 'var(--acc)';
+if(_csE > 0.4 || (_gdpInd && _gdpInd.value < 0)){
+  _cyclePhase = 'Contraction';
+  _cycleDesc = 'Credit stress and/or negative GDP growth suggest economic contraction. Defensive positioning and quality bias favored.';
+  _cycleColor = 'var(--neg)';
+} else if(_vixE > 25 && _rsE > 0.3){
+  _cyclePhase = 'Late-Cycle';
+  _cycleDesc = 'Elevated volatility combined with rate stress suggests late-cycle dynamics. Earnings quality and balance sheet strength become critical.';
+  _cycleColor = 'var(--warn)';
+} else if(_ffr!=null && _ffr < 2 && _vixE < 18){
+  _cyclePhase = 'Early-Cycle';
+  _cycleDesc = 'Low rates and contained volatility are typical of early-cycle recovery. Cyclicals and high-beta names tend to outperform.';
+  _cycleColor = 'var(--pos)';
+} else if(_vixE < 20 && _csE < 0.2 && _rsE < 0.3){
+  _cyclePhase = 'Mid-Cycle';
+  _cycleDesc = 'Moderate conditions across rates, credit, and volatility. The broadest opportunity set is typically available mid-cycle.';
+  _cycleColor = 'var(--acc)';
+} else {
+  _cyclePhase = 'Transitional';
+  _cycleDesc = 'Mixed signals across macro indicators. Cross-currents in rates, credit, and growth make regime identification uncertain.';
+  _cycleColor = 'var(--warn)';
+}
+
+h += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">';
+// Cycle phase card
+h += '<div style="flex:1;min-width:220px;background:var(--bg1);border-radius:var(--r);padding:12px 14px">';
+h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Economic Cycle Phase</div>';
+h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
+h += '<div style="width:10px;height:10px;border-radius:50%;background:'+_cycleColor+'"></div>';
+h += '<span style="font-size:14px;font-weight:600;color:var(--t1)">'+_cyclePhase+'</span>';
+h += '</div>';
+h += '<div style="font-size:11px;color:var(--t2);line-height:1.5">'+_cycleDesc+'</div>';
+h += '</div>';
+// Engine macro signals
+h += '<div style="flex:1;min-width:220px;background:var(--bg1);border-radius:var(--r);padding:12px 14px">';
+h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Engine Macro Signals</div>';
+var _macroSigs = [
+  {name:'Rates Shock', val:_rsE, desc:'Interest rate regime disruption'},
+  {name:'Credit Stress', val:_csE, desc:'Corporate debt & spread pressure'},
+  {name:'Global Risk', val:_grE, desc:'Cross-border contagion signals'},
+  {name:'Corr. Instability', val:_ciE, desc:'Inter-asset correlation breakdown'},
+];
+for(var ms=0;ms<_macroSigs.length;ms++){
+  var msig = _macroSigs[ms];
+  var msC = msig.val>0.5?'var(--neg)':msig.val>0.25?'var(--warn)':'var(--pos)';
+  h += '<div style="margin-bottom:6px">';
+  h += '<div style="display:flex;justify-content:space-between;font-size:11px"><span style="color:var(--t2)">'+msig.name+'</span><span class="mono" style="color:var(--t1);font-weight:500">'+f(msig.val,2)+'</span></div>';
+  h += '<div style="height:4px;background:var(--bg2);border-radius:2px;overflow:hidden"><div style="width:'+Math.max(2,msig.val*100)+'%;height:100%;background:'+msC+';border-radius:2px"></div></div>';
+  h += '</div>';
+}
+h += '</div>';
+h += '</div>';
+
+// ── Enhanced Indicator Table ──
+if(econInd.length){
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Economic Indicators</div>';
+  h += '<div style="overflow-x:auto"><table><thead><tr>';
+  h += '<th>Indicator</th><th class="text-r">Value</th><th class="text-r">Prior</th><th class="text-r">Change</th><th>Trend</th><th>Interpretation</th>';
+  h += '</tr></thead><tbody>';
+  for(var ei3=0;ei3<econInd.length;ei3++){
+    var eiR=econInd[ei3];
+    var chgE = eiR.value&&eiR.prior?(eiR.value-eiR.prior):null;
+    h += '<tr>';
+    h += '<td style="font-weight:500">'+eiR.name+'</td>';
+    h += '<td class="text-r mono">'+f(eiR.value,2)+(eiR.unit||'')+'</td>';
+    h += '<td class="text-r mono muted">'+f(eiR.prior,2)+(eiR.unit||'')+'</td>';
+    h += '<td class="text-r mono '+cls(chgE)+'">'+(chgE!=null?fS(chgE,2):'N/A')+'</td>';
+    h += '<td><span class="pill '+(eiR.trend==='Improving'||eiR.trend==='Rising'||eiR.trend==='Low'?'pill-pos':eiR.trend==='Deteriorating'||eiR.trend==='Declining'||eiR.trend==='Elevated'?'pill-neg':'pill-muted')+'" style="font-size:10px">'+(eiR.trend||'')+'</span></td>';
+    h += '<td style="font-size:11px;color:var(--t2);max-width:220px">';
+    if(eiR.name.indexOf('10-Year')>=0){
+      if(eiR.value>4.5) h += 'Restrictive. Raises discount rates, compresses growth multiples.';
+      else if(eiR.value>3.5) h += 'Moderately elevated. Mixed impact on equity valuations.';
+      else h += 'Accommodative. Supports higher equity multiples.';
+    } else if(eiR.name==='VIX'){
+      if(eiR.value>28) h += 'Fear zone. Markets pricing significant near-term risk.';
+      else if(eiR.value>20) h += 'Above average. Elevated hedging demand.';
+      else if(eiR.value<14) h += 'Complacency. Low vol precedes sharp moves historically.';
+      else h += 'Normal range. Orderly market conditions.';
+    } else if(eiR.name.indexOf('CPI')>=0){
+      if(eiR.value>5) h += 'Hot inflation. Hawkish Fed likely; compresses real returns.';
+      else if(eiR.value>3) h += 'Above target. Keeps policy restrictive; favors real assets.';
+      else if(eiR.value>2) h += 'Near target. Supportive of rate normalization.';
+      else h += 'Below target. Potential easing catalyst.';
+    } else if(eiR.name.indexOf('Unemployment')>=0){
+      if(eiR.value>6) h += 'Weak labor market. Recession risk elevated.';
+      else if(eiR.value>4.5) h += 'Softening. Consumer spending may decelerate.';
+      else h += 'Tight labor market. Wage pressure supports consumer strength.';
+    } else if(eiR.name.indexOf('GDP')>=0){
+      if(eiR.value>3) h += 'Strong expansion. Supports earnings growth broadly.';
+      else if(eiR.value>0) h += 'Positive but moderate. Selective growth favored.';
+      else h += 'Contraction. Defensive and quality bias warranted.';
+    } else if(eiR.name.indexOf('Consumer Confidence')>=0){
+      if(eiR.value>80) h += 'Strong sentiment. Consumer-driven earnings supported.';
+      else if(eiR.value>60) h += 'Moderate. Consumers cautious but spending.';
+      else h += 'Weak. Discretionary spending at risk.';
+    } else if(eiR.name.indexOf('Fed Funds')>=0){
+      if(eiR.value>=5) h += 'Peak restrictive. DCF valuations face maximum headwind.';
+      else if(eiR.value>=3) h += 'Tightening cycle. Growth stocks face compression.';
+      else h += 'Accommodative. Supports risk-taking and higher multiples.';
+    } else if(eiR.name.indexOf('ISM')>=0||eiR.name.indexOf('Manufact')>=0){
+      h += chgE&&chgE>0?'Expanding. Manufacturing sector strengthening.':'Contracting or flat. Industrial weakness may weigh.';
+    } else if(eiR.name.indexOf('Retail')>=0){
+      h += chgE&&chgE>0?'Growing. Consumer spending resilient.':'Declining. Consumer pullback underway.';
+    }
+    h += '</td>';
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+}
+
+// ── Impact on This Ticker ──
+var _tickerSector = CO.sector||'';
+var _tickerBeta = CO.beta||1;
+h += '<div style="background:var(--bg1);border-radius:var(--r);padding:12px 14px;margin-top:16px;font-size:12px;line-height:1.7;color:var(--t2)">';
+h += '<span style="font-weight:600;color:var(--t1)">Impact on '+D.symbol+':</span> ';
+if(DCF && DCF.assumptions){
+  var _waccE = DCF.assumptions.discount_rate||10;
+  if(_ffr!=null && _ffr >= 4) h += 'At a '+f(_waccE,1)+'% WACC with the current '+f(_ffr,2)+'% fed funds rate, the DCF valuation carries significant rate sensitivity \u2014 a 100bp rate increase would further compress fair value. ';
+  else if(_ffr!=null) h += 'With a '+f(_waccE,1)+'% WACC in a '+f(_ffr,2)+'% rate environment, the DCF model benefits from relatively low discount rates. ';
+}
+if(_tickerBeta > 1.3) h += 'With a beta of '+f(_tickerBeta,2)+', '+D.symbol+' amplifies macro movements \u2014 both upside in favorable conditions and downside during stress. ';
+else if(_tickerBeta < 0.7) h += 'A low beta of '+f(_tickerBeta,2)+' provides relative insulation from macro volatility, making '+D.symbol+' a defensive holding in uncertain environments. ';
+else h += 'Beta of '+f(_tickerBeta,2)+' suggests '+D.symbol+' tracks broad market movements without significant amplification. ';
+var _cyclicals = ['Consumer Cyclical','Technology','Financials','Energy','Industrials','Basic Materials'];
+var _defensives = ['Healthcare','Consumer Defensive','Utilities','Real Estate','Communication Services'];
+if(_cyclicals.indexOf(_tickerSector)>=0) h += 'As a '+_tickerSector+' name, the stock is cyclically sensitive and tends to outperform in expansions but faces earnings headwinds during contractions.';
+else if(_defensives.indexOf(_tickerSector)>=0) h += 'The '+_tickerSector+' sector typically exhibits defensive characteristics, offering relative stability through economic cycles but potentially lagging in strong recoveries.';
+h += '</div>';
+
+h += '</div>';
 
 // ════════════════════════════════════════════════════
 // SECTION: EXTENDED DATA
@@ -2377,6 +2575,43 @@ function initCharts(){
         data:[{value:Math.round(rTotal),name:'Systemic Risk'}],
         animationDuration:800
       }]
+    });
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── Yield Curve Chart ──
+  (function(){
+    var el = document.getElementById('ch-yield-curve');
+    if(!el) return;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var bds = (V8.market||{}).bonds||[];
+    var y10v=null, y2v=null;
+    for(var i=0;i<bds.length;i++){
+      if(bds[i].name.indexOf('10-Year')>=0) y10v=bds[i].value;
+      if(bds[i].name.indexOf('2-Year')>=0) y2v=bds[i].value;
+    }
+    if(y10v==null||y2v==null) return;
+    var ffrV = (V8.economic||{}).fed_funds_rate||null;
+    var labels = [];
+    var vals = [];
+    if(ffrV!=null){ labels.push('Fed Funds'); vals.push(ffrV); }
+    labels.push('2-Year'); vals.push(y2v);
+    labels.push('10-Year'); vals.push(y10v);
+    var spread = y10v - y2v;
+    var barColors = vals.map(function(v,i){
+      if(i===0) return c.acc;
+      return spread<0?c.neg:spread<0.5?c.warn:c.pos;
+    });
+    var ch = echarts.init(el);
+    ch.setOption({
+      tooltip:{trigger:'axis',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:11},formatter:function(p){return p.map(function(s){return s.marker+s.name+': <b>'+s.value.toFixed(2)+'%</b>'}).join('<br>')}},
+      grid:{left:40,right:20,top:20,bottom:36},
+      xAxis:{type:'category',data:labels,axisLine:{lineStyle:{color:c.border}},axisLabel:{color:c.t2,fontSize:10}},
+      yAxis:{type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLabel:{color:c.t3,fontSize:9,formatter:function(v){return v.toFixed(1)+'%'}}},
+      series:[
+        {type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:barColors[i],borderRadius:[3,3,0,0]}}}),barWidth:'40%',animationDuration:600},
+        {type:'line',data:vals,smooth:true,lineStyle:{color:c.acc,width:2,type:'dashed'},symbol:'circle',symbolSize:6,itemStyle:{color:c.acc},animationDuration:600}
+      ]
     });
     window.addEventListener('resize',function(){ch.resize()});
   })();
