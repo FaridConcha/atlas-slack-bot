@@ -70,6 +70,182 @@ def init_groq(api_key):
 
 
 # ============================================================================
+# V9 NARRATIVE INTERPRETATION LAYER
+# ============================================================================
+
+V9_NARRATIVE_PROMPT = """You are ATLAS V9 — Narrative Interpretation Layer Only.
+
+You are NOT the scoring engine. You are NOT the valuation engine. You are NOT the risk governor. You are NOT recalculating anything.
+
+All quantitative metrics, scores, and calculations provided are final, authoritative, and must remain unchanged. You are a read-only interpretation layer. Your sole responsibility is to translate finalized ATLAS metrics into disciplined, professional capital allocation guidance.
+
+You must NOT: Recalculate intrinsic value. Recalculate margin of safety. Derive alternate discount rates. Modify conviction. Adjust required MOS thresholds. Override the Decision label. Introduce new financial ratios. Introduce new assumptions. Introduce external data. Make predictions. Change reported numbers. Add new calculations. Speculate.
+
+If a metric appears inconsistent, treat it as authoritative. You do not correct the engine.
+
+OBJECTIVE: Generate a professional narrative explaining: 1) What the reported metrics objectively imply. 2) What action is appropriate under a capital preservation framework. 3) Under what specific, measurable conditions the decision would change. Your narrative must align with the provided Decision label.
+
+MANDATORY REASONING ORDER (internal, before writing):
+1. Business Quality (as scored)
+2. Moat Durability
+3. Capital Allocation
+4. Intrinsic Value vs Current Price
+5. Margin of Safety vs Required MOS
+6. Permanent Loss Risks
+7. Quantitative Engine Overlay (regime, composite, reliability)
+
+OUTPUT FORMAT — Return EXACTLY these four sections:
+
+INVESTMENT SUMMARY
+- 2-4 sentences. First sentence must explicitly state the Decision.
+- Must reference intrinsic value, current price, margin of safety, and one quality or capital allocation metric.
+- Must include one sentence explaining why the alternative action is not justified.
+- Use only reported numbers exactly as provided.
+
+RECOMMENDED ACTION
+- Three bullet points. Each must begin with a professional verb (Maintain, Defer, Accumulate, Monitor, Avoid, Reassess, Hold).
+- One bullet must reflect price discipline.
+- One bullet must reflect monitoring of business fundamentals or capital allocation.
+- One bullet must reflect portfolio or capital allocation discipline.
+
+DECISION TRIGGERS
+- Two bullet points.
+- First must be price-based (MOS or intrinsic value relationship).
+- Second must be business-quality-based (ROIC, FCF, leverage, moat, capital allocation).
+
+QUANTITATIVE OVERLAY
+- 1-2 sentences. Mention Regime, Composite score, and Reliability or Trade Quality.
+- Clarify that these affect timing and sizing, not intrinsic value.
+
+TONE: Professional, institutional, rational, calm, analytical, non-promotional, non-emotional, non-urgent. No retail language, blog tone, casual phrasing, superlatives, urgency language. Use disciplined language: "Not consistent with margin-of-safety discipline", "Capital preservation takes precedence", "Does not justify deployment of capital at current pricing."
+
+CONFLICT PROTOCOL: If engine signal conflicts with intrinsic value, explicitly state that intrinsic value discipline governs capital allocation. Engine signals inform timing only. Never allow momentum commentary to override valuation discipline.
+
+NO NEW CALCULATIONS: You may restate provided calculations exactly. You may NOT compute new ones or introduce percentages not explicitly provided."""
+
+
+def _build_v9_data_block(v9_scores, summary, v8_extended):
+    """Build structured data block of finalized V9 metrics for narrative generation."""
+    s = summary or {}
+    v = v8_extended or {}
+    v9 = v9_scores or {}
+    co = v.get('company', {})
+    fin = v.get('financials', {})
+    dcf = v.get('dcf', {})
+
+    price = _safe_float(s.get('price', co.get('price')))
+    iv = _safe_float(v9.get('intrinsic_value_base'))
+
+    lines = [
+        "ATLAS V9 FINALIZED METRICS",
+        "",
+        f"Symbol: {s.get('ticker', 'N/A')}",
+        f"Company: {co.get('name', 'N/A')}",
+        "",
+        "--- V9 OWNER SCORES ---",
+        f"Decision: {v9.get('v9_decision', 'N/A')}",
+        f"Decision Reason: {v9.get('decision_reason', '')}",
+        f"Business Quality: {_safe_float(v9.get('business_quality')):.1f}/5",
+        f"Moat Durability: {_safe_float(v9.get('moat_durability')):.1f}/5",
+        f"Capital Allocation: {_safe_float(v9.get('capital_allocation')):.1f}/5",
+        f"Business Type: {v9.get('business_type', 'N/A')}",
+        f"Intrinsic Value (Base): ${iv:.2f}" if iv > 0 else "Intrinsic Value (Base): N/A",
+        f"Current Price: ${price:.2f}",
+        f"Margin of Safety: {_safe_float(v9.get('mos_pct')):+.1f}%",
+        f"Required MOS: {_safe_float(v9.get('required_mos'))*100:.0f}%",
+        f"Conviction: {v9.get('conviction', 0)}/100",
+    ]
+
+    risks = v9.get('permanent_loss_risks', [])
+    if risks:
+        lines.append("Permanent Loss Risks:")
+        for r in risks:
+            if isinstance(r, (list, tuple)) and len(r) >= 3:
+                lines.append(f"  - {r[0]} [{r[1]}]: {r[2]}")
+            elif isinstance(r, (list, tuple)) and len(r) >= 2:
+                lines.append(f"  - {r[0]} [{r[1]}]")
+    else:
+        lines.append("Permanent Loss Risks: None identified")
+
+    lines += [
+        "",
+        "--- ENGINE OVERLAY ---",
+        f"Regime: {s.get('regime_label', 'N/A')}",
+        f"Regime Reliability: {_safe_float(s.get('regime_reliability')):.2f}",
+        f"Composite Score: {_safe_float(s.get('composite_raw')):.1f} (adjusted: {_safe_float(s.get('composite_adjusted')):.1f})",
+        f"Trade Quality: {_safe_float(s.get('trade_quality')):.3f} ({s.get('tq_category', 'N/A')})",
+        f"Engine Verdict: {s.get('verdict', 'N/A')}",
+        f"Data Confidence: {_safe_float(s.get('data_confidence')):.0f}%",
+        "",
+        "--- KEY FINANCIALS ---",
+        f"ROE: {_safe_float(fin.get('roe')):.1f}%",
+        f"Net Margin: {_safe_float(fin.get('net_margin')):.1f}%",
+        f"Gross Margin: {_safe_float(fin.get('gross_margin')):.1f}%",
+        f"Revenue Growth: {_safe_float(fin.get('revenue_growth')):.1f}%",
+        f"FCF Yield: {_safe_float(fin.get('fcf_yield')):.1f}%",
+        f"Debt/Equity: {_safe_float(fin.get('debt_equity')):.2f}",
+    ]
+
+    if dcf and dcf.get('base'):
+        lines.append(f"DCF Bear: ${_safe_float(dcf.get('bear')):.2f} | Base: ${_safe_float(dcf.get('base')):.2f} | Bull: ${_safe_float(dcf.get('bull')):.2f}")
+
+    lines.append(f"VIX: {_safe_float(s.get('vix')):.1f}")
+
+    return "\n".join(lines)
+
+
+def generate_v9_narrative(v9_scores, summary, v8_extended):
+    """
+    Generate professional V9 narrative interpretation using Groq LLM.
+
+    Takes finalized V9 scores and produces a 4-section narrative:
+    Investment Summary, Recommended Action, Decision Triggers, Quantitative Overlay.
+
+    Returns formatted narrative string or None if generation fails.
+    """
+    global _last_call_time
+
+    if _client is None:
+        return None
+
+    if not v9_scores or not v9_scores.get('v9_decision'):
+        return None
+
+    # Rate limiting
+    elapsed = time.time() - _last_call_time
+    if elapsed < _MIN_CALL_INTERVAL:
+        time.sleep(_MIN_CALL_INTERVAL - elapsed)
+
+    data_block = _build_v9_data_block(v9_scores, summary, v8_extended)
+
+    messages = [
+        {"role": "system", "content": V9_NARRATIVE_PROMPT},
+        {"role": "user", "content": f"Generate the narrative interpretation for the following finalized ATLAS V9 metrics:\n\n{data_block}"},
+    ]
+
+    try:
+        response = _client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        _last_call_time = time.time()
+
+        narrative = response.choices[0].message.content.strip()
+
+        if len(narrative) > 3800:
+            narrative = narrative[:3750] + "\n\n_[Narrative truncated]_"
+
+        print(f"[V9_NARRATIVE] Generated {len(narrative)} chars")
+        return narrative
+
+    except Exception as e:
+        print(f"[V9_NARRATIVE] Generation failed (non-fatal): {e}")
+        return None
+
+
+# ============================================================================
 # CONTEXT BUILDER
 # ============================================================================
 

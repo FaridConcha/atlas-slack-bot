@@ -293,6 +293,20 @@ if(V9.v9_decision){
   else h += 'Default action in absence of clear margin of safety is inaction.';
   h += '</div>';
 
+  // V9 Narrative (LLM-generated)
+  var nar = V9.v9_narrative||'';
+  if(nar){
+    h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">V9 Narrative Assessment</div>';
+    // Format sections: bold the headings
+    nar = nar.replace(/^(INVESTMENT SUMMARY)/m,'<strong style="color:var(--t1)">$1</strong>');
+    nar = nar.replace(/^(RECOMMENDED ACTION)/m,'<strong style="color:var(--t1)">$1</strong>');
+    nar = nar.replace(/^(DECISION TRIGGERS)/m,'<strong style="color:var(--t1)">$1</strong>');
+    nar = nar.replace(/^(QUANTITATIVE OVERLAY)/m,'<strong style="color:var(--t1)">$1</strong>');
+    h += '<div style="font-size:12px;line-height:1.7;color:var(--t2);white-space:pre-line">'+nar+'</div>';
+    h += '</div>';
+  }
+
   h += '</div>'; // end card
 }
 

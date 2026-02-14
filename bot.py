@@ -270,6 +270,22 @@ def handle_atlas_mention(event, say, client):
             except Exception:
                 pass
 
+        # Generate V9 narrative interpretation (LLM-powered, non-blocking)
+        v9_narrative = None
+        v9_scores = v8_extended.get('v9_scores', {}) if v8_extended else {}
+        if GROQ_API_KEY and v9_scores.get('v9_decision'):
+            try:
+                print(f"[BOT] Generating V9 narrative for {symbol}...")
+                v9_narrative = gemini_qa.generate_v9_narrative(v9_scores, summary, v8_extended)
+                if v9_narrative:
+                    # Store narrative in v8_extended for web dashboard persistence
+                    v9_scores['v9_narrative'] = v9_narrative
+                    # Insert narrative as second message (after Owner Assessment)
+                    narrative_msg = f":classical_building: *V9 NARRATIVE ASSESSMENT — {symbol}*\n\n{v9_narrative}"
+                    v8_messages.insert(1, narrative_msg)
+            except Exception as e:
+                print(f"[BOT] V9 narrative generation failed (non-fatal): {e}")
+
         # Generate web report (non-blocking — errors must not break Slack flow)
         report_url = None
         try:
