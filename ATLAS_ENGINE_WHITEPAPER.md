@@ -1,9 +1,9 @@
 # ATLAS ENGINE — Technical White Paper
 
-**Version:** 2.1
-**Date:** February 13, 2026
+**Version:** 3.0
+**Date:** February 14, 2026
 **Classification:** Confidential — Internal & Investor Distribution
-**System Version:** ATLAS V8 (Production)
+**System Version:** ATLAS V9 (Production)
 
 ---
 
@@ -26,7 +26,7 @@
 
 ### What Atlas Engine Is
 
-Atlas Engine is a quantitative trading intelligence platform delivered through Slack messaging. It combines an 11-layer hierarchical analysis engine with institutional-grade market data collection and multi-turn conversational AI to generate structured equity research in under 60 seconds. Users invoke it with a single Slack mention — `@atlas AAPL` — and receive a 10-section research report covering fundamentals, valuation, technicals, sentiment, macro context, and a machine-generated trade verdict with execution parameters.
+Atlas Engine is a capital allocation intelligence platform delivered through Slack messaging. It combines an 11-layer hierarchical quantitative engine with a Buffett-aligned owner intelligence layer, institutional-grade market data collection, and multi-turn conversational AI to generate structured equity research in under 60 seconds. Users invoke it with a single Slack mention — `@atlas AAPL` — and receive an 11-section research report that leads with an Owner Assessment (business quality, moat durability, intrinsic value, margin of safety) followed by quantitative fundamentals, valuation, technicals, sentiment, macro context, and a machine-generated trade verdict with execution parameters.
 
 ### The Problem It Solves
 
@@ -36,23 +36,25 @@ Retail and institutional traders face three compounding challenges:
 2. **Cognitive overload.** Even after gathering data, weighting competing signals — a strong earnings surprise versus rising credit spreads, for example — requires disciplined quantitative reasoning that is difficult to sustain across dozens of daily decisions.
 3. **Regime blindness.** Static scoring models fail when market regimes shift. A momentum signal that works in calm trending markets becomes a trap in volatile, choppy environments. Most retail tools offer no regime awareness.
 
-Atlas Engine solves all three. It fetches seven categories of live market data in parallel, runs them through eight specialized scoring engines, dynamically re-weights those engines based on a 10-feature regime vector, and outputs a risk-governed trade recommendation with position sizing, entry/exit levels, and confidence scoring — all within a conversational Slack interface that supports multi-turn follow-up questions via LLM.
+Atlas Engine solves all three. It fetches seven categories of live market data in parallel, runs them through eight specialized scoring engines, dynamically re-weights those engines based on a 10-feature regime vector, then overlays a Buffett-aligned owner intelligence layer that evaluates business quality, moat durability, capital allocation discipline, intrinsic value, and margin of safety. The result is a risk-governed capital allocation recommendation with conviction-based position sizing, entry/exit levels, and permanent loss risk assessment — all within a conversational Slack interface that supports multi-turn follow-up questions via a Buffett-philosophy-aligned LLM.
 
 ### Key Metrics
 
 | Metric | Value |
 |--------|-------|
 | End-to-end latency | 15–20 seconds (analysis) + Slack posting |
-| Scoring engines | 8 (trend, valuation, consensus, volatility, macro, liquidity, global, correlation) |
+| Scoring engines | 8 quantitative + V9 owner intelligence layer |
+| V9 owner scores | Business Quality, Moat Durability, Capital Allocation (0–5 each) |
+| V9 decision framework | PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT |
 | Regime features | 10-dimensional vector |
-| Output sections | 10-section structured report |
+| Output sections | 11-section structured report (Owner Assessment + 10 engine sections) |
 | Data sources | yfinance (primary), FRED (optional), static CSV fallback |
-| AI Q&A model | Groq Llama 3.3 70B (multi-turn conversational) |
-| Web dashboard | Institutional-grade HTML report (ECharts, sortable tables, formula derivation) |
+| AI Q&A model | Groq Llama 3.3 70B (Buffett-aligned philosophy prompt) |
+| Web dashboard | Institutional-grade HTML report with Owner's View (ECharts, sortable tables, formula derivation) |
 | Report persistence | SQLite (WAL mode) with JSON payloads |
 | Web API | FastAPI — `/r/{id}` (HTML), `/api/r/{id}.json` (JSON), `/health` |
 | Cold-start handling | Auto-detect Render spin-up, in-place Slack progress messages |
-| Codebase | 6,683 lines across 8 Python modules |
+| Codebase | 7,316 lines across 8 Python modules |
 | Deployment | Render PaaS, Slack Socket Mode, FastAPI (uvicorn) |
 | Operating cost | $0 at current scale (free-tier APIs) |
 
@@ -80,7 +82,8 @@ Atlas Engine is organized into six distinct layers:
 │  INTELLIGENCE    │  REPORT          │  CONVERSATIONAL       │
 │  LAYER           │  LAYER           │  LAYER                │
 │  atlas_engine.py │  v8_report.py    │  gemini_qa.py         │
-│  (11 layers)     │  (10 sections)   │  (Groq LLM)          │
+│  (11 layers)     │  (V9 owner +     │  (Groq LLM,          │
+│                  │   10 sections)   │   Buffett-aligned)    │
 ├──────────────────┴──────────────────┴───────────────────────┤
 │                   PERSISTENCE LAYER                          │
 │  web_report.py — SQLite (WAL mode), JSON payload storage    │
@@ -101,17 +104,17 @@ Atlas Engine is organized into six distinct layers:
 
 **Presentation Layer** — Slack Socket Mode (WebSocket-based, no webhook URL required). Handles inbound `@mention` events and `message` events for thread-based Q&A. Posts threaded replies with Slack markdown formatting.
 
-**Web Presentation Layer** — `web_server.py` (727 lines). FastAPI application serving institutional-grade HTML dashboards with ECharts financial charts (price context, engine waterfall, regime vector, DCF scenarios), dense metric grids, sortable peer/engine tables, and a "Show Your Work" section with composite derivation formulas. Also serves raw JSON payloads via REST API. Runs as a threaded uvicorn server alongside the Slack bot on the same port.
+**Web Presentation Layer** — `web_server.py` (867 lines). FastAPI application serving institutional-grade HTML dashboards with a V9 Owner's View card (star ratings, conviction bar, MOS gauge, intrinsic value comparison, permanent loss risks), ECharts financial charts (price context, engine waterfall, regime vector, DCF scenarios), dense metric grids, sortable peer/engine tables, and a "Show Your Work" section with V9 decision hierarchy derivation and composite formulas. Also serves raw JSON payloads via REST API. Runs as a threaded uvicorn server alongside the Slack bot on the same port.
 
-**Orchestration Layer** — `bot.py` (508 lines). Manages the full lifecycle: parse ticker from mention text, dispatch parallel data fetches, invoke the 11-layer engine, trigger report formatting, generate and store web reports (SQLite), inject dashboard hyperlinks into Slack messages, cache results for AI follow-up, and post sections as threaded replies. Maintains an in-memory LRU thread cache (50 threads, 4-hour TTL). Includes cold-start detection for Render free-tier spin-ups (120-second window with in-place progress messages) and SIGTERM/SIGINT signal handlers for graceful shutdown notification.
+**Orchestration Layer** — `bot.py` (509 lines). Manages the full lifecycle: parse ticker from mention text, dispatch parallel data fetches, invoke the 11-layer engine, trigger V9 owner assessment + report formatting, generate and store web reports (SQLite), inject dashboard hyperlinks into Slack messages, cache results for AI follow-up, and post sections as threaded replies. Maintains an in-memory LRU thread cache (50 threads, 4-hour TTL). Includes cold-start detection for Render free-tier spin-ups (120-second window with in-place progress messages) and SIGTERM/SIGINT signal handlers for graceful shutdown notification.
 
 **Persistence Layer** — `web_report.py` (128 lines). SQLite storage layer for full analysis payloads. Generates URL-safe report IDs (`{SYMBOL}-{thread_ts}-{uuid}`), recursively serializes numpy types via `_make_serializable()`, and stores JSON payloads in WAL-mode SQLite. Reports persist across restarts and are served by the web presentation layer.
 
 **Intelligence Layer** — `atlas_engine.py` (1,866 lines). The core analytical engine implementing 8 scoring engines, 10-feature regime classification, meta-learning weight optimization, risk governance, and trade execution parameter generation across 11 sequential layers.
 
-**Report Layer** — `v8_report.py` (1,237 lines) and `v8_data.py` (1,157 lines). Fetches extended analytics (peer comparison, DCF valuation, institutional ownership, technical indicators, news sentiment) and formats the 10-section output report.
+**Report Layer** — `v8_report.py` (1,687 lines) and `v8_data.py` (1,160 lines). Computes V9 owner intelligence scores (business quality, moat durability, capital allocation, intrinsic value, margin of safety, conviction), fetches extended analytics (peer comparison, DCF valuation, institutional ownership, technical indicators, news sentiment), and formats the 11-section output report (Owner Assessment + 10 engine sections).
 
-**Conversational Layer** — `gemini_qa.py` (377 lines). Wraps the Groq API (Llama 3.3 70B) for multi-turn Q&A. Builds structured context from cached analysis data and manages conversation history (last 6 exchanges).
+**Conversational Layer** — `gemini_qa.py` (419 lines). Wraps the Groq API (Llama 3.3 70B) with a Buffett-aligned system prompt for multi-turn Q&A. Enforces reasoning order: business durability → moat → capital allocation → intrinsic value → risk → timing. Builds structured context with V9 owner assessment as primary section and engine verdict as secondary overlay. Manages conversation history (last 6 exchanges).
 
 **Data Layer** — `data_fetcher.py` (680 lines). Fetches live market data from yfinance in parallel (7-worker ThreadPool). Falls back to FRED for macro data or static CSV/JSON files for offline operation. Includes `resolve_price()`, an 8-level fallback chain for robust price resolution across market conditions (pre-market, post-market, regular hours, historical bars).
 
@@ -179,12 +182,14 @@ T+8s    Engine Layer 9           atlas_engine.py:1030 Execution parameters
 T+8s    Engine Layer 10          atlas_engine.py:1100 Pyramid report text
 T+8s    Meta state save          atlas_engine.py:1150 Persist w0, Q to disk
 T+9s    V8 extended fetch        v8_data.py          Peers, technicals, news, DCF
-T+14s   Report formatting        v8_report.py        10 sections, Slack markdown
+T+14s   V9 owner scores          v8_report.py        Quality, moat, CA, MOS, conviction
+T+14s   V9 decision hierarchy    v8_report.py        5-step gate → PASS/BUY/HOLD/etc.
+T+14s   Report formatting        v8_report.py        Owner Assessment + 10 engine sections
 T+14s   Web report storage       web_report.py       Store payload → SQLite (WAL)
 T+14s   Dashboard URL gen        web_report.py       {SYMBOL}-{ts}-{uuid} → /r/{id}
 T+15s   Link injection           bot.py:294          Prepend/append dashboard URLs
-T+15s   Cache for Q&A            bot.py:312          Thread cache update
-T+15s   Post to Slack            bot.py:322          Summary + 10 threaded replies
+T+15s   Cache for Q&A            bot.py:312          Thread cache (incl. v9_scores)
+T+15s   Post to Slack            bot.py:322          Summary + 11 threaded replies
 T+20s   Cleanup                  bot.py:337          Delete temp data directory
 ```
 
@@ -211,11 +216,24 @@ A secondary data pass enriches the analysis with:
 - Three-scenario DCF model (bear/base/bull)
 - Earnings history with beat/miss analysis
 
+**Stage 2.5: V9 Owner Intelligence (v8_report.py)**
+The V9 layer computes owner-oriented scores from engine + extended data (see Section 2.8 for full detail):
+- **Business Quality (0–5):** ROE, net margin, revenue growth, FCF, debt/equity, earnings beat rate
+- **Moat Durability (0–5):** Gross margin (pricing power), operating margin, market cap (scale), ROE+margin combo, interest coverage
+- **Capital Allocation (0–5):** ROIC vs WACC, buyback discipline (valuation-aware), dividend sustainability, debt usage, net cash position
+- **Margin of Safety:** `MOS = (DCF Base - Price) / DCF Base × 100`, with required thresholds by business type
+- **V9 Decision:** 5-step hierarchy → PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT
+- **Conviction Score (0–100):** Composite of quality×5 + moat×4 + CA×4 + MOS×0.5 + risk adjustment
+- **Permanent Loss Risks:** Up to 5 identified risks with severity ratings (HIGH/MEDIUM/LOW)
+
+V9 scores are attached to `v8_data['v9_scores']` and propagated to Slack messages, web dashboard, Q&A context, and stored JSON payloads.
+
 **Stage 3: Report Formatting (v8_report.py)**
-The formatter produces 10 Slack-compatible sections:
+The formatter produces 11 Slack-compatible sections:
 
 | Section | Content |
 |---------|---------|
+| 0. Owner Assessment | V9 decision, business quality/moat/CA stars, MOS%, conviction, IV range, permanent loss risks, temperament note, engine conflict protocol |
 | 1. Verdict | Signal, composite score, TQ, 6-dimension breakdown, narrative |
 | 2. Fundamentals | Revenue, margins, ROE, ROA, FCF, balance sheet |
 | 3. Valuation | PE, EV/EBITDA, DCF scenarios, peer-relative value |
@@ -225,9 +243,9 @@ The formatter produces 10 Slack-compatible sections:
 | 7. Risk Factors | Risk drivers, structural risk, tactical risk |
 | 8. Growth Catalysts | Sector tailwinds, competitive advantages, upcoming events |
 | 9. Macro Context | Yields, credit spreads, VIX, global overnight, regime label |
-| 10. Engine Signal | Full engine readout: weights, contributions, regime vector |
+| 10. Engine Signal | Full engine readout with V9 owner's perspective: conviction-based sizing, conflict notes, business case summary |
 
-Each section is capped at ~4,000 characters (Slack message limit) and formatted with Slack markdown (bold, code blocks, bullet lists).
+Each section is capped at ~4,000 characters (Slack message limit) and formatted with Slack markdown (bold, code blocks, bullet lists). The Owner Assessment is always the first section the user reads, establishing the business-owner frame before quantitative detail.
 
 **Stage 4: Web Report Generation (web_report.py + web_server.py)**
 After Slack report formatting, the full analysis payload is persisted to SQLite and a dashboard URL is generated:
@@ -237,12 +255,20 @@ After Slack report formatting, the full analysis payload is persisted to SQLite 
 2. **URL injection** — The dashboard URL is injected into the first and last Slack messages as a clickable hyperlink, plus the final confirmation message.
 
 3. **Dashboard rendering** — `web_server.py` serves an institutional-grade HTML dashboard at `/r/{report_id}` featuring:
+   - **V9 Owner's View card** (blue-bordered, prominent placement after metrics strip):
+     - V9 decision pill with reasoning text
+     - Star ratings (★/☆) for Business Quality, Moat Durability, Capital Allocation (0–5 each)
+     - Conviction progress bar (0–100) with color-coded thresholds (green 80+, yellow 60+, red <60)
+     - Margin of Safety gauge (32px font, color-coded: green if threshold met, yellow if partial, red if negative)
+     - Intrinsic Value vs Current Price comparison cards with IV Range (bear–bull)
+     - Permanent Loss Risks table with severity badges (HIGH=red, MEDIUM=yellow, LOW=green)
+     - Temperament note (VIX-based market sentiment)
    - **4 ECharts visualizations**: price context (horizontal bar), engine waterfall (stacked bar simulation), regime vector (risk-colored horizontal bars), DCF scenarios (vertical bars with price reference line)
    - **Dense metric grids**: fundamentals (4-col), valuation (4-col), technicals (4-col), trade plan
    - **Sortable tables**: peer comparison (6 peers with forward PE, margins, growth, ROE) and engine detail (8 engines with scores, weights, contributions)
    - **News & sentiment** section with publisher and sentiment badges
-   - **"Show Your Work"** collapsible section: composite derivation formula, risk governor gate calculation, trade quality computation, and computed-vs-reported delta warnings
-   - **Provenance footer**: engine version, data confidence, timestamp, data mode
+   - **"Show Your Work"** collapsible section: V9 decision hierarchy derivation (5-step gate logic), composite derivation formula, risk governor gate calculation, trade quality computation, and computed-vs-reported delta warnings
+   - **Provenance footer**: engine version (ATLAS V9), data confidence, timestamp, data mode
    - **Design system**: GitHub-dark palette (`#06090f` background), Inter + JetBrains Mono typography, CSS custom properties for theming
 
 4. **JSON API** — Raw payload available at `/api/r/{report_id}.json` for programmatic consumption.
@@ -324,6 +350,137 @@ Fallback chain (first non-null, positive value wins):
 
 This function is used throughout `data_fetcher.py` and `v8_data.py`, replacing the previous fragile pattern of `info.get('currentPrice', 0) or info.get('regularMarketPrice', 0)`. All `ticker.history()` calls also include `prepost=True` for extended-hours data visibility.
 
+### 2.8 V9 Owner Intelligence Layer
+
+ATLAS V9 adds a Buffett-aligned owner intelligence layer on top of the existing V8 quantitative engine. The V8 engine (11 layers, 8 scoring engines, regime classification, meta-learning) remains unchanged. V9 operates entirely in the report layer (`v8_report.py`) and prompt layer (`gemini_qa.py`), computing owner-oriented scores from the same data the quant engine already produces.
+
+**Philosophy:** V9 treats every equity as a partial business ownership stake. The primary question is not "Will the price go up?" but "Would a rational business owner buy this entire business at this price?" This reframes the analysis from trading signals to capital allocation decisions.
+
+#### 2.8.1 V9 Scoring Computation
+
+All V9 scores are computed in `_compute_v9_owner_scores(summary, v8_data)` (~200 lines in `v8_report.py`).
+
+**Business Quality Score (0–5):**
+```
++1 if ROE > 15%
++1 if Net Margin > 10%
++1 if Revenue Growth > 5%
++1 if FCF Yield > 3% (free cash flow generation)
++1 if Debt/Equity < 1.0 (conservative balance sheet)
++0.5 if Earnings Beat Rate ≥ 67% (consistent execution)
+Capped at 5
+```
+
+**Moat Durability Score (0–5):**
+```
++1 if Gross Margin > 40% (pricing power)
++1 if Operating Margin > 20% (operational efficiency)
++1 if Market Cap > $50B (scale advantage)
++1 if ROE > 20% AND Gross Margin > 50% (compounding moat)
++1 if Interest Coverage > 8x (fortress balance sheet)
+Capped at 5
+```
+
+**Capital Allocation Score (0–5):**
+```
++1 if ROIC proxy (ROE × (1 − D/E payout)) > WACC proxy (10Y yield + 5%)
++1 if Buyback Yield > 0 AND PE < sector median (valuation-aware buybacks)
++1 if Dividend Yield 1–5% AND Payout Ratio < 60% (sustainable dividends)
++1 if Debt/Equity < 0.5 (disciplined debt usage)
++1 if Net Cash positive (cash exceeds debt)
+Capped at 5
+```
+
+**Margin of Safety (MOS):**
+```
+MOS% = (DCF Base Price − Current Price) / DCF Base Price × 100
+```
+Required thresholds by business type:
+| Business Type | Classification Rule | Required MOS |
+|---------------|-------------------|--------------|
+| Very Stable | Quality ≥ 4 AND Moat ≥ 4 | 20% |
+| Normal | Quality ≥ 2 AND Moat ≥ 2 | 30% |
+| Cyclical | All others | 45% |
+
+**Conviction Score (0–100):**
+```
+raw = quality × 5 + moat × 4 + capital_allocation × 4 + max(MOS, 0) × 0.5
+risk_adjustment = −10 per HIGH permanent loss risk, −5 per MEDIUM
+conviction = clamp(raw + risk_adjustment, 0, 100)
+```
+Conviction maps to position sizing:
+- 80+ → Top-10 position (concentrated)
+- 60–80 → Meaningful position
+- <60 → Opportunistic / small allocation
+
+#### 2.8.2 V9 Decision Hierarchy
+
+The V9 decision follows a strict 5-step gate, evaluated in order:
+
+```
+Step 1: Business Quality Gate
+    IF quality < 2 → PASS ("Business quality below minimum threshold")
+    ELSE → continue
+
+Step 2: Intrinsic Value Comparison
+    IF MOS ≥ required_mos → BUY candidate
+    IF MOS between 0 and required_mos → RESEARCH ("Below required margin of safety")
+    IF MOS < 0 → WATCH ("Trading above intrinsic value")
+
+Step 3: Capital Allocation Review
+    IF CA_score < 2 → downgrade to WATCH ("Poor capital allocation discipline")
+    ELSE → maintain decision
+
+Step 4: Permanent Loss Risk Check
+    IF any HIGH severity risks → downgrade (BUY→RESEARCH, RESEARCH→WATCH)
+
+Step 5: Engine Overlay
+    IF quant verdict is SELL/STRONG SELL → max decision is HOLD
+    IF all gates passed and conviction ≥ 60 → BUY
+    ELSE → RESEARCH
+```
+
+Decision labels: **PASS** (avoid entirely) | **WATCH** (monitor but don't act) | **RESEARCH** (promising but needs more margin) | **BUY** (meets all gates) | **HOLD** (own and keep) | **TRIM** (reduce position) | **EXIT** (sell entirely)
+
+#### 2.8.3 Engine Conflict Protocol
+
+When the V9 owner assessment and V8 quant engine disagree, a conflict note is added to the report:
+
+| Scenario | V9 Owner | V8 Engine | Resolution |
+|----------|----------|-----------|------------|
+| Patience over momentum | BUY | SELL | "Quant engine sees downward momentum, but business quality and MOS suggest patience. Short-term price weakness in a durable business." |
+| Temporary weakness | WATCH | STRONG BUY | "Quant sees a bounce opportunity, but owner assessment sees insufficient margin of safety. Discipline over excitement." |
+| Agreement | BUY | BUY | No conflict note. Conviction reinforced. |
+
+The V9 assessment takes priority for capital allocation sizing; the quant engine serves as a tactical timing overlay.
+
+#### 2.8.4 Temperament Module
+
+Every V9 report includes a temperament note derived from VIX:
+
+```
+VIX < 15:  "Market is complacent. Good businesses may be expensive — patience."
+VIX 15-25: "Normal volatility. Focus on business quality and margin of safety."
+VIX 25-35: "Fear rising. Historically, good entry points emerge in fear."
+VIX > 35:  "Extreme fear. Best opportunities often appear when others panic."
+```
+
+#### 2.8.5 Permanent Loss Risk Identification
+
+V9 identifies up to 5 permanent loss risks from the data:
+
+| Condition | Risk | Severity |
+|-----------|------|----------|
+| Debt/Equity > 2.0 | Excessive leverage | HIGH |
+| Net Margin < 0 | Operating at a loss | HIGH |
+| FCF Yield < 0 | Burning cash | HIGH |
+| Revenue Growth < −10% | Revenue declining | MEDIUM |
+| Short Interest > 10% | Heavy short pressure | MEDIUM |
+| Earnings Beat Rate < 50% | Missing expectations | MEDIUM |
+| Beta > 2.0 | Extreme volatility | MEDIUM |
+| ROE < 5% | Poor returns on equity | LOW |
+| Interest Coverage < 3x | Thin debt service | MEDIUM |
+
 ---
 
 ## 3. Model Strategy
@@ -334,7 +491,8 @@ Atlas Engine uses a single LLM provider for conversational AI:
 
 | Component | Provider | Model | Purpose |
 |-----------|----------|-------|---------|
-| AI Q&A | Groq | Llama 3.3 70B Versatile | Multi-turn financial reasoning on cached analysis data |
+| AI Q&A | Groq | Llama 3.3 70B Versatile | Buffett-aligned multi-turn capital allocation reasoning on cached analysis data |
+| V9 owner scores | None (rule-based) | N/A | Deterministic business quality, moat, CA, MOS, conviction computation |
 | Core engine | None (rule-based) | N/A | 8 scoring engines use deterministic mathematical logic |
 | Sentiment | None (keyword-based) | N/A | Positive/negative keyword matching on news titles |
 
@@ -387,15 +545,16 @@ Context allocation (approximate):
 ```
 
 **Context prioritization order:**
-1. Verdict and composite scores (always included)
-2. Price levels and moving averages (always included)
-3. Scoring engine breakdown with weights (always included)
-4. Risk metrics and drivers (always included)
-5. Fundamentals and financials (included if available)
-6. Technicals — RSI, MACD, Bollinger (included if available)
-7. Peers comparison (included if space permits)
-8. News with sentiment (included if space permits)
-9. DCF and institutional data (truncated if necessary)
+1. V9 Owner Assessment — decision, quality/moat/CA scores, MOS, conviction, risks (always included, primary)
+2. Engine verdict and composite scores (always included, secondary overlay)
+3. Price levels and moving averages (always included)
+4. Scoring engine breakdown with weights (always included)
+5. Risk metrics and drivers (always included)
+6. Fundamentals and financials (included if available)
+7. Technicals — RSI, MACD, Bollinger (included if available)
+8. Peers comparison (included if space permits)
+9. News with sentiment (included if space permits)
+10. DCF and institutional data (truncated if necessary)
 
 The context block is truncated at 6,000 characters to preserve token budget for conversation history and response generation.
 
@@ -403,12 +562,34 @@ The context block is truncated at 6,000 characters to preserve token budget for 
 
 Atlas Engine uses prompting exclusively. No fine-tuned models are deployed.
 
-**System prompt design (gemini_qa.py, lines 19–31):**
-- Role anchoring: "ATLAS AI — expert financial analyst assistant"
+**System prompt design (gemini_qa.py):**
+
+V9 replaces the generic financial analyst prompt with a Buffett-aligned philosophy prompt:
+- Role anchoring: "ATLAS V9 — Capital Allocation Intelligence. Think like Warren Buffett's research analyst."
+- Reasoning order enforcement: "Always reason in this order: (1) Is this a good business? (2) Does it have a durable moat? (3) Is management allocating capital wisely? (4) What is the intrinsic value? (5) What are the permanent loss risks? (6) Only then consider price and timing."
+- Decision framework: "Use V9 decisions: PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT"
+- Owner mindset: "Treat every stock as a partial business ownership stake"
+- Anti-speculation: "Never recommend based on momentum alone. Price is what you pay, value is what you get."
 - Data grounding: "Only reference data from the ATLAS analysis provided below"
 - Anti-hallucination: "Never make up numbers or statistics"
 - Format control: "Use Slack markdown, keep responses under 3,500 characters"
-- Scope enforcement: "If asked about a different ticker, redirect to `@atlas {TICKER}`"
+
+**V9 context injection:** The Q&A context builder injects V9 owner assessment as the primary section (before the engine verdict):
+```
+--- V9 OWNER ASSESSMENT ---
+Decision: BUY — Meets all quality gates with adequate margin of safety
+Business Quality: ★★★★☆ (4/5)
+Moat Durability: ★★★☆☆ (3/5)
+Capital Allocation: ★★★★☆ (4/5)
+Intrinsic Value (Base): $195.00 | Current: $189.50
+Margin of Safety: +2.9%
+Conviction: 72/100
+Permanent Loss Risks: Valuation premium (MEDIUM)
+
+--- ENGINE VERDICT (Tactical Overlay) ---
+Signal: BUY | Composite: +42.3 | TQ: 0.456
+...
+```
 
 **Why prompting over fine-tuning (current stage):**
 - Insufficient proprietary training data for effective fine-tuning
@@ -424,7 +605,10 @@ _thread_cache = {
     thread_ts: {
         'symbol': 'AAPL',
         'summary': { ... },              # Full engine output
-        'v8_extended': { ... },           # Extended analytics
+        'v8_extended': {
+            ...,
+            'v9_scores': { ... }         # V9 owner intelligence scores
+        },
         'timestamp': 1707763800.5,        # Creation time
         'conversation_history': [ ... ]   # (role, message) pairs
     }
@@ -621,9 +805,10 @@ Cold-start boot msgs:       ████░░░░░░░░░░░░░�
 yfinance parallel fetch:    ████████░░░░░░░░░░░░  5-8 sec
 Engine 11-layer execution:  ██░░░░░░░░░░░░░░░░░░  2-3 sec
 V8 extended data fetch:     ████░░░░░░░░░░░░░░░░  3-5 sec
-Report formatting:          ██░░░░░░░░░░░░░░░░░░  2-3 sec
+V9 owner score computation: ░░░░░░░░░░░░░░░░░░░░  <50 ms
+Report formatting (11 sec): ██░░░░░░░░░░░░░░░░░░  2-3 sec
 Web report (SQLite store):  ░░░░░░░░░░░░░░░░░░░░  <100 ms
-Slack posting (10 msgs):    ████░░░░░░░░░░░░░░░░  3-5 sec
+Slack posting (11 msgs):    ████░░░░░░░░░░░░░░░░  3-5 sec
                             ──────────────────────
 Total (warm):                                     15-24 sec
 Total (cold start):                               18-28 sec
@@ -650,22 +835,28 @@ Atlas wakes up and posts a progress sequence (updated in-place):
     😴 ATLAS is waking up from sleep... hang tight
     📡 Connecting data systems...
     🚀 Systems online, fetching AAPL...
-    📈 Live data fetched, running engine on AAPL...
-    🧠 Engine complete, building report...
+    📈 Live data fetched, running V9 engine...
+    🧠 Engine complete, building owner assessment...
     ✅ Report ready, delivering...
 
 Phase 1: Analysis Request
 ──────────────────────────
 (If already warm, user sees standard acknowledgment):
-    ⚙️ Running ATLAS V8 on *AAPL*... pulling live data & building full report (30-45 sec)
+    ⚙️ Running ATLAS V9 on *AAPL*... pulling live data & building owner assessment + full report
 
-15-20 seconds later, Atlas posts a summary message + 10 threaded sections.
+15-20 seconds later, Atlas posts a summary message + 11 threaded sections.
 First message includes a hyperlink to the full web dashboard.
 
 Phase 2: Report Consumption
 ──────────────────────────
-User reads the verdict section:
-    📊 ATLAS V8 — AAPL (Apple Inc.)
+User reads the Owner Assessment first:
+    🏛️ ATLAS V9 — OWNER ASSESSMENT — AAPL (Apple Inc.)
+    Decision: BUY — Meets all quality gates with adequate margin of safety
+    Business Quality: ★★★★☆ | Moat: ★★★☆☆ | Capital Allocation: ★★★★☆
+    MOS: +2.9% | Conviction: 72/100
+
+Then the engine verdict section:
+    📊 ATLAS V9 — AAPL (Apple Inc.)
     Signal: BUY | Composite: +42.3 | TQ: 0.456 (NORMAL)
     Regime: Calm | Reliability: 87%
 
@@ -678,10 +869,11 @@ User clicks the dashboard link in the Slack message:
     🔍 Full Report: Open dashboard → https://atlas-slack-bot.onrender.com/r/AAPL-...
 
 The web dashboard provides:
+    • V9 Owner's View: decision, star ratings, conviction bar, MOS gauge, IV comparison, permanent loss risks
     • ECharts financial visualizations (price context, engine waterfall, regime vector, DCF)
     • Dense metric grids (fundamentals, valuation, technicals, trade plan)
     • Sortable peer comparison and engine detail tables
-    • "Show Your Work" section with full formula derivation
+    • "Show Your Work" section with V9 decision hierarchy and full formula derivation
     • Raw JSON API access at /api/r/{id}.json
 
 Phase 3: Follow-Up Questions (Optional)
@@ -715,12 +907,14 @@ When Render sends SIGTERM (after 15 min inactivity), Atlas posts:
 
 **Follow-up questions (effective patterns):**
 ```
-"What are the key risk factors?"
+"What are the permanent loss risks?"
+"Is the moat durable enough for a 10-year hold?"
 "Compare AAPL to its peers on valuation."
-"Is the MACD signal confirming the trend?"
-"What would change this from a BUY to a SELL?"
-"Explain the regime classification."
+"What would change this from BUY to PASS?"
+"Explain the margin of safety calculation."
+"Is management allocating capital well?"
 "What does the DCF model assume for growth?"
+"Why does the owner assessment differ from the engine signal?"
 ```
 
 **Anti-patterns (less effective):**
@@ -732,34 +926,37 @@ When Render sends SIGTERM (after 15 min inactivity), Atlas posts:
 
 ### 5.3 Multi-Step Reasoning Workflow
 
-**Example: Evaluating a Contrarian Position**
+**Example: Evaluating a Contrarian Position (V9 Owner's Perspective)**
 
 ```
 Step 1: User triggers analysis
     @atlas META
 
-Step 2: Atlas returns SELL signal with TQ=0.28
-    User sees: negative trend, but strong fundamentals
+Step 2: Atlas V9 Owner Assessment: RESEARCH with engine SELL
+    User sees: Quality ★★★★☆, Moat ★★★☆☆, but MOS only +8% (needs 30%)
+    Engine shows negative trend, but strong fundamentals
 
-Step 3: User probes the contradiction
-    "The fundamentals look strong but the signal is SELL. Why?"
+Step 3: User probes the conflict
+    "The owner assessment says RESEARCH but the engine says SELL. What should I do?"
 
-Step 4: Atlas AI explains
-    "The SELL signal is driven primarily by the trend engine (-65 score)
-     and volatility engine (-30). While fundamentals contribute +18,
-     their weight is only 9% in the current Chop regime. The regime
-     downweights fundamentals because valuation timing historically
-     underperforms in choppy markets."
+Step 4: Atlas AI reasons through V9 hierarchy
+    "The V9 owner assessment sees a quality business (4/5) with decent moat
+     (3/5), but the margin of safety is only 8% — below the 30% threshold
+     for a Normal business type. The engine's SELL signal reflects
+     short-term momentum weakness. As a business owner, the quality is
+     there but the price isn't right yet. RESEARCH means: keep watching
+     for a better entry. Patience over momentum."
 
-Step 5: User asks about regime sensitivity
-    "What if the regime shifted to Calm?"
+Step 5: User asks about entry price
+    "What price would give me an adequate margin of safety?"
 
-Step 6: Atlas AI reasons through the scenario
-    "In a Calm regime, fundamental weight would increase from 9% to ~15%,
-     and trend weight would decrease from 22% to ~18%. The composite
-     would shift from -31 to approximately -18 — still bearish but
-     less decisive. The TQ gate would likely keep this at HOLD rather
-     than SELL."
+Step 6: Atlas AI calculates from V9 data
+    "The DCF base intrinsic value is $520. For a Normal business type,
+     you need 30% MOS, which means buying below $364. Current price
+     is $480 — you'd need a ~20% pullback. The engine's SELL signal
+     suggests momentum is moving in that direction, but timing
+     pullbacks is speculative. Better to set a price alert at $380
+     and let the market come to you."
 ```
 
 ### 5.4 Follow-Up Query Handling
@@ -770,7 +967,8 @@ Thread Q&A Architecture:
 First question in thread:
 ├── Lookup thread_ts in cache
 ├── Build full context block (~6,000 chars)
-│   ├── Engine verdict + scores
+│   ├── V9 owner assessment (primary: decision, scores, MOS, conviction, risks)
+│   ├── Engine verdict + scores (secondary tactical overlay)
 │   ├── Fundamentals + technicals
 │   ├── Peers + news + DCF
 │   └── Truncate if >6,000 chars
@@ -814,23 +1012,29 @@ Subsequent questions:
 ```
 09:15 AM — Pre-market prep
     @atlas SPY
-    → Atlas reports: BUY signal, Calm regime, TQ=0.52
-    → User reads macro section: yields stable, VIX low
+    → V9 Owner Assessment: HOLD — Quality ★★★★★, broad market exposure
+    → Engine: BUY signal, Calm regime, TQ=0.52
     → Follow-up: "Any overnight risk from Asia?"
-    → Atlas AI: "Nikkei closed +0.3%, no significant overnight gap risk."
+    → Atlas AI: "Nikkei closed +0.3%, no significant overnight gap risk.
+     As a business owner of the S&P 500, overnight gaps in stable
+     markets are noise, not signal."
 
 09:30 AM — Market open, evaluating a specific stock
     @atlas NVDA
-    → Atlas reports: STRONG BUY, TQ=0.71, momentum + earnings beat
-    → Follow-up: "What's the stop-loss level?"
-    → Atlas AI: "Entry at $845, stop at $812 (ATR-based, 2.1x ATR below)."
-    → Follow-up: "How does it compare to AMD?"
-    → Atlas AI: "NVDA forward PE 35x vs AMD 28x, but NVDA margin 62% vs AMD 24%."
+    → V9 Owner Assessment: RESEARCH — Quality ★★★★★, Moat ★★★★★,
+      but MOS -12% (trading above intrinsic value)
+    → Engine: STRONG BUY, TQ=0.71, momentum + earnings beat
+    → Conflict note: "Engine sees momentum, but owner assessment
+      sees insufficient margin of safety. Patience over excitement."
+    → Follow-up: "Is the moat durable enough for a 10-year hold?"
+    → Atlas AI: "NVDA's moat is exceptional: 62% gross margin (pricing power),
+     $3T+ scale, AI/datacenter dominance. 5/5 moat durability. The question
+     isn't whether to own it — it's at what price."
 
 02:00 PM — Afternoon reassessment
     @atlas NVDA
-    → Fresh analysis with updated intraday context
-    → Compare morning vs afternoon signals
+    → Fresh analysis with updated V9 owner assessment + engine signal
+    → Compare morning vs afternoon conviction scores
 ```
 
 ---
@@ -1551,26 +1755,45 @@ Atlas Engine in its current form does not process EU personal data. However, if 
 
 ### 10.1 Example Prompt Templates
 
-**System prompt (Q&A module):**
+**System prompt (Q&A module — V9 Buffett-aligned):**
 ```
-You are ATLAS AI — an expert financial analyst assistant.
+You are ATLAS V9 — Capital Allocation Intelligence.
+Think like Warren Buffett's research analyst.
 
-You have access to a detailed financial analysis generated by the ATLAS V8 trading engine.
-Your job is to answer questions about the analysis clearly and concisely.
+You have access to the ATLAS V9 analysis. The V9 OWNER ASSESSMENT is your primary
+framework. The ENGINE VERDICT is a secondary tactical overlay.
+
+Reasoning order (always follow this):
+1. Is this a good business? (Quality score)
+2. Does it have a durable moat? (Moat score)
+3. Is management allocating capital wisely? (CA score)
+4. What is the intrinsic value? (DCF, MOS%)
+5. What are the permanent loss risks?
+6. Only then consider price and timing (engine signal)
+
+Decision framework: PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT
+Never recommend based on momentum alone. Price is what you pay, value is what you get.
 
 Rules:
 - Only reference data from the ATLAS analysis provided below
 - Never make up numbers or statistics
-- Use Slack markdown formatting: *bold*, `code`, bullet points
+- Use Slack markdown formatting
 - Keep responses under 3,500 characters
-- If asked about a different ticker, say: "To analyze {ticker}, type `@atlas {ticker}` in any channel"
 ```
 
 **Context injection template:**
 ```
-📊 ATLAS V8 Analysis for {SYMBOL} ({COMPANY_NAME})
+📊 ATLAS V9 Analysis for {SYMBOL} ({COMPANY_NAME})
 
-ENGINE VERDICT:
+--- V9 OWNER ASSESSMENT ---
+Decision: {V9_DECISION} — {DECISION_REASON}
+Business Quality: {QUALITY}/5 | Moat Durability: {MOAT}/5 | Capital Allocation: {CA}/5
+Intrinsic Value (Base): ${IV_BASE} | Current: ${PRICE}
+Margin of Safety: {MOS}% (Required: {REQUIRED_MOS}% for {BUSINESS_TYPE})
+Conviction: {CONVICTION}/100
+Permanent Loss Risks: {RISKS}
+
+--- ENGINE VERDICT (Tactical Overlay) ---
 • Signal: {VERDICT} | Composite: {COMPOSITE} | TQ: {TQ} ({TQ_CATEGORY})
 • Regime: {REGIME} | Reliability: {RELIABILITY}%
 
@@ -1608,12 +1831,12 @@ Remember: Only use data from the analysis. Be specific and cite numbers.
 
 **Analysis acknowledgment:**
 ```
-⚙️ Running ATLAS V8 on *{TICKER}*... fetching live data and crunching 11 layers. Hang tight (~20 sec).
+⚙️ Running ATLAS V9 on *{TICKER}*... pulling live data & building owner assessment + full report
 ```
 
 **Analysis completion:**
 ```
-✅ ATLAS V8 analysis complete for *{TICKER}*. See thread below for full 10-section report.
+✅ ATLAS V9 complete for *{TICKER}*
 💬 Reply in this thread to ask follow-up questions.
 ```
 
@@ -1693,6 +1916,28 @@ type `@atlas {REQUESTED_TICKER}` in any channel.
 }
 ```
 
+**V9 owner scores schema (attached to v8_data):**
+```json
+{
+  "v9_scores": {
+    "business_quality": 4,
+    "moat_durability": 3,
+    "capital_allocation": 4,
+    "business_type": "Normal",
+    "intrinsic_value_base": 195.00,
+    "mos_pct": 2.9,
+    "required_mos": 30,
+    "v9_decision": "BUY",
+    "decision_reason": "Meets all quality gates with adequate margin of safety",
+    "conviction": 72,
+    "permanent_loss_risks": [
+      {"risk": "Valuation premium vs sector", "severity": "MEDIUM"},
+      {"risk": "High debt-to-equity ratio", "severity": "MEDIUM"}
+    ]
+  }
+}
+```
+
 **V8 extended data schema:**
 ```json
 {
@@ -1762,7 +2007,7 @@ type `@atlas {REQUESTED_TICKER}` in any channel.
 
 ```
 ═══════════════════════════════════════════════════════════════════
-  ATLAS V8 QUERY LIFECYCLE TRACE — @atlas AAPL
+  ATLAS V9 QUERY LIFECYCLE TRACE — @atlas AAPL
   Timestamp: 2026-02-12T09:15:32.456Z
 ═══════════════════════════════════════════════════════════════════
 
@@ -1779,7 +2024,7 @@ T+5ms     TICKER_PARSED
           ticker: "AAPL"
 
 T+50ms    ACKNOWLEDGMENT_POSTED
-          message: "⚙️ Running ATLAS V8 on *AAPL*..."
+          message: "⚙️ Running ATLAS V9 on *AAPL*..."
           thread_ts: "1707732932.456000"
 
 T+100ms   DATA_FETCH_START
@@ -1899,13 +2144,25 @@ T+7100ms  V8_EXTENDED_FETCH_START
 T+12000ms V8_EXTENDED_COMPLETE
           sections_generated: 10
 
-T+12100ms REPORT_FORMAT_START
+T+12100ms V9_OWNER_SCORES
+          business_quality: 4/5
+          moat_durability: 3/5
+          capital_allocation: 4/5
+          business_type: Normal
+          intrinsic_value: $195.00
+          margin_of_safety: +2.9%
+          required_mos: 30%
+          v9_decision: RESEARCH (below required MOS)
+          conviction: 72/100
+          permanent_loss_risks: 1 (Valuation premium: MEDIUM)
+
+T+12200ms REPORT_FORMAT_START
           formatter: v8_report.format_v8_report()
 
 T+14500ms REPORT_FORMAT_COMPLETE
-          sections: 10
-          total_chars: ~32,000
-          max_section: 3,850 chars (Section 1: Verdict)
+          sections: 11 (Owner Assessment + 10 engine sections)
+          total_chars: ~36,000
+          max_section: 3,850 chars (Section 0: Owner Assessment)
 
 T+14550ms WEB_REPORT_STORE
           report_id: "AAPL-1707732932-456000-a3f7b2c1"
@@ -1919,22 +2176,23 @@ T+14560ms LINK_INJECTION
 
 T+14600ms CACHE_UPDATE
           thread_ts: "1707732932.456000"
-          cached: {symbol, summary, v8_extended, timestamp}
+          cached: {symbol, summary, v8_extended (incl. v9_scores), timestamp}
           cache_size: 8/50 threads
 
 T+14700ms SLACK_POST_START
-          posting 10 sections as threaded replies (with dashboard links)...
+          posting 11 sections as threaded replies (with dashboard links)...
 
-T+14800ms POSTED: Section 1 — Verdict
-T+15800ms POSTED: Section 2 — Fundamentals
-T+16800ms POSTED: Section 3 — Valuation
-T+17800ms POSTED: Section 4 — Technicals
-T+18800ms POSTED: Section 5 — Peers
-T+19800ms POSTED: Section 6 — Sentiment
-T+20800ms POSTED: Section 7 — Risk Factors
-T+21800ms POSTED: Section 8 — Growth Catalysts
-T+22800ms POSTED: Section 9 — Macro Context
-T+23800ms POSTED: Section 10 — Engine Signal
+T+14800ms POSTED: Section 0 — Owner Assessment (V9)
+T+15800ms POSTED: Section 1 — Verdict
+T+16800ms POSTED: Section 2 — Fundamentals
+T+17800ms POSTED: Section 3 — Valuation
+T+18800ms POSTED: Section 4 — Technicals
+T+19800ms POSTED: Section 5 — Peers
+T+20800ms POSTED: Section 6 — Sentiment
+T+21800ms POSTED: Section 7 — Risk Factors
+T+22800ms POSTED: Section 8 — Growth Catalysts
+T+23800ms POSTED: Section 9 — Macro Context
+T+24800ms POSTED: Section 10 — Engine Signal (V9 Final Word)
 
 T+24000ms CLEANUP
           deleted: /tmp/atlas_AAPL_a3f7b2c1/
@@ -1988,6 +2246,6 @@ T+123000ms  CACHE_UPDATE
 
 ---
 
-*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
+*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. Version 3.0 was updated on February 14, 2026, documenting: ATLAS V9 Buffett-aligned owner intelligence layer (business quality, moat durability, capital allocation scoring), intrinsic value and margin of safety computation, V9 decision hierarchy (PASS/WATCH/RESEARCH/BUY/HOLD/TRIM/EXIT), conviction scoring with position sizing, permanent loss risk identification, engine conflict protocol, temperament module, Buffett-aligned Q&A system prompt, Owner Assessment section in Slack reports (11 sections total), Owner's View card on web dashboard, and updated line counts (7,316 lines total). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
 
 *Where specific implementation details were not directly observable in the codebase, reasonable architectural assumptions have been made and are labeled accordingly throughout the document.*
