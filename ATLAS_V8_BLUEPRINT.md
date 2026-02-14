@@ -761,3 +761,16 @@ For charts within Slack:
 | Author | Farid Concha / Claude |
 | Date | February 12, 2026 |
 | Based On | ATLAS V7 Technical Whitepaper |
+| Last Updated | February 14, 2026 |
+
+### Stage 1 Hardening Notes (February 14, 2026)
+
+The following production hardening was applied across the ATLAS codebase (zero UX impact, no engine math changes):
+
+- **Web server** (`web_server.py`): Security headers middleware (CSP, X-Frame-Options: DENY, nosniff, Referrer-Policy, Permissions-Policy), GZip compression, report ID regex validation, `robots.txt` route, removed raw JSON API endpoint
+- **Q&A module** (`gemini_qa.py`): API key redacted from logs, user question sanitization (control chars stripped, 500-char limit), LLM output sanitization (Slack broadcast mention stripping)
+- **Report storage** (`web_report.py`): 30-day TTL auto-cleanup on reports, report ID validation
+- **Bot** (`bot.py`): Per-user 60-second rate limiting on analysis requests, Slack broadcast mention stripping on all LLM output posted to Slack
+- **Engine** (`atlas_engine.py`): Removed unused `import os`, narrowed 3 bare `except:` to `except (ValueError, TypeError):`
+- **Data layer** (`v8_data.py`): Removed dead `_pct_return()` function
+- **Infra**: Added `*.db` to `.gitignore`, created `.github/dependabot.yml` for weekly pip updates

@@ -643,6 +643,7 @@ These are surfaced in Message 3 as warnings to the user.
 | V5 | Added Layer 11 trader abstraction with decision rules and suppression |
 | V6 | Narrative rewrite: _build_narrative(), _expand_driver(), context-aware triggers, 4-message format |
 | V7 (current) | Middle-ground format: engine scoreboard, buy zones, dual stops, R:R, risk decomposition, conditional triggers, regime annotations, weight matrix, execution mode explanations |
+| V10 Stage 1 Hardening (Feb 14, 2026) | `atlas_engine.py` code hygiene: removed unused `import os`, narrowed 3 bare `except:` clauses to `except (ValueError, TypeError):` at `safe_float()`, `slope()`, and `load_meta_state()`. No engine math, scoring formulas, or trading logic modified. Dead `_pct_return()` function removed from `v8_data.py`. |
 
 ---
 

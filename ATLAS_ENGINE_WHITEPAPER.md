@@ -1,9 +1,9 @@
 # ATLAS ENGINE — Technical White Paper
 
-**Version:** 3.0
+**Version:** 3.1
 **Date:** February 14, 2026
 **Classification:** Confidential — Internal & Investor Distribution
-**System Version:** ATLAS V9 (Production)
+**System Version:** ATLAS V10 (Production)
 
 ---
 
@@ -254,9 +254,9 @@ After Slack report formatting, the full analysis payload is persisted to SQLite 
 
 2. **URL injection** — The dashboard URL is injected into the first and last Slack messages as a clickable hyperlink, plus the final confirmation message.
 
-3. **Dashboard rendering** — `web_server.py` serves an institutional-grade HTML dashboard at `/r/{report_id}` featuring:
-   - **V9 Owner's View card** (blue-bordered, prominent placement after metrics strip):
-     - V9 decision pill with reasoning text
+3. **Dashboard rendering** — `web_server.py` serves an institutional-grade HTML dashboard at `/r/{report_id}` (validated against `^[A-Za-z0-9_-]{1,120}$` regex; invalid IDs return HTTP 400) featuring:
+   - **V10 Owner's View card** (blue-bordered, prominent placement after metrics strip):
+     - V10 decision pill with reasoning text
      - Star ratings (★/☆) for Business Quality, Moat Durability, Capital Allocation (0–5 each)
      - Conviction progress bar (0–100) with color-coded thresholds (green 80+, yellow 60+, red <60)
      - Margin of Safety gauge (32px font, color-coded: green if threshold met, yellow if partial, red if negative)
@@ -268,10 +268,18 @@ After Slack report formatting, the full analysis payload is persisted to SQLite 
    - **Sortable tables**: peer comparison (6 peers with forward PE, margins, growth, ROE) and engine detail (8 engines with scores, weights, contributions)
    - **News & sentiment** section with publisher and sentiment badges
    - **"Show Your Work"** collapsible section: V9 decision hierarchy derivation (5-step gate logic), composite derivation formula, risk governor gate calculation, trade quality computation, and computed-vs-reported delta warnings
-   - **Provenance footer**: engine version (ATLAS V9), data confidence, timestamp, data mode
+   - **Provenance footer**: engine version (ATLAS V10), data confidence, timestamp, data mode
    - **Design system**: GitHub-dark palette (`#06090f` background), Inter + JetBrains Mono typography, CSS custom properties for theming
 
-4. **JSON API** — Raw payload available at `/api/r/{report_id}.json` for programmatic consumption.
+4. **Web server hardening** (Stage 1, v3.1) — `web_server.py` includes:
+   - **Security headers middleware**: `Content-Security-Policy` (self + fonts.googleapis + cdn.jsdelivr for ECharts + inline styles/scripts), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+   - **Cache-Control**: `private, no-store` on all `/r/` report pages
+   - **GZip compression**: `GZipMiddleware` with 1000-byte minimum (compresses the ~80KB dashboard template)
+   - **Input validation**: Report ID regex `^[A-Za-z0-9_-]{1,120}$` enforced at both `web_server.py` and `web_report.py` layers
+   - **Robots.txt**: `GET /robots.txt` returns `User-agent: *\nDisallow: /` to prevent crawler indexing
+   - **Removed**: Raw JSON API endpoint (`/api/r/{report_id}.json`) — not used by any client, eliminated to reduce attack surface
+
+5. **Report TTL cleanup** — `web_report.py` runs a lightweight `DELETE WHERE created_at < 30 days` after every report store, preventing unbounded database growth.
 
 ### 2.5 Orchestration Logic
 
@@ -770,7 +778,7 @@ All API keys are stored in `.env` (Git-ignored) and loaded via `python-dotenv` w
 
 No user financial data, trading accounts, portfolio holdings, or personally identifiable information is collected, stored, or transmitted. Atlas Engine operates on public market data exclusively.
 
-**Note on web reports:** Report payloads stored in SQLite contain only public market data and engine-computed scores. Report URLs use opaque IDs (`{SYMBOL}-{thread_ts}-{uuid}`) and are not guessable. No authentication is required to view a report — anyone with the URL can access it. If access control is required, implement token-based authentication on the `/r/` and `/api/r/` routes.
+**Note on web reports:** Report payloads stored in SQLite contain only public market data and engine-computed scores. Report URLs use opaque IDs (`{SYMBOL}-{thread_ts}-{uuid}`) and are not guessable. No authentication is required to view a report — anyone with the URL can access it. Reports are automatically purged after 30 days via TTL cleanup. Report IDs are validated against a strict regex (`^[A-Za-z0-9_-]{1,120}$`) at both the web server and storage layers. The raw JSON API has been removed — only the HTML dashboard is served. If access control is required, implement token-based authentication on the `/r/` route.
 
 ### 4.6 Data Refresh Cadence
 
@@ -782,9 +790,9 @@ No user financial data, trading accounts, portfolio holdings, or personally iden
 | Macro rates (FRED) | On every request | On-demand, daily resolution |
 | News | On every request (via V8 extended) | On-demand, latest available |
 | Meta-learning weights | Updated after every engine run | Persistent, incremental |
-| Web report payloads | Stored after every analysis | Persistent (SQLite) |
+| Web report payloads | Stored after every analysis | Persistent (SQLite, 30-day TTL) |
 
-All data fetching is synchronous with the analysis request. There is no background refresh, scheduled polling, or pre-caching. This ensures data freshness at the cost of per-request latency. Web report payloads are stored permanently and represent a point-in-time snapshot of the analysis.
+All data fetching is synchronous with the analysis request. There is no background refresh, scheduled polling, or pre-caching. This ensures data freshness at the cost of per-request latency. Web report payloads represent a point-in-time snapshot of the analysis and are automatically purged after 30 days.
 
 ### 4.7 Risks of Integration Dependency
 
@@ -1107,9 +1115,14 @@ The core engine uses deterministic rules, not learned reasoning. Specific limita
 ### 6.8 Security and Compliance Concerns
 
 - **No audit logging.** Print-based logging captures operational events but does not produce structured audit trails suitable for compliance review.
-- **No access control.** Any user in the Slack workspace can invoke Atlas and access all analysis. There is no role-based access, no per-user rate limiting, and no content filtering.
+- **Per-user rate limiting (Stage 1).** A 60-second cooldown is enforced per Slack user for analysis requests. This prevents abuse but is not a full token-bucket rate limiter. Follow-up Q&A requests are not rate-limited beyond Groq's 30 RPM free tier cap.
+- **Output sanitization (Stage 1).** All LLM-generated text (narratives, Q&A answers) is stripped of Slack broadcast mentions (`<!channel>`, `<!here>`, `<!everyone>`, `<@channel>`) before posting to Slack, preventing accidental workspace-wide notifications.
+- **Input sanitization (Stage 1).** User questions in Q&A are stripped of control characters and capped at 500 characters before being sent to the LLM.
+- **API key redaction (Stage 1).** Groq API key is no longer logged at startup; replaced with `[REDACTED]`.
+- **Web server hardened (Stage 1).** Security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy), GZip compression, input validation on report IDs, robots.txt blocking, and JSON API removal. See Section 2.4 Stage 4 for details.
 - **Groq data retention.** Groq's API terms specify that input/output data may be retained for abuse monitoring. Analysis context (which includes financial data) is transmitted to Groq servers.
 - **No encryption at rest.** Meta-learning state and temp data files are written to disk in plaintext.
+- **No formal access control.** Any user in the Slack workspace can invoke Atlas in channels where it is installed. Rate limiting mitigates abuse but does not replace role-based access control.
 
 ---
 
@@ -1646,7 +1659,7 @@ Data Flow Boundaries:
 
 **Recommendation for production:**
 - Migrate to Groq Enterprise or self-hosted LLM for zero-retention guarantee
-- Implement prompt sanitization to strip any sensitive data before LLM calls
+- ~~Implement prompt sanitization to strip any sensitive data before LLM calls~~ **Done (Stage 1):** User input sanitization (control character stripping, 500-char limit) and LLM output sanitization (Slack broadcast mention stripping) implemented in `gemini_qa.py`
 - Document data flow in a formal Data Processing Agreement (DPA)
 
 ### 9.4 Audit Logging
@@ -1714,18 +1727,28 @@ Data Flow Boundaries:
 
 ### 9.5 Access Control Model
 
-**Current state:** No access control. Any workspace member can:
-- Invoke `@atlas {TICKER}` in any channel where Atlas is installed
-- Ask unlimited follow-up questions
-- View all analysis outputs
+**Current state:** Basic rate limiting implemented (Stage 1). Any workspace member can:
+- Invoke `@atlas {TICKER}` in any channel where Atlas is installed (subject to 60-second per-user cooldown)
+- Ask follow-up questions (subject to Groq's 30 RPM rate limit)
+- View all analysis outputs (web report URLs are unguessable but unauthenticated)
 
-**Recommended access control layers:**
+**Implemented access control layers (Stage 1):**
+
+| Layer | Mechanism | Status |
+|-------|-----------|--------|
+| Per-user rate limiting | 60-second cooldown dict in `bot.py` | **Implemented** |
+| Input validation | Regex on report IDs, control char stripping on Q&A input | **Implemented** |
+| Output sanitization | Broadcast mention stripping on all LLM output | **Implemented** |
+| Crawler blocking | `robots.txt` returning `Disallow: /` | **Implemented** |
+
+**Recommended additional access control layers (Stage 2+):**
 
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
 | Channel restriction | Slack App install scope | Limit Atlas to specific channels (#trading, #research) |
 | User allowlist | In-app configuration | Restrict analysis to authorized users |
-| Rate limiting (per-user) | Token bucket algorithm | Prevent abuse (e.g., 10 analyses/hour per user) |
+| Token-bucket rate limiting | Replace simple cooldown with sliding window | More granular abuse prevention |
+| Signed report URLs | HMAC-signed, expiring links | Prevent unauthorized report access |
 | Admin commands | Slack slash commands | Enable/disable features, view usage stats |
 | Content filtering | Pre-processing | Block requests for restricted tickers or topics |
 
@@ -1735,7 +1758,7 @@ Data Flow Boundaries:
 
 | Trust Service Criteria | Current Status | Gap |
 |-----------------------|----------------|-----|
-| Security | Partial — API keys secured, WSS transport | No formal security policy, no penetration testing, no vulnerability scanning |
+| Security | Partial — API keys secured, WSS transport, security headers (CSP, X-Frame-Options, nosniff), input validation, output sanitization, per-user rate limiting, API key redaction (Stage 1) | No formal security policy, no penetration testing, no vulnerability scanning |
 | Availability | Partial — Render PaaS with health checks | No SLA, no redundancy, no disaster recovery plan |
 | Processing Integrity | Partial — Deterministic engine, data validation | No formal testing framework, no regression suite |
 | Confidentiality | Low — No encryption at rest, no access controls | Significant gaps for handling any non-public data |
@@ -2246,6 +2269,6 @@ T+123000ms  CACHE_UPDATE
 
 ---
 
-*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. Version 3.0 was updated on February 14, 2026, documenting: ATLAS V9 Buffett-aligned owner intelligence layer (business quality, moat durability, capital allocation scoring), intrinsic value and margin of safety computation, V9 decision hierarchy (PASS/WATCH/RESEARCH/BUY/HOLD/TRIM/EXIT), conviction scoring with position sizing, permanent loss risk identification, engine conflict protocol, temperament module, Buffett-aligned Q&A system prompt, Owner Assessment section in Slack reports (11 sections total), Owner's View card on web dashboard, and updated line counts (7,316 lines total). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
+*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. Version 3.0 was updated on February 14, 2026, documenting: ATLAS V9 Buffett-aligned owner intelligence layer (business quality, moat durability, capital allocation scoring), intrinsic value and margin of safety computation, V9 decision hierarchy (PASS/WATCH/RESEARCH/BUY/HOLD/TRIM/EXIT), conviction scoring with position sizing, permanent loss risk identification, engine conflict protocol, temperament module, Buffett-aligned Q&A system prompt, Owner Assessment section in Slack reports (11 sections total), Owner's View card on web dashboard, and updated line counts (7,316 lines total). Version 3.1 was updated on February 14, 2026 (commit d56f37a), documenting Stage 1 Hardening: web server security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy) and GZip compression middleware; report ID input validation at web server and storage layers; robots.txt route; removal of raw JSON API endpoint; API key redaction from logs; user question sanitization (control character stripping, 500-char limit); LLM output sanitization (Slack broadcast mention stripping) in gemini_qa.py, bot.py, and narrative generation; 30-day TTL cleanup for web reports in SQLite; per-user 60-second rate limiting on analysis requests; removal of unused `import os` and narrowing of bare `except:` to `except (ValueError, TypeError):` in atlas_engine.py; removal of dead `_pct_return()` function from v8_data.py; addition of `*.db` patterns to .gitignore; and creation of .github/dependabot.yml for weekly pip dependency updates. Zero engine math, scoring, or trading logic was modified. All changes across 8 files (119 insertions, 29 deletions). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
 
 *Where specific implementation details were not directly observable in the codebase, reasonable architectural assumptions have been made and are labeled accordingly throughout the document.*
