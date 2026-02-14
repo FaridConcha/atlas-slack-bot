@@ -308,22 +308,15 @@ def handle_atlas_mention(event, say, client):
         except Exception as e:
             print(f"[BOT] Web report generation failed (non-fatal): {e}")
 
-        # Inject web report link into first and last Slack messages
+        # Inject web report link into first Slack message
         if report_url and v8_messages:
             header_link = f":mag: *Full Report* (charts + tables + full calc breakdown): <{report_url}|Open dashboard>\n\n"
-            footer_link = f"\n\n:arrow_upper_right: More detail: <{report_url}|Full web report>"
             # Prepend link to first message
             first = v8_messages[0]
             if isinstance(first, str):
                 v8_messages[0] = header_link + first
             elif isinstance(first, dict):
                 v8_messages[0]['text'] = header_link + first.get('text', '')
-            # Append link to last message
-            last = v8_messages[-1]
-            if isinstance(last, str):
-                v8_messages[-1] = last + footer_link
-            elif isinstance(last, dict):
-                v8_messages[-1]['text'] = last.get('text', '') + footer_link
 
         # Cache data for AI follow-up Q&A
         if GROQ_API_KEY:
