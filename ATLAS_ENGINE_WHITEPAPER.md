@@ -1,7 +1,7 @@
 # ATLAS ENGINE — Technical White Paper
 
-**Version:** 2.0
-**Date:** February 12, 2026
+**Version:** 2.1
+**Date:** February 13, 2026
 **Classification:** Confidential — Internal & Investor Distribution
 **System Version:** ATLAS V8 (Production)
 
@@ -48,8 +48,12 @@ Atlas Engine solves all three. It fetches seven categories of live market data i
 | Output sections | 10-section structured report |
 | Data sources | yfinance (primary), FRED (optional), static CSV fallback |
 | AI Q&A model | Groq Llama 3.3 70B (multi-turn conversational) |
-| Codebase | 5,646 lines across 6 Python modules |
-| Deployment | Render PaaS, Slack Socket Mode |
+| Web dashboard | Institutional-grade HTML report (ECharts, sortable tables, formula derivation) |
+| Report persistence | SQLite (WAL mode) with JSON payloads |
+| Web API | FastAPI — `/r/{id}` (HTML), `/api/r/{id}.json` (JSON), `/health` |
+| Cold-start handling | Auto-detect Render spin-up, in-place Slack progress messages |
+| Codebase | 6,683 lines across 8 Python modules |
+| Deployment | Render PaaS, Slack Socket Mode, FastAPI (uvicorn) |
 | Operating cost | $0 at current scale (free-tier APIs) |
 
 ---
@@ -58,25 +62,37 @@ Atlas Engine solves all three. It fetches seven categories of live market data i
 
 ### 2.1 Logical Architecture
 
-Atlas Engine is organized into four distinct layers:
+Atlas Engine is organized into six distinct layers:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    PRESENTATION LAYER                        │
 │  Slack Socket Mode  │  Threaded Reports  │  AI Q&A Chat     │
 ├─────────────────────────────────────────────────────────────┤
+│                 WEB PRESENTATION LAYER                       │
+│  web_server.py — FastAPI (ECharts dashboard, JSON API)      │
+│  Routes: /r/{id} (HTML) │ /api/r/{id}.json │ /health       │
+├─────────────────────────────────────────────────────────────┤
 │                   ORCHESTRATION LAYER                        │
-│  bot.py — Event routing, thread cache, lifecycle mgmt       │
+│  bot.py — Event routing, cold-start detection, lifecycle    │
+│  Signal handling (SIGTERM), thread cache, report generation  │
 ├──────────────────┬──────────────────┬───────────────────────┤
 │  INTELLIGENCE    │  REPORT          │  CONVERSATIONAL       │
 │  LAYER           │  LAYER           │  LAYER                │
 │  atlas_engine.py │  v8_report.py    │  gemini_qa.py         │
 │  (11 layers)     │  (10 sections)   │  (Groq LLM)          │
 ├──────────────────┴──────────────────┴───────────────────────┤
+│                   PERSISTENCE LAYER                          │
+│  web_report.py — SQLite (WAL mode), JSON payload storage    │
+│  Report ID generation, numpy serialization, URL routing     │
+├─────────────────────────────────────────────────────────────┤
 │                      DATA LAYER                              │
 │  data_fetcher.py  │  v8_data.py  │  Static CSV/JSON files   │
 │  (7 parallel      │  (Extended    │  (Fallback data for     │
 │   yfinance calls) │   analytics)  │   offline operation)    │
+│  resolve_price()  │               │                         │
+│  (8-level fallback│               │                         │
+│   price chain)    │               │                         │
 ├─────────────────────────────────────────────────────────────┤
 │                   EXTERNAL SERVICES                          │
 │  Yahoo Finance API  │  FRED API  │  Groq API  │  Slack API  │
@@ -85,7 +101,11 @@ Atlas Engine is organized into four distinct layers:
 
 **Presentation Layer** — Slack Socket Mode (WebSocket-based, no webhook URL required). Handles inbound `@mention` events and `message` events for thread-based Q&A. Posts threaded replies with Slack markdown formatting.
 
-**Orchestration Layer** — `bot.py` (371 lines). Manages the full lifecycle: parse ticker from mention text, dispatch parallel data fetches, invoke the 11-layer engine, trigger report formatting, cache results for AI follow-up, and post sections as threaded replies. Maintains an in-memory LRU thread cache (50 threads, 4-hour TTL).
+**Web Presentation Layer** — `web_server.py` (727 lines). FastAPI application serving institutional-grade HTML dashboards with ECharts financial charts (price context, engine waterfall, regime vector, DCF scenarios), dense metric grids, sortable peer/engine tables, and a "Show Your Work" section with composite derivation formulas. Also serves raw JSON payloads via REST API. Runs as a threaded uvicorn server alongside the Slack bot on the same port.
+
+**Orchestration Layer** — `bot.py` (508 lines). Manages the full lifecycle: parse ticker from mention text, dispatch parallel data fetches, invoke the 11-layer engine, trigger report formatting, generate and store web reports (SQLite), inject dashboard hyperlinks into Slack messages, cache results for AI follow-up, and post sections as threaded replies. Maintains an in-memory LRU thread cache (50 threads, 4-hour TTL). Includes cold-start detection for Render free-tier spin-ups (120-second window with in-place progress messages) and SIGTERM/SIGINT signal handlers for graceful shutdown notification.
+
+**Persistence Layer** — `web_report.py` (128 lines). SQLite storage layer for full analysis payloads. Generates URL-safe report IDs (`{SYMBOL}-{thread_ts}-{uuid}`), recursively serializes numpy types via `_make_serializable()`, and stores JSON payloads in WAL-mode SQLite. Reports persist across restarts and are served by the web presentation layer.
 
 **Intelligence Layer** — `atlas_engine.py` (1,866 lines). The core analytical engine implementing 8 scoring engines, 10-feature regime classification, meta-learning weight optimization, risk governance, and trade execution parameter generation across 11 sequential layers.
 
@@ -93,7 +113,7 @@ Atlas Engine is organized into four distinct layers:
 
 **Conversational Layer** — `gemini_qa.py` (377 lines). Wraps the Groq API (Llama 3.3 70B) for multi-turn Q&A. Builds structured context from cached analysis data and manages conversation history (last 6 exchanges).
 
-**Data Layer** — `data_fetcher.py` (638 lines). Fetches live market data from yfinance in parallel (7-worker ThreadPool). Falls back to FRED for macro data or static CSV/JSON files for offline operation.
+**Data Layer** — `data_fetcher.py` (680 lines). Fetches live market data from yfinance in parallel (7-worker ThreadPool). Falls back to FRED for macro data or static CSV/JSON files for offline operation. Includes `resolve_price()`, an 8-level fallback chain for robust price resolution across market conditions (pre-market, post-market, regular hours, historical bars).
 
 ### 2.2 Data Ingestion Flow
 
@@ -140,10 +160,12 @@ User: @atlas AAPL
 ```
 TIME    STAGE                    MODULE              DETAIL
 ─────   ─────                    ──────              ──────
-T+0s    Event received           bot.py:108          Socket Mode delivers @mention
-T+0s    Ticker extraction        bot.py:120          Regex parse: "AAPL" from text
-T+0s    Acknowledgment           bot.py:131          Post "Running ATLAS V8 on AAPL..."
+T+0s    Event received           bot.py:168          Socket Mode delivers @mention
+T+0s    Ticker extraction        bot.py:185          Regex parse: "AAPL" from text
+T+0s    Cold-start check         bot.py:208          First mention within 120s of boot?
+T+0s    Acknowledgment           bot.py:211/214      Boot progress (cold) or warm ack
 T+1s    Data collection          data_fetcher.py     7 parallel yfinance/FRED fetches
+        ↳ resolve_price()        data_fetcher.py:28  8-level price fallback chain
 T+6s    Engine Layer 0           atlas_engine.py:148 Data integrity check (DC score)
 T+6s    Engine Layer 1           atlas_engine.py:160 Regime vector (10 features)
 T+6s    Engine Layer 2           atlas_engine.py:730 Score normalization (tanh)
@@ -158,9 +180,12 @@ T+8s    Engine Layer 10          atlas_engine.py:1100 Pyramid report text
 T+8s    Meta state save          atlas_engine.py:1150 Persist w0, Q to disk
 T+9s    V8 extended fetch        v8_data.py          Peers, technicals, news, DCF
 T+14s   Report formatting        v8_report.py        10 sections, Slack markdown
-T+15s   Cache for Q&A            bot.py:180          Thread cache update
-T+15s   Post to Slack            bot.py:190          Summary + 10 threaded replies
-T+20s   Cleanup                  bot.py:205          Delete temp data directory
+T+14s   Web report storage       web_report.py       Store payload → SQLite (WAL)
+T+14s   Dashboard URL gen        web_report.py       {SYMBOL}-{ts}-{uuid} → /r/{id}
+T+15s   Link injection           bot.py:294          Prepend/append dashboard URLs
+T+15s   Cache for Q&A            bot.py:312          Thread cache update
+T+15s   Post to Slack            bot.py:322          Summary + 10 threaded replies
+T+20s   Cleanup                  bot.py:337          Delete temp data directory
 ```
 
 ### 2.4 Response Generation Pipeline
@@ -204,6 +229,24 @@ The formatter produces 10 Slack-compatible sections:
 
 Each section is capped at ~4,000 characters (Slack message limit) and formatted with Slack markdown (bold, code blocks, bullet lists).
 
+**Stage 4: Web Report Generation (web_report.py + web_server.py)**
+After Slack report formatting, the full analysis payload is persisted to SQLite and a dashboard URL is generated:
+
+1. **Storage** — `web_report.py` serializes the summary, v8_extended, and provenance dicts into a single JSON payload, handling numpy types recursively. Stored in `reports.db` (SQLite, WAL journal mode) keyed by a composite report ID: `{SYMBOL}-{sanitized_thread_ts}-{8char_uuid}`.
+
+2. **URL injection** — The dashboard URL is injected into the first and last Slack messages as a clickable hyperlink, plus the final confirmation message.
+
+3. **Dashboard rendering** — `web_server.py` serves an institutional-grade HTML dashboard at `/r/{report_id}` featuring:
+   - **4 ECharts visualizations**: price context (horizontal bar), engine waterfall (stacked bar simulation), regime vector (risk-colored horizontal bars), DCF scenarios (vertical bars with price reference line)
+   - **Dense metric grids**: fundamentals (4-col), valuation (4-col), technicals (4-col), trade plan
+   - **Sortable tables**: peer comparison (6 peers with forward PE, margins, growth, ROE) and engine detail (8 engines with scores, weights, contributions)
+   - **News & sentiment** section with publisher and sentiment badges
+   - **"Show Your Work"** collapsible section: composite derivation formula, risk governor gate calculation, trade quality computation, and computed-vs-reported delta warnings
+   - **Provenance footer**: engine version, data confidence, timestamp, data mode
+   - **Design system**: GitHub-dark palette (`#06090f` background), Inter + JetBrains Mono typography, CSS custom properties for theming
+
+4. **JSON API** — Raw payload available at `/api/r/{report_id}.json` for programmatic consumption.
+
 ### 2.5 Orchestration Logic
 
 **Routing:** All analysis requests flow through a single pipeline. There is no model routing for the core engine — all 8 scoring engines execute on every query. Conditional logic exists only at the data layer (FRED vs yfinance fallback, live vs static data mode).
@@ -218,6 +261,68 @@ Primary: yfinance live data
 ```
 
 **Error Isolation:** Each data fetcher runs in its own thread with independent try-except handling. A failure in one data category (e.g., macro) does not block others. The Data Integrity layer (Layer 0) adjusts the confidence score downward proportionally, ensuring the engine always produces output — but with appropriate uncertainty signaling.
+
+### 2.6 Cold-Start Detection & Graceful Shutdown
+
+ATLAS runs on Render's free tier, which spins the service down after 15 minutes of inactivity. This introduces two UX challenges: (1) the first request after spin-down has a 15–30 second boot delay with no user feedback, and (2) the process is killed via SIGTERM without warning.
+
+**Cold-Start Detection:**
+```
+Module-level state:
+    _boot_time = time.time()          # recorded at import
+    _boot_complete = False            # flipped on first mention
+    _COLD_START_WINDOW = 120 seconds  # generous for container spin-up
+
+_is_cold_start() logic:
+    IF _boot_complete → return False (warm path)
+    ELSE → set _boot_complete = True
+           IF (now - _boot_time) < 120s → return True (cold path)
+           ELSE → return False (boot was fast, treat as warm)
+```
+
+**Cold path** — Posts a single Slack message that is updated in-place through 4 stages:
+1. `:zzz: ATLAS is waking up from sleep... hang tight`
+2. `:satellite: Connecting data systems...` (1.5s delay)
+3. `:rocket: Systems online, fetching {symbol}...` (1.5s delay)
+4. Pipeline-stage updates: "Live data fetched..." → "Engine complete..." → "Report ready..."
+
+Each `chat_update` call is wrapped in try/except — progress updates are cosmetic and must never break the analysis pipeline.
+
+**Warm path** — Standard single acknowledgment message (no animation).
+
+**Graceful Shutdown (SIGTERM/SIGINT):**
+```python
+signal.signal(signal.SIGTERM, _handle_shutdown)
+signal.signal(signal.SIGINT, _handle_shutdown)
+```
+
+The `_handle_shutdown` handler posts a notification to the last active Slack channel/thread:
+> `:zzz: ATLAS is going offline (Render free-tier sleep). Mention me again to wake up — takes ~30 seconds.`
+
+Edge cases:
+- No mentions before SIGTERM → `_last_channel` is None → handler skips posting, exits cleanly
+- Two mentions during cold window → `_is_cold_start()` returns True only once; second mention gets warm path
+- HELP command during cold start → HELP check runs before cold-start check → returns early, no boot sequence
+
+### 2.7 Robust Price Resolution
+
+The `resolve_price()` function in `data_fetcher.py` implements an 8-level fallback chain to handle yfinance's inconsistent price field availability across market conditions:
+
+```
+Fallback chain (first non-null, positive value wins):
+    1. currentPrice          — primary (regular hours)
+    2. preMarketPrice        — pre-market sessions
+    3. postMarketPrice       — after-hours sessions
+    4. regularMarketPrice    — alternative regular-hours field
+    5. previousClose         — last trading day close
+    6. regularMarketPreviousClose — alternative previous close
+    7. Last OHLCV Close      — from historical bars (hist DataFrame)
+    8. Last OHLCV Open       — fallback if Close is missing
+    9. info['open']          — last resort from info dict
+    → 0                      — all sources exhausted
+```
+
+This function is used throughout `data_fetcher.py` and `v8_data.py`, replacing the previous fragile pattern of `info.get('currentPrice', 0) or info.get('regularMarketPrice', 0)`. All `ticker.history()` calls also include `prepost=True` for extended-hours data visibility.
 
 ---
 
@@ -371,19 +476,19 @@ The LLM receives pre-computed data as context and generates natural language res
 ┌────────────────────────────────────────────────────────────────┐
 │                      ATLAS ENGINE                               │
 │                                                                 │
-│   ┌─────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐ │
-│   │  Slack   │    │ yfinance │    │  FRED    │    │  Groq    │ │
-│   │  API     │    │  API     │    │  API     │    │  API     │ │
-│   └────┬────┘    └────┬─────┘    └────┬─────┘    └────┬─────┘ │
-│        │              │               │               │        │
-│   Socket Mode    HTTP/REST       HTTP/REST       HTTP/REST     │
-│   (WSS)          (No auth)       (API key)       (API key)     │
-│        │              │               │               │        │
-└────────┼──────────────┼───────────────┼───────────────┼────────┘
-         │              │               │               │
-         ▼              ▼               ▼               ▼
-    Slack Workspace  Yahoo Finance   Federal Reserve   Groq Cloud
-                     (Public)        Economic Data     (Llama 3.3)
+│   ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌──────┐  ┌─────┐ │
+│   │  Slack   │  │ yfinance │  │  FRED    │  │ Groq │  │FastA│ │
+│   │  API     │  │  API     │  │  API     │  │ API  │  │ PI  │ │
+│   └────┬────┘  └────┬─────┘  └────┬─────┘  └──┬───┘  └──┬──┘ │
+│        │            │              │            │         │     │
+│   Socket Mode  HTTP/REST      HTTP/REST    HTTP/REST   HTTP    │
+│   (WSS)        (No auth)      (API key)    (API key)  :PORT    │
+│        │            │              │            │         │     │
+└────────┼────────────┼──────────────┼────────────┼─────────┼────┘
+         │            │              │            │         │
+         ▼            ▼              ▼            ▼         ▼
+    Slack         Yahoo Finance  Fed Reserve   Groq     Browser
+    Workspace     (Public)       Econ Data     Cloud    (Dashboard)
 ```
 
 ### 4.2 Internal System Integrations
@@ -442,15 +547,31 @@ The LLM receives pre-computed data as context and generates natural language res
 
 ```
 Startup Authentication:
-├── Load .env (python-dotenv)
+├── Load .env (python-dotenv, override=False)
 ├── Validate SLACK_BOT_TOKEN (required — exit if missing)
 ├── Validate SLACK_APP_TOKEN (required — exit if missing)
 ├── Initialize Groq client if GROQ_API_KEY present (optional)
 ├── Store FRED_API_KEY if present (optional)
+├── Read ATLAS_WEB_BASE_URL (default: http://localhost:8000)
+├── Start FastAPI/uvicorn on PORT (default: 10000)
+├── Register SIGTERM/SIGINT signal handlers
 └── Connect Slack Socket Mode (WebSocket handshake with Slack servers)
 ```
 
 All API keys are stored in `.env` (Git-ignored) and loaded via `python-dotenv` with `override=False`, allowing Render platform environment variables to take precedence over local `.env` values.
+
+**Environment variables:**
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `SLACK_BOT_TOKEN` | Yes | — | Bot user OAuth token (xoxb-) |
+| `SLACK_APP_TOKEN` | Yes | — | App-level token for Socket Mode (xapp-) |
+| `GROQ_API_KEY` | No | — | Enables AI follow-up Q&A |
+| `FRED_API_KEY` | No | — | Higher-quality macro data from FRED |
+| `ATLAS_WEB_BASE_URL` | No | `http://localhost:8000` | Public URL prefix for web report links |
+| `PORT` | No | `10000` | HTTP port for FastAPI (health + dashboard) |
+| `CAPITAL` | No | `250000` | Portfolio capital for position sizing |
+| `USE_LIVE_DATA` | No | `true` | Toggle live vs static data mode |
 
 ### 4.5 Data Security Model
 
@@ -458,11 +579,14 @@ All API keys are stored in `.env` (Git-ignored) and loaded via `python-dotenv` w
 |-----------|---------------|--------------|---------|
 | API keys | Secret | HTTPS only (to respective services) | `.env` file (Git-ignored) |
 | Market data | Public | HTTPS from Yahoo/FRED | Temp dir (auto-deleted) |
-| Analysis output | Internal | WSS to Slack | In-memory cache (4h TTL) |
+| Analysis output | Internal | WSS to Slack + HTTPS (dashboard) | In-memory cache (4h TTL) + SQLite (permanent) |
+| Web reports | Internal | HTTPS to browser | `reports.db` (SQLite, WAL mode) |
 | Meta-learning state | Internal | None (local only) | `state/atlas_meta_state.json` |
 | User messages | Internal | WSS from Slack | In-memory conversation history |
 
 No user financial data, trading accounts, portfolio holdings, or personally identifiable information is collected, stored, or transmitted. Atlas Engine operates on public market data exclusively.
+
+**Note on web reports:** Report payloads stored in SQLite contain only public market data and engine-computed scores. Report URLs use opaque IDs (`{SYMBOL}-{thread_ts}-{uuid}`) and are not guessable. No authentication is required to view a report — anyone with the URL can access it. If access control is required, implement token-based authentication on the `/r/` and `/api/r/` routes.
 
 ### 4.6 Data Refresh Cadence
 
@@ -474,8 +598,9 @@ No user financial data, trading accounts, portfolio holdings, or personally iden
 | Macro rates (FRED) | On every request | On-demand, daily resolution |
 | News | On every request (via V8 extended) | On-demand, latest available |
 | Meta-learning weights | Updated after every engine run | Persistent, incremental |
+| Web report payloads | Stored after every analysis | Persistent (SQLite) |
 
-All data fetching is synchronous with the analysis request. There is no background refresh, scheduled polling, or pre-caching. This ensures data freshness at the cost of per-request latency.
+All data fetching is synchronous with the analysis request. There is no background refresh, scheduled polling, or pre-caching. This ensures data freshness at the cost of per-request latency. Web report payloads are stored permanently and represent a point-in-time snapshot of the analysis.
 
 ### 4.7 Risks of Integration Dependency
 
@@ -492,15 +617,19 @@ All data fetching is synchronous with the analysis request. There is no backgrou
 ```
 Component Latency Breakdown (typical):
 
+Cold-start boot msgs:       ████░░░░░░░░░░░░░░░░  3-4 sec (cold only)
 yfinance parallel fetch:    ████████░░░░░░░░░░░░  5-8 sec
 Engine 11-layer execution:  ██░░░░░░░░░░░░░░░░░░  2-3 sec
 V8 extended data fetch:     ████░░░░░░░░░░░░░░░░  3-5 sec
 Report formatting:          ██░░░░░░░░░░░░░░░░░░  2-3 sec
+Web report (SQLite store):  ░░░░░░░░░░░░░░░░░░░░  <100 ms
 Slack posting (10 msgs):    ████░░░░░░░░░░░░░░░░  3-5 sec
                             ──────────────────────
-Total:                                            15-24 sec
+Total (warm):                                     15-24 sec
+Total (cold start):                               18-28 sec
 
 Groq Q&A (per follow-up):  ██░░░░░░░░░░░░░░░░░░  2-3 sec
+Dashboard load (browser):   ██░░░░░░░░░░░░░░░░░░  1-2 sec
 ```
 
 The dominant latency contributor is network I/O (data fetching and Slack posting), not computation. The 11-layer engine itself completes in 2–3 seconds on commodity hardware.
@@ -512,15 +641,26 @@ The dominant latency contributor is network I/O (data fetching and Slack posting
 ### 5.1 Typical User Journey
 
 ```
-Phase 1: Analysis Request
+Phase 0: Cold Start (Render free-tier only, first request after spin-down)
 ──────────────────────────
 User types in any Slack channel where Atlas is installed:
     @atlas AAPL
 
-Atlas responds immediately:
-    ⚙️ Running ATLAS V8 on *AAPL*... hang tight.
+Atlas wakes up and posts a progress sequence (updated in-place):
+    😴 ATLAS is waking up from sleep... hang tight
+    📡 Connecting data systems...
+    🚀 Systems online, fetching AAPL...
+    📈 Live data fetched, running engine on AAPL...
+    🧠 Engine complete, building report...
+    ✅ Report ready, delivering...
+
+Phase 1: Analysis Request
+──────────────────────────
+(If already warm, user sees standard acknowledgment):
+    ⚙️ Running ATLAS V8 on *AAPL*... pulling live data & building full report (30-45 sec)
 
 15-20 seconds later, Atlas posts a summary message + 10 threaded sections.
+First message includes a hyperlink to the full web dashboard.
 
 Phase 2: Report Consumption
 ──────────────────────────
@@ -531,6 +671,18 @@ User reads the verdict section:
 
 User clicks into thread to read detailed sections (fundamentals,
 valuation, technicals, peers, sentiment, risk, catalysts, macro, signal).
+
+Phase 2b: Web Dashboard (Optional)
+──────────────────────────
+User clicks the dashboard link in the Slack message:
+    🔍 Full Report: Open dashboard → https://atlas-slack-bot.onrender.com/r/AAPL-...
+
+The web dashboard provides:
+    • ECharts financial visualizations (price context, engine waterfall, regime vector, DCF)
+    • Dense metric grids (fundamentals, valuation, technicals, trade plan)
+    • Sortable peer comparison and engine detail tables
+    • "Show Your Work" section with full formula derivation
+    • Raw JSON API access at /api/r/{id}.json
 
 Phase 3: Follow-Up Questions (Optional)
 ──────────────────────────
@@ -544,6 +696,12 @@ Atlas AI responds in 3-5 seconds:
      ..."
 
 User can ask up to 6 follow-up questions per thread.
+
+Phase 4: Shutdown Notification (Automatic)
+──────────────────────────
+When Render sends SIGTERM (after 15 min inactivity), Atlas posts:
+    😴 ATLAS is going offline (Render free-tier sleep).
+       Mention me again to wake up — takes ~30 seconds.
 ```
 
 ### 5.2 Prompt Structure Best Practices
@@ -643,6 +801,7 @@ Subsequent questions:
 |-------------|-------|----------|---------|
 | **Analysis cache** | Per-thread | 4 hours | In-memory dict |
 | **Conversation history** | Per-thread | 4 hours | In-memory dict |
+| **Web reports** | Per-analysis | Permanent | `reports.db` (SQLite, WAL mode) |
 | **Meta-learning weights** | Global (all runs) | Permanent | `state/atlas_meta_state.json` |
 | **Cross-session memory** | None | N/A | Not implemented |
 
@@ -729,7 +888,7 @@ The core engine uses deterministic rules, not learned reasoning. Specific limita
 
 - **Single data provider (yfinance).** If Yahoo Finance changes its undocumented API structure or throttles IP ranges, all data fetching fails simultaneously. There is no secondary data provider.
 - **Single LLM provider (Groq).** If Groq experiences downtime or deprecates the free tier, Q&A is fully disabled. No fallback LLM is configured.
-- **In-memory state.** Thread cache and conversation history are lost on server restart. A deployment on Render's free tier (which sleeps after inactivity) means cold starts lose all cached context.
+- **In-memory state.** Thread cache and conversation history are lost on server restart. A deployment on Render's free tier (which sleeps after inactivity) means cold starts lose all cached Q&A context. Web reports persist in SQLite and survive restarts. Cold-start boot messages and graceful shutdown notifications mitigate the UX impact.
 
 ### 6.7 Scaling Constraints
 
@@ -763,9 +922,12 @@ Effort: 2-3 days
 
 #### A2. Persistent Thread Cache
 Replace in-memory dict with Redis or SQLite for thread cache persistence. Survives restarts and platform sleep cycles.
+
+> **Partially implemented (v2.1):** Web reports are now persisted in SQLite (`reports.db`), surviving restarts. The in-memory Q&A thread cache remains volatile. Full thread cache persistence is a remaining item.
+
 ```
 Impact: User experience continuity
-Effort: 3-5 days
+Effort: 3-5 days (remaining: Q&A cache migration to SQLite)
 ```
 
 #### A3. Automatic Citation System
@@ -865,28 +1027,10 @@ Effort: 2-3 weeks
 ```
 
 #### B5. Structured JSON-First Output
-Add a structured JSON output mode alongside human-readable reports:
-```json
-{
-  "ticker": "AAPL",
-  "verdict": "BUY",
-  "composite_score": 42.3,
-  "trade_quality": 0.456,
-  "regime": "Calm",
-  "execution": {
-    "entry": 189.5,
-    "stop_loss": 184.2,
-    "take_profit": [198.3, 205.1],
-    "position_size": 37500
-  },
-  "engine_scores": { ... },
-  "risk_metrics": { ... }
-}
-```
-Enables programmatic consumption by downstream systems (dashboards, alerting, portfolio management).
-```
-Effort: 1-2 weeks
-```
+
+> **Implemented (v2.1).** Full analysis payloads are now persisted as JSON in SQLite and served via REST API at `/api/r/{report_id}.json`. The JSON includes summary, v8_extended, and provenance data. An institutional-grade HTML dashboard is served at `/r/{report_id}`.
+
+~~Add a structured JSON output mode alongside human-readable reports.~~ **Done.** The web report system (`web_report.py` + `web_server.py`) stores complete analysis payloads as JSON and serves them via FastAPI. Dashboard rendering consumes the same JSON payload client-side.
 
 #### B6. Numerical Verification Layer
 Add a post-processing step that validates all numerical claims in Q&A responses:
@@ -1763,13 +1907,23 @@ T+14500ms REPORT_FORMAT_COMPLETE
           total_chars: ~32,000
           max_section: 3,850 chars (Section 1: Verdict)
 
+T+14550ms WEB_REPORT_STORE
+          report_id: "AAPL-1707732932-456000-a3f7b2c1"
+          payload_size: ~48,000 bytes (JSON)
+          storage: reports.db (SQLite WAL)
+          dashboard_url: https://atlas-slack-bot.onrender.com/r/AAPL-...
+
+T+14560ms LINK_INJECTION
+          first_message: prepend dashboard hyperlink
+          last_message: append dashboard hyperlink
+
 T+14600ms CACHE_UPDATE
           thread_ts: "1707732932.456000"
           cached: {symbol, summary, v8_extended, timestamp}
           cache_size: 8/50 threads
 
 T+14700ms SLACK_POST_START
-          posting 10 sections as threaded replies...
+          posting 10 sections as threaded replies (with dashboard links)...
 
 T+14800ms POSTED: Section 1 — Verdict
 T+15800ms POSTED: Section 2 — Fundamentals
@@ -1834,6 +1988,6 @@ T+123000ms  CACHE_UPDATE
 
 ---
 
-*This document was generated on February 12, 2026, based on analysis of the Atlas Engine codebase (atlas-slack-bot repository, main branch, commit 528780d). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
+*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
 
 *Where specific implementation details were not directly observable in the codebase, reasonable architectural assumptions have been made and are labeled accordingly throughout the document.*
