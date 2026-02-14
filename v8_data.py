@@ -375,6 +375,74 @@ def _build_company_info(info, symbol, hist=None):
 
 
 # ============================================================================
+# NONE-SAFE DATA HELPERS
+# ============================================================================
+
+def _safe_num(val, min_val=None, max_val=None):
+    """Return a numeric value or None. Never coerces missing data to 0."""
+    if val is None:
+        return None
+    try:
+        v = float(val)
+        if v != v:  # NaN check
+            return None
+        if min_val is not None and v < min_val:
+            return None
+        if max_val is not None and v > max_val:
+            return None
+        return v
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_pct(val):
+    """Convert a decimal (0.15) to percentage (15.0), or return None."""
+    v = _safe_num(val)
+    if v is None:
+        return None
+    return v * 100
+
+
+def _check_fundamental_integrity(mc, shares, revenue, price):
+    """
+    Validate core fundamentals. Returns (status, reasons).
+    Status: 'OK', 'DEGRADED', 'INVALID'
+    """
+    reasons = []
+
+    # Market cap must exist and be >100M for public equities
+    if mc is None or mc <= 0:
+        reasons.append('market_cap_missing')
+    elif mc < 100e6:
+        reasons.append('market_cap_implausible')
+
+    # Shares must exist and be >1M
+    if shares is None or shares <= 0:
+        reasons.append('shares_missing')
+    elif shares < 1e6:
+        reasons.append('shares_implausible')
+
+    # Revenue should exist and be >0 for operating companies
+    if revenue is None or revenue <= 0:
+        reasons.append('revenue_missing')
+
+    # Cross-check: mc ≈ shares * price within 20%
+    if mc and shares and price and mc > 0 and shares > 0 and price > 0:
+        implied_mc = shares * price
+        if abs(implied_mc - mc) / mc > 0.20:
+            reasons.append('mc_shares_mismatch')
+
+    if any(r in reasons for r in ('market_cap_missing', 'shares_missing')):
+        return ('INVALID', reasons)
+    elif any(r in reasons for r in ('market_cap_implausible', 'shares_implausible', 'revenue_missing')):
+        return ('DEGRADED', reasons)
+    elif reasons:
+        return ('DEGRADED', reasons)
+    else:
+        return ('OK', [])
+
+
+# ============================================================================
 # DATA SANITY HELPERS
 # ============================================================================
 
@@ -402,22 +470,23 @@ def _sanitize_yield(info, price):
 
 
 def _sanitize_payout(info):
-    """Sanitize payout ratio — cap at 200%."""
-    raw_pr = info.get('payoutRatio', 0) or 0
-    if raw_pr > 2.0:
-        # Already percentage
-        payout = raw_pr
-    else:
-        payout = raw_pr * 100
+    """Sanitize payout ratio — cap at 200%. yfinance returns decimal (0.35 = 35%)."""
+    raw_pr = _safe_num(info.get('payoutRatio'))
+    if raw_pr is None:
+        return None
+    # yfinance returns decimal: 0.35 = 35%, 1.5 = 150%, 3.5 = 350%
+    payout = raw_pr * 100
     if payout > 200:
         return None
-    return payout
+    if payout < 0:
+        return None
+    return round(payout, 1)
 
 
 def _validate_financials(fin, info, price):
     """Post-hoc sanity checks. Nullify anomalous values."""
-    mc = fin.get('market_cap', 0)
-    shares = fin.get('shares_outstanding', 0)
+    mc = fin.get('market_cap') or 0
+    shares = fin.get('shares_outstanding') or 0
 
     # 1. Yield sanity: dividend_yield > 25% -> None
     if fin.get('dividend_yield') is not None and fin['dividend_yield'] > 25:
@@ -434,8 +503,8 @@ def _validate_financials(fin, info, price):
             fin['_shares_warning'] = True
 
     # 4. EV consistency: EV ~ MC + net_debt (+-15%)
-    reported_ev = (info.get('enterpriseValue', 0) or 0)
-    computed_ev = mc + fin.get('net_debt', 0)
+    reported_ev = _safe_num(info.get('enterpriseValue')) or 0
+    computed_ev = mc + (fin.get('net_debt') or 0)
     if reported_ev > 0 and computed_ev > 0:
         if abs(reported_ev - computed_ev) / reported_ev > 0.15:
             fin['_ev_warning'] = True
@@ -452,76 +521,118 @@ def _validate_financials(fin, info, price):
 # ============================================================================
 
 def _build_financials(ticker, info, hist=None):
-    """Comprehensive financial metrics."""
-    mc = info.get('marketCap', 0) or 1
-    revenue = info.get('totalRevenue', 0) or 0
-    net_income = info.get('netIncomeToCommon', 0) or 0
-    fcf = info.get('freeCashflow', 0) or 0
-    total_debt = info.get('totalDebt', 0) or 0
-    total_cash = info.get('totalCash', 0) or 0
-    ebitda = info.get('ebitda', 0) or 0
+    """Comprehensive financial metrics with None-safe data propagation."""
     price = resolve_price(info, hist)
-    shares = mc / price if price > 0 else 1
 
-    # Interest coverage from operating income / interest expense
-    operating_income = revenue * ((info.get('operatingMargins', 0) or 0))
-    # Approximate interest expense from debt at ~4% rate
-    interest_expense = total_debt * 0.04
-    interest_coverage = operating_income / interest_expense if interest_expense > 0 else 0
+    # --- Core fundamentals: use None for missing, NEVER coerce to 0/1 ---
+    mc = _safe_num(info.get('marketCap'), min_val=0)
+    shares = _safe_num(info.get('sharesOutstanding'), min_val=0)
+    revenue = _safe_num(info.get('totalRevenue'))
+    net_income = _safe_num(info.get('netIncomeToCommon'))
+    fcf = _safe_num(info.get('freeCashflow'))
+    total_debt = _safe_num(info.get('totalDebt'), min_val=0)
+    total_cash = _safe_num(info.get('totalCash'), min_val=0)
+    ebitda = _safe_num(info.get('ebitda'))
 
-    # Buyback yield approximation
-    try:
-        cf = ticker.cashflow
-        if cf is not None and not cf.empty and 'Repurchase Of Capital Stock' in cf.index:
-            buyback = abs(float(cf.loc['Repurchase Of Capital Stock'].iloc[0] or 0))
-            buyback_yield = buyback / mc * 100 if mc > 0 else 0
-        else:
-            buyback_yield = 0
-    except Exception:
-        buyback_yield = 0
+    # Fallback: derive shares from mc/price if sharesOutstanding missing
+    if shares is None and mc is not None and price > 0:
+        shares = mc / price
+
+    # Fallback: derive mc from shares*price if marketCap missing
+    if mc is None and shares is not None and price > 0:
+        mc = shares * price
+
+    # --- Fundamental integrity check ---
+    data_status, data_reasons = _check_fundamental_integrity(mc, shares, revenue, price)
+
+    # --- Derived metrics: only compute when inputs are valid ---
+    # Interest coverage
+    om_raw = _safe_num(info.get('operatingMargins'))
+    operating_income = (revenue * om_raw) if (revenue and om_raw) else None
+    interest_expense = (total_debt * 0.04) if total_debt else None
+    if operating_income and interest_expense and interest_expense > 0:
+        interest_coverage = round(operating_income / interest_expense, 1)
+    else:
+        interest_coverage = None
+
+    # FCF yield: requires valid mc
+    if fcf is not None and mc and mc > 100e6:
+        fcf_yield = round(fcf / mc * 100, 2)
+    else:
+        fcf_yield = None
+
+    # Net debt
+    td = total_debt or 0
+    tc = total_cash or 0
+    net_debt = td - tc
+
+    # Net debt / EBITDA
+    if ebitda and ebitda > 0:
+        net_debt_ebitda = round(net_debt / ebitda, 2)
+    else:
+        net_debt_ebitda = None
+
+    # Buyback yield: requires valid mc
+    buyback_yield = None
+    if mc and mc > 100e6:
+        try:
+            cf = ticker.cashflow
+            if cf is not None and not cf.empty and 'Repurchase Of Capital Stock' in cf.index:
+                buyback = abs(float(cf.loc['Repurchase Of Capital Stock'].iloc[0] or 0))
+                raw_bb = buyback / mc * 100
+                buyback_yield = round(raw_bb, 2) if raw_bb <= 25 else None
+        except Exception:
+            buyback_yield = None
+
+    # Debt/equity
+    de_raw = _safe_num(info.get('debtToEquity'), min_val=0)
+    debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
 
     result = {
         'revenue_ttm': revenue,
-        'revenue_growth': (info.get('revenueGrowth', 0) or 0) * 100,
-        'earnings_growth': (info.get('earningsGrowth', 0) or 0) * 100,
+        'revenue_growth': _safe_pct(info.get('revenueGrowth')),
+        'earnings_growth': _safe_pct(info.get('earningsGrowth')),
         'net_income_ttm': net_income,
         'ebitda': ebitda,
-        'gross_margin': (info.get('grossMargins', 0) or 0) * 100,
-        'operating_margin': (info.get('operatingMargins', 0) or 0) * 100,
-        'net_margin': (info.get('profitMargins', 0) or 0) * 100,
-        'ebitda_margin': (info.get('ebitdaMargins', 0) or 0) * 100,
-        'roe': (info.get('returnOnEquity', 0) or 0) * 100,
-        'roa': (info.get('returnOnAssets', 0) or 0) * 100,
+        'gross_margin': _safe_pct(info.get('grossMargins')),
+        'operating_margin': _safe_pct(info.get('operatingMargins')),
+        'net_margin': _safe_pct(info.get('profitMargins')),
+        'ebitda_margin': _safe_pct(info.get('ebitdaMargins')),
+        'roe': _safe_pct(info.get('returnOnEquity')),
+        'roa': _safe_pct(info.get('returnOnAssets')),
         'free_cash_flow': fcf,
-        'fcf_yield': (fcf / mc * 100) if mc > 0 else 0,
+        'fcf_yield': fcf_yield,
         'total_debt': total_debt,
         'total_cash': total_cash,
-        'net_debt': total_debt - total_cash,
-        'net_debt_ebitda': (total_debt - total_cash) / ebitda if ebitda > 0 else 0,
-        'debt_equity': (info.get('debtToEquity', 0) or 0) / 100,
-        'current_ratio': info.get('currentRatio', 0) or 0,
-        'interest_coverage': round(interest_coverage, 1),
+        'net_debt': net_debt,
+        'net_debt_ebitda': net_debt_ebitda,
+        'debt_equity': debt_equity,
+        'current_ratio': _safe_num(info.get('currentRatio'), min_val=0),
+        'interest_coverage': interest_coverage,
         'dividend_yield': _sanitize_yield(info, price),
         'payout_ratio': _sanitize_payout(info),
-        'buyback_yield': round(buyback_yield, 2),
-        'trailing_pe': info.get('trailingPE', 0) or 0,
-        'forward_pe': info.get('forwardPE', 0) or 0,
-        'peg_ratio': info.get('pegRatio') or None,
-        'price_to_book': info.get('priceToBook', 0) or 0,
-        'price_to_sales': info.get('priceToSalesTrailing12Months', 0) or 0,
-        'ev_ebitda': info.get('enterpriseToEbitda', 0) or 0,
-        'ev_revenue': info.get('enterpriseToRevenue', 0) or 0,
-        'trailing_eps': info.get('trailingEps', 0) or 0,
-        'forward_eps': info.get('forwardEps', 0) or 0,
-        'revenue_per_share': info.get('revenuePerShare', 0) or 0,
-        'book_value': info.get('bookValue', 0) or 0,
+        'buyback_yield': buyback_yield,
+        'trailing_pe': _safe_num(info.get('trailingPE'), min_val=0),
+        'forward_pe': _safe_num(info.get('forwardPE'), min_val=0),
+        'peg_ratio': _safe_num(info.get('pegRatio'), min_val=0),
+        'price_to_book': _safe_num(info.get('priceToBook'), min_val=0),
+        'price_to_sales': _safe_num(info.get('priceToSalesTrailing12Months'), min_val=0),
+        'ev_ebitda': _safe_num(info.get('enterpriseToEbitda'), min_val=0),
+        'ev_revenue': _safe_num(info.get('enterpriseToRevenue'), min_val=0),
+        'trailing_eps': _safe_num(info.get('trailingEps')),
+        'forward_eps': _safe_num(info.get('forwardEps')),
+        'revenue_per_share': _safe_num(info.get('revenuePerShare'), min_val=0),
+        'book_value': _safe_num(info.get('bookValue')),
         'shares_outstanding': shares,
         'market_cap': mc,
-        'target_mean': info.get('targetMeanPrice', 0) or 0,
-        'target_high': info.get('targetHighPrice', 0) or 0,
-        'target_low': info.get('targetLowPrice', 0) or 0,
-        'num_analysts': info.get('numberOfAnalystOpinions', 0) or 0,
+        'target_mean': _safe_num(info.get('targetMeanPrice'), min_val=0),
+        'target_high': _safe_num(info.get('targetHighPrice'), min_val=0),
+        'target_low': _safe_num(info.get('targetLowPrice'), min_val=0),
+        'num_analysts': _safe_num(info.get('numberOfAnalystOpinions'), min_val=0) or 0,
         'recommendation': info.get('recommendationKey', 'none'),
+        # Data integrity fields
+        '_data_status': data_status,
+        '_data_reasons': data_reasons,
     }
 
     return _validate_financials(result, info, price)
@@ -1147,18 +1258,24 @@ def _build_institutional(info):
 
 def _build_dcf(info, financials):
     """Simplified DCF fair value estimate with fallback cash flow proxies."""
+    _disabled = {'bear': 0, 'base': 0, 'bull': 0, '_dcf_disabled': True}
     try:
-        mc = info.get('marketCap', 0) or 0
-        price = resolve_price(info)
-        revenue = financials.get('revenue_ttm', 0)
-        fcf = financials.get('free_cash_flow', 0)
-        net_income = financials.get('net_income_ttm', 0)
-        ebitda = financials.get('ebitda', 0)
-        rev_growth = financials.get('revenue_growth', 5) / 100  # As decimal
-        shares = mc / price if price > 0 else 1
+        # Gate: refuse to run DCF on INVALID fundamentals
+        if financials.get('_data_status') == 'INVALID':
+            _disabled['_dcf_reason'] = 'fundamentals_invalid'
+            return _disabled
 
-        if revenue <= 0 or shares <= 0:
-            return {'bear': 0, 'base': 0, 'bull': 0}
+        revenue = financials.get('revenue_ttm')
+        shares = financials.get('shares_outstanding')
+        fcf = financials.get('free_cash_flow') or 0
+        net_income = financials.get('net_income_ttm') or 0
+        ebitda = financials.get('ebitda') or 0
+        rg_pct = financials.get('revenue_growth')
+        rev_growth = (rg_pct / 100) if rg_pct is not None else 0.05
+
+        if not revenue or revenue <= 0 or not shares or shares <= 0:
+            _disabled['_dcf_reason'] = 'missing_revenue_or_shares'
+            return _disabled
 
         # Cash flow proxy: FCF → Net Income (75% haircut) → EBITDA (50% haircut)
         cash_flow_source = 'fcf'
@@ -1170,7 +1287,8 @@ def _build_dcf(info, financials):
             cash_proxy = ebitda * 0.50  # Conservative EBITDA-to-FCF conversion
             cash_flow_source = 'ebitda'
         if cash_proxy <= 0:
-            return {'bear': 0, 'base': 0, 'bull': 0}
+            _disabled['_dcf_reason'] = 'no_positive_cash_flow'
+            return _disabled
 
         fcf_margin = cash_proxy / revenue
 
@@ -1180,7 +1298,7 @@ def _build_dcf(info, financials):
         erp = 0.05         # equity risk premium
         cost_of_equity = risk_free + beta * erp
 
-        de = financials.get('debt_equity', 0)
+        de = financials.get('debt_equity') or 0
         if de > 0:
             debt_weight = de / (1 + de)
             equity_weight = 1 - debt_weight
@@ -1219,9 +1337,9 @@ def _build_dcf(info, financials):
         terminal_pct = tv_pv / pv * 100 if pv > 0 else 0
 
         # EV-to-Equity bridge: subtract net debt from enterprise value
-        net_debt = financials.get('net_debt', 0)
+        net_debt = financials.get('net_debt') or 0
         equity_value = max(0, pv - net_debt)
-        base_fv = equity_value / shares if shares > 0 else 0
+        base_fv = equity_value / shares
 
         # Widen bear/bull range when using proxy cash flows
         bear_mult = 0.70 if cash_flow_source != 'fcf' else 0.80
@@ -1243,8 +1361,9 @@ def _build_dcf(info, financials):
                 'net_debt_subtracted': round(net_debt, 0),
             },
         }
-    except Exception:
-        return {'bear': 0, 'base': 0, 'bull': 0}
+    except Exception as e:
+        _disabled['_dcf_reason'] = f'exception: {str(e)[:80]}'
+        return _disabled
 
 
 # ============================================================================

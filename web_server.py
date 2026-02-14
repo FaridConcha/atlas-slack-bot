@@ -296,6 +296,11 @@ var dc = S.data_confidence;
 var mode = S.execution_mode||'N/A';
 var verdict = V9.v9_decision||S.verdict||'N/A';
 var name = D.company_name||CO.name||D.symbol;
+var _dataStatus = FIN._data_status||'OK';
+var _dataReasons = FIN._data_reasons||[];
+var _dcfDisabled = (DCF&&DCF._dcf_disabled)||false;
+// Helper: check if a value is valid (not null/undefined/NaN)
+function isVal(v){return v!=null&&!isNaN(v)&&v!==0}
 
 // ── Build HTML ──────────────────────────────────────
 var h = '';
@@ -335,6 +340,18 @@ h += '</div>';
 // ════════════════════════════════════════════════════
 if(V9.v9_decision){
   h += '<div class="section-label">V10 Owner Assessment</div>';
+  // Data integrity banner
+  if(_dataStatus==='INVALID'){
+    h += '<div class="card" style="border-color:var(--neg);border-width:2px;background:rgba(248,81,73,0.08);padding:12px;margin-bottom:8px">';
+    h += '<span style="color:var(--neg);font-weight:700;font-size:13px">\u26A0 FUNDAMENTALS UNAVAILABLE</span>';
+    h += '<div style="font-size:11px;color:var(--t2);margin-top:4px">Core financial data is missing or invalid ('+_dataReasons.join(', ')+').<br>Scores, valuations, and narrative are suppressed. Treat this report as directional only.</div>';
+    h += '</div>';
+  } else if(_dataStatus==='DEGRADED'){
+    h += '<div class="card" style="border-color:var(--warn);border-width:1px;background:rgba(210,153,34,0.06);padding:10px;margin-bottom:8px">';
+    h += '<span style="color:var(--warn);font-weight:600;font-size:12px">\u26A0 DATA INTEGRITY: DEGRADED</span>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:3px">Some metrics are missing or estimated'+((_dataReasons.length>0)?' ('+_dataReasons.slice(0,2).join(', ')+')':'')+'. Results may have reduced accuracy.</div>';
+    h += '</div>';
+  }
   h += '<div class="card" style="border-color:var(--acc);border-width:1px">';
   h += '<div class="g2" style="align-items:start">';
 
@@ -482,6 +499,18 @@ if(V9.v9_decision){
   }
   h += '<div class="memo">';
 
+  // ── GATE: If fundamentals INVALID, render minimal memo ──
+  if(_dataStatus==='INVALID'){
+    h += '<div style="text-align:center;padding:24px 0;color:var(--t3)">';
+    h += '<div style="font-size:18px;margin-bottom:8px">\u26A0</div>';
+    h += '<div style="font-size:13px;font-weight:600">Memorandum Suppressed</div>';
+    h += '<div style="font-size:11px;margin-top:4px">Core financial data is unavailable. The deterministic narrative cannot be generated without validated fundamentals.<br>';
+    h += 'Reasons: <span class="mono">'+_dataReasons.join(', ')+'</span></div>';
+    h += '</div>'; // close centered text
+    h += '</div>'; // close .memo
+    h += '</div>'; // close border-top wrapper
+  } else {
+
   // ── 1. BUSINESS OVERVIEW & ECONOMIC CHARACTER ──
   h += '<div class="memo-hdr">I. Business Overview &amp; Economic Character</div>';
   var _sector = CO.sector||'';
@@ -607,7 +636,7 @@ if(V9.v9_decision){
     h += '<p>Intrinsic value could not be computed for this security. Without a quantitative anchor for value, no margin of safety can be established, and the default posture is to refrain from capital commitment.</p>';
   }
 
-  if(DCF && DCF.assumptions){
+  if(DCF && DCF.assumptions && !_dcfDisabled){
     var _da = DCF.assumptions;
     h += '<p>The DCF model assumes a discount rate of <span class="mono hl">'+f(_da.discount_rate)+'%</span> and terminal growth of <span class="mono hl">'+f(_da.terminal_growth)+'%</span>. ';
     h += 'Valuation is highly sensitive to these inputs. A one-percentage-point increase in WACC reduces fair value by approximately 15\u201320%, while terminal growth assumptions compound indefinitely. ';
@@ -747,6 +776,7 @@ if(V9.v9_decision){
 
   h += '</div>'; // end .memo
   h += '</div>'; // end narrative border-top wrapper
+  } // end else (non-INVALID data gate)
 
   // Preserve LLM-generated narrative as collapsible reference (if available)
   var nar = V9.v9_narrative||'';
@@ -838,7 +868,11 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
     }
   }
 } else {
-  h += '<div class="empty">DCF not available for this ticker</div>';
+  if(_dcfDisabled && DCF && DCF._dcf_reason){
+    h += '<div class="empty" style="color:var(--warn)">\u26A0 DCF suppressed: '+DCF._dcf_reason.replace(/_/g,' ')+'</div>';
+  } else {
+    h += '<div class="empty">DCF not available for this ticker</div>';
+  }
 }
 h += '</div>';
 

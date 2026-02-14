@@ -14,6 +14,11 @@ Design: Dense data in tables, natural language in narratives, everything in cont
 from datetime import datetime
 
 
+def _n(val, default=0):
+    """None-safe numeric: return val if not None, else default. For scoring math."""
+    return val if val is not None else default
+
+
 # ============================================================================
 # FORMATTING HELPERS
 # ============================================================================
@@ -73,6 +78,7 @@ def _compute_v8_scores(summary, v8_data):
     news = v8_data.get('news', [])
     inst = v8_data.get('institutional', {})
     earnings = v8_data.get('earnings', [])
+    data_status = fin.get('_data_status', 'OK')
 
     # 1. Signal Strength (from engine)
     c_raw = summary.get('composite_raw', 0)
@@ -82,52 +88,57 @@ def _compute_v8_scores(summary, v8_data):
     signal = signal * min(1.3, 0.7 + tq * 2)
     signal = max(0, min(100, signal))
 
-    # 2. Fundamental Score
-    fundamental = 50
-    rg = fin.get('revenue_growth', 0)
-    if rg > 15:
-        fundamental += 15
-    elif rg > 5:
-        fundamental += 8
-    elif rg > 0:
-        fundamental += 3
-    elif rg < -5:
-        fundamental -= 15
+    # 2. Fundamental Score — gated on data availability
+    if data_status == 'INVALID':
+        fundamental = None  # Cannot compute
     else:
-        fundamental -= 5
-
-    nm = fin.get('net_margin', 0)
-    if nm > 25:
-        fundamental += 12
-    elif nm > 15:
-        fundamental += 6
-    elif nm > 5:
-        fundamental += 2
-    elif nm < 0:
-        fundamental -= 15
-
-    roe = fin.get('roe', 0)
-    if roe > 25:
-        fundamental += 10
-    elif roe > 15:
-        fundamental += 5
-    elif roe < 5:
-        fundamental -= 5
-
-    if fin.get('free_cash_flow', 0) > 0:
-        fundamental += 5
-    else:
-        fundamental -= 8
-
-    if earnings:
-        beat_rate = sum(1 for e in earnings if e.get('beat', False)) / len(earnings)
-        if beat_rate > 0.75:
+        fundamental = 50
+        rg = _n(fin.get('revenue_growth'))
+        if rg > 15:
+            fundamental += 15
+        elif rg > 5:
             fundamental += 8
-        elif beat_rate > 0.50:
-            fundamental += 4
-        elif beat_rate < 0.25:
-            fundamental -= 10
-    fundamental = max(0, min(100, fundamental))
+        elif rg > 0:
+            fundamental += 3
+        elif rg < -5:
+            fundamental -= 15
+        else:
+            fundamental -= 5
+
+        nm = _n(fin.get('net_margin'))
+        if nm > 25:
+            fundamental += 12
+        elif nm > 15:
+            fundamental += 6
+        elif nm > 5:
+            fundamental += 2
+        elif nm < 0:
+            fundamental -= 15
+
+        roe = _n(fin.get('roe'))
+        if roe > 25:
+            fundamental += 10
+        elif roe > 15:
+            fundamental += 5
+        elif roe < 5:
+            fundamental -= 5
+
+        fcf_val = _n(fin.get('free_cash_flow'))
+        if fcf_val > 0:
+            fundamental += 5
+        elif fin.get('free_cash_flow') is not None:
+            fundamental -= 8
+        # If FCF is None (missing), don't penalize — data absent
+
+        if earnings:
+            beat_rate = sum(1 for e in earnings if e.get('beat', False)) / len(earnings)
+            if beat_rate > 0.75:
+                fundamental += 8
+            elif beat_rate > 0.50:
+                fundamental += 4
+            elif beat_rate < 0.25:
+                fundamental -= 10
+        fundamental = max(0, min(100, fundamental))
 
     # 3. Technical Score
     b = tech.get('bullish_count', 0)
@@ -198,21 +209,29 @@ def _compute_v8_scores(summary, v8_data):
     risk -= summary.get('risk_tactical', 0) * 15
     risk = max(0, min(100, risk))
 
-    # Composite
-    composite = round(
-        signal * 0.30 + fundamental * 0.25 + technical * 0.15 +
-        sentiment * 0.10 + macro * 0.10 + risk * 0.10
-    )
+    # Composite — if fundamental is None (INVALID data), exclude it and reweight
+    if fundamental is not None:
+        composite = round(
+            signal * 0.30 + fundamental * 0.25 + technical * 0.15 +
+            sentiment * 0.10 + macro * 0.10 + risk * 0.10
+        )
+    else:
+        # Reweight without fundamental (0.25 redistributed)
+        composite = round(
+            signal * 0.40 + technical * 0.20 +
+            sentiment * 0.13 + macro * 0.13 + risk * 0.14
+        )
     composite = max(0, min(100, composite))
 
     return {
         'signal': round(signal),
-        'fundamental': round(fundamental),
+        'fundamental': round(fundamental) if fundamental is not None else None,
         'technical': round(technical),
         'sentiment': round(sentiment),
         'macro': round(macro),
         'risk': round(risk),
         'composite': composite,
+        '_data_status': data_status,
     }
 
 
@@ -254,10 +273,34 @@ def _compute_v9_owner_scores(summary, v8_data):
     inst = v8_data.get('institutional', {})
     earnings = v8_data.get('earnings', [])
     price = co.get('price', 0)
+    data_status = fin.get('_data_status', 'OK')
+
+    # --- GATE: If fundamentals INVALID, return degraded assessment ---
+    if data_status == 'INVALID':
+        data_reasons = fin.get('_data_reasons', [])
+        return {
+            'business_quality': 0,
+            'moat_durability': 0,
+            'capital_allocation': 0,
+            'mos_pct': 0,
+            'mos_price_based': 0,
+            'intrinsic_value_base': 0,
+            'intrinsic_value_bear': 0,
+            'intrinsic_value_bull': 0,
+            'v9_decision': 'RESEARCH',
+            'decision_reason': f"Fundamental data unavailable ({', '.join(data_reasons[:3])}). Cannot assess.",
+            'required_mos': 0.45,
+            'required_price': 0,
+            'business_type': 'Unknown',
+            'conviction': 0,
+            'permanent_loss_risks': [("Data integrity failure", "High",
+                "Core financial data missing or invalid — analysis suppressed")],
+            '_data_status': data_status,
+        }
 
     # --- Business Quality Score (0-5) ---
     bq = 0.0
-    roe = fin.get('roe', 0)
+    roe = _n(fin.get('roe'))
     if roe > 25:
         bq += 1.2
     elif roe > 15:
@@ -265,7 +308,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     elif roe > 10:
         bq += 0.4
 
-    nm = fin.get('net_margin', 0)
+    nm = _n(fin.get('net_margin'))
     if nm > 20:
         bq += 1.0
     elif nm > 12:
@@ -273,7 +316,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     elif nm > 5:
         bq += 0.3
 
-    rg = fin.get('revenue_growth', 0)
+    rg = _n(fin.get('revenue_growth'))
     if rg > 10:
         bq += 0.8
     elif rg > 3:
@@ -283,16 +326,17 @@ def _compute_v9_owner_scores(summary, v8_data):
     elif rg < -5:
         bq -= 0.5
 
-    fcf = fin.get('free_cash_flow', 0)
+    fcf = _n(fin.get('free_cash_flow'))
     if fcf > 0:
         bq += 0.5
-        fcf_yield = fin.get('fcf_yield', 0)
+        fcf_yield = _n(fin.get('fcf_yield'))
         if fcf_yield > 5:
             bq += 0.3
-    else:
+    elif fin.get('free_cash_flow') is not None:
         bq -= 0.5
+    # If FCF is None (missing), don't penalize
 
-    de = fin.get('debt_equity', 0)
+    de = _n(fin.get('debt_equity'))
     if de < 0.5:
         bq += 0.5
     elif de < 1.0:
@@ -313,7 +357,7 @@ def _compute_v9_owner_scores(summary, v8_data):
 
     # --- Moat Durability Score (0-5) ---
     moat = 0.0
-    gm = fin.get('gross_margin', 0)
+    gm = _n(fin.get('gross_margin'))
     if gm > 50:
         moat += 1.5  # Strong pricing power
     elif gm > 35:
@@ -321,7 +365,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     elif gm > 20:
         moat += 0.4
 
-    om = fin.get('operating_margin', 0)
+    om = _n(fin.get('operating_margin'))
     if om > 25:
         moat += 1.0
     elif om > 15:
@@ -329,7 +373,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     elif om > 8:
         moat += 0.3
 
-    mc = fin.get('market_cap', 0) or co.get('market_cap', 0)
+    mc = _n(fin.get('market_cap')) or _n(co.get('market_cap')) or 0
     if mc > 200e9:
         moat += 0.8  # Scale advantage
     elif mc > 50e9:
@@ -340,7 +384,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     if roe > 20 and nm > 15:
         moat += 0.7  # Sustainable competitive advantage indicator
 
-    ic = fin.get('interest_coverage', 0)
+    ic = _n(fin.get('interest_coverage'))
     if ic > 15:
         moat += 0.5
     elif ic > 8:
@@ -362,8 +406,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         ca += 0.3
 
     # Buyback discipline
-    bb = fin.get('buyback_yield', 0)
-    fwd_pe = fin.get('forward_pe', 0)
+    bb = _n(fin.get('buyback_yield'))
+    fwd_pe = _n(fin.get('forward_pe'))
     if bb > 0:
         if fwd_pe > 0 and fwd_pe < 20:
             ca += 1.0  # Buying back at reasonable valuation
@@ -373,15 +417,15 @@ def _compute_v9_owner_scores(summary, v8_data):
             ca += 0.6
 
     # Dividend discipline
-    dy = fin.get('dividend_yield') or 0
-    pr = fin.get('payout_ratio') or 0
+    dy = _n(fin.get('dividend_yield'))
+    pr = _n(fin.get('payout_ratio'))
     if dy > 0 and pr > 0 and pr < 60:
         ca += 0.5  # Sustainable dividend
     elif pr > 90:
         ca -= 0.3  # Unsustainable payout
 
     # Debt discipline
-    nd_ebitda = fin.get('net_debt_ebitda', 0)
+    nd_ebitda = _n(fin.get('net_debt_ebitda'))
     if nd_ebitda < 1:
         ca += 0.8
     elif nd_ebitda < 2:
@@ -390,8 +434,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         ca -= 0.5
 
     # Conservative if large cash position
-    total_cash = fin.get('total_cash', 0)
-    total_debt = fin.get('total_debt', 0)
+    total_cash = _n(fin.get('total_cash'))
+    total_debt = _n(fin.get('total_debt'))
     if total_cash > total_debt:
         ca += 0.5
 
@@ -409,7 +453,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         required_mos = 0.45
 
     # --- Margin of Safety ---
-    base_iv = dcf.get('base', 0)
+    dcf_disabled = dcf.get('_dcf_disabled', False)
+    base_iv = dcf.get('base', 0) if not dcf_disabled else 0
     if base_iv > 0 and price > 0:
         mos_pct = round((base_iv - price) / base_iv * 100, 1)
     else:
@@ -500,8 +545,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         'mos_pct': mos_pct,
         'mos_price_based': mos_price_based,
         'intrinsic_value_base': base_iv,
-        'intrinsic_value_bear': dcf.get('bear', 0),
-        'intrinsic_value_bull': dcf.get('bull', 0),
+        'intrinsic_value_bear': dcf.get('bear', 0) if not dcf_disabled else 0,
+        'intrinsic_value_bull': dcf.get('bull', 0) if not dcf_disabled else 0,
         'v9_decision': v9_decision,
         'decision_reason': decision_reason,
         'required_mos': required_mos,
@@ -509,6 +554,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         'business_type': business_type,
         'conviction': conviction,
         'permanent_loss_risks': perm_risks[:5],
+        '_data_status': data_status,
+        '_dcf_disabled': dcf_disabled,
     }
 
 
@@ -533,6 +580,7 @@ def _section_owner_assessment(summary, v8_data):
     now = datetime.now().strftime('%b %d, %Y %I:%M %p ET')
 
     decision = v9['v9_decision']
+    data_status = v9.get('_data_status', 'OK')
     dec_emoji = {
         'BUY': ':white_check_mark:', 'HOLD': ':pause_button:',
         'WATCH': ':eyes:', 'RESEARCH': ':mag:', 'PASS': ':no_entry_sign:',
@@ -548,6 +596,21 @@ def _section_owner_assessment(summary, v8_data):
         f"{'=' * 52}\n"
         f"```\n"
     )
+
+    # Data integrity warning
+    data_warning = ""
+    if data_status == 'INVALID':
+        data_warning = (
+            ":warning: *DATA INTEGRITY: INVALID* — Core financial data is missing or anomalous. "
+            "Scores and valuations are suppressed. Treat this report as directional only.\n\n"
+        )
+    elif data_status == 'DEGRADED':
+        reasons = fin.get('_data_reasons', [])
+        data_warning = (
+            ":warning: *DATA INTEGRITY: DEGRADED* — Some metrics are missing or estimated"
+            + (f" ({', '.join(reasons[:2])})" if reasons else "")
+            + ". Results may have reduced accuracy.\n\n"
+        )
 
     # Scorecard
     iv = v9['intrinsic_value_base']
@@ -655,6 +718,7 @@ def _section_owner_assessment(summary, v8_data):
 
     parts = [
         header,
+        data_warning,
         scorecard,
         decision_block,
         "\n*Why:*",
@@ -707,15 +771,19 @@ def _build_v8_narrative(summary, v8_data, scores):
     s1 += f" in a {vol_desc} vol environment."
 
     # Fundamentals
-    rg = fin.get('revenue_growth', 0)
-    nm = fin.get('net_margin', 0)
-    fcf = fin.get('free_cash_flow', 0)
-    grade = "strong" if scores['fundamental'] >= 70 else "solid" if scores['fundamental'] >= 55 else "mixed" if scores['fundamental'] >= 40 else "weak"
-    fcf_str = f", generating {_fmt_mc(fcf)} in FCF" if fcf > 0 else ""
-    s2 = f"Fundamentals are {grade} with {_fmt_pct(rg, plus=True)} revenue growth, {_fmt_pct(nm)} net margins{fcf_str}."
+    rg = _n(fin.get('revenue_growth'))
+    nm = _n(fin.get('net_margin'))
+    fcf = _n(fin.get('free_cash_flow'))
+    fund_score = scores.get('fundamental')
+    if fund_score is not None:
+        grade = "strong" if fund_score >= 70 else "solid" if fund_score >= 55 else "mixed" if fund_score >= 40 else "weak"
+        fcf_str = f", generating {_fmt_mc(fcf)} in FCF" if fcf > 0 else ""
+        s2 = f"Fundamentals are {grade} with {_fmt_pct(rg, plus=True)} revenue growth, {_fmt_pct(nm)} net margins{fcf_str}."
+    else:
+        s2 = "Fundamental data is unavailable — quantitative assessment suppressed."
 
     # Main risk
-    fwd_pe = fin.get('forward_pe', 0)
+    fwd_pe = _n(fin.get('forward_pe'))
     if fwd_pe > 28:
         s3 = f"Key risk: valuation at {fwd_pe:.1f}x forward leaves little room for disappointment."
     elif fwd_pe > 0 and fwd_pe < 12:
@@ -763,10 +831,12 @@ def _section_verdict(summary, v8_data):
         f"```\n"
     )
 
+    fund_val = scores['fundamental']
+    fund_line = f"Fundamental      {_score_bar(fund_val)}  {fund_val:>3}" if fund_val is not None else "Fundamental      [DATA N/A]     N/A"
     breakdown = (
         f"```\n"
         f"Signal Strength  {_score_bar(scores['signal'])}  {scores['signal']:>3}\n"
-        f"Fundamental      {_score_bar(scores['fundamental'])}  {scores['fundamental']:>3}\n"
+        f"{fund_line}\n"
         f"Technical        {_score_bar(scores['technical'])}  {scores['technical']:>3}\n"
         f"Sentiment        {_score_bar(scores['sentiment'])}  {scores['sentiment']:>3}\n"
         f"Macro Backdrop   {_score_bar(scores['macro'])}  {scores['macro']:>3}\n"
@@ -848,8 +918,8 @@ def _section_balance_sheet(v8_data):
     co = v8_data.get('company', {})
     symbol = co.get('symbol', '???')
 
-    total_debt = fin.get('total_debt', 0)
-    total_cash = fin.get('total_cash', 0)
+    total_debt = fin.get('total_debt')
+    total_cash = fin.get('total_cash')
     net_debt = fin.get('net_debt', 0)
 
     lines = [
@@ -860,22 +930,22 @@ def _section_balance_sheet(v8_data):
         f"{'Total Cash & Equiv:':<22} {_fmt_mc(total_cash):>15}",
         f"{'Total Debt:':<22} {_fmt_mc(total_debt):>15}",
         f"{'Net Debt:':<22} {_fmt_mc(net_debt):>15}",
-        f"{'Net Debt/EBITDA:':<22} {fin.get('net_debt_ebitda', 0):>14.2f}x",
-        f"{'Interest Coverage:':<22} {fin.get('interest_coverage', 0):>14.1f}x",
-        f"{'Debt/Equity:':<22} {fin.get('debt_equity', 0):>14.2f}x",
-        f"{'Current Ratio:':<22} {fin.get('current_ratio', 0):>14.2f}x",
+        f"{'Net Debt/EBITDA:':<22} {_fmt_x(fin.get('net_debt_ebitda')):>15}",
+        f"{'Interest Coverage:':<22} {_fmt_x(fin.get('interest_coverage')):>15}",
+        f"{'Debt/Equity:':<22} {_fmt_x(fin.get('debt_equity')):>15}",
+        f"{'Current Ratio:':<22} {_fmt_x(fin.get('current_ratio')):>15}",
         "",
         "CAPITAL RETURN",
         "-" * 40,
-        f"{'Dividend Yield:':<22} {_fmt_pct(fin.get('dividend_yield', 0)):>15}",
-        f"{'Payout Ratio:':<22} {_fmt_pct(fin.get('payout_ratio', 0)):>15}",
-        f"{'Buyback Yield:':<22} {_fmt_pct(fin.get('buyback_yield', 0)):>15}",
+        f"{'Dividend Yield:':<22} {_fmt_pct(fin.get('dividend_yield')):>15}",
+        f"{'Payout Ratio:':<22} {_fmt_pct(fin.get('payout_ratio')):>15}",
+        f"{'Buyback Yield:':<22} {_fmt_pct(fin.get('buyback_yield')):>15}",
         "```",
     ]
 
     # Narrative
-    nd_ebitda = fin.get('net_debt_ebitda', 0)
-    ic = fin.get('interest_coverage', 0)
+    nd_ebitda = _n(fin.get('net_debt_ebitda'))
+    ic = _n(fin.get('interest_coverage'))
 
     if nd_ebitda < 1 and ic > 10:
         health = "Balance sheet is strong"
@@ -931,8 +1001,8 @@ def _section_valuation(summary, v8_data):
         "```",
     ]
 
-    # DCF
-    if dcf.get('base', 0) > 0:
+    # DCF — skip if disabled
+    if not dcf.get('_dcf_disabled') and dcf.get('base', 0) > 0:
         bear_fv = dcf['bear']
         base_fv = dcf['base']
         bull_fv = dcf['bull']
@@ -957,9 +1027,9 @@ def _section_valuation(summary, v8_data):
         lines.append("```")
 
     # Analyst targets
-    target = fin.get('target_mean', 0)
-    t_high = fin.get('target_high', 0)
-    t_low = fin.get('target_low', 0)
+    target = _n(fin.get('target_mean'))
+    t_high = _n(fin.get('target_high'))
+    t_low = _n(fin.get('target_low'))
     if target > 0:
         upside = (target / price - 1) * 100 if price > 0 else 0
         lines.append("")
@@ -970,7 +1040,7 @@ def _section_valuation(summary, v8_data):
         )
 
     # Narrative
-    fwd_pe = fin.get('forward_pe', 0)
+    fwd_pe = _n(fin.get('forward_pe'))
     if fwd_pe > 30:
         val_grade = "PREMIUM"
         val_note = "trading well above typical multiples — priced for perfection"
@@ -1091,11 +1161,11 @@ def _section_competitive(v8_data):
         'symbol': symbol,
         'name': co.get('name', symbol)[:12],
         'price': co.get('price', 0),
-        'market_cap': fin.get('market_cap', 0),
-        'revenue_growth': fin.get('revenue_growth', 0),
-        'profit_margin': fin.get('net_margin', 0),
-        'forward_pe': fin.get('forward_pe', 0),
-        'roe': fin.get('roe', 0),
+        'market_cap': fin.get('market_cap'),
+        'revenue_growth': fin.get('revenue_growth'),
+        'profit_margin': fin.get('net_margin'),
+        'forward_pe': fin.get('forward_pe'),
+        'roe': fin.get('roe'),
     }
 
     all_companies = [target_row] + peers
@@ -1125,9 +1195,9 @@ def _section_competitive(v8_data):
     lines.append("```")
 
     # Competitive position
-    rev_rank = sorted(all_companies, key=lambda x: x.get('revenue_growth', 0), reverse=True)
-    margin_rank = sorted(all_companies, key=lambda x: x.get('profit_margin', 0), reverse=True)
-    pe_rank = sorted(all_companies, key=lambda x: x.get('forward_pe', 0) if x.get('forward_pe', 0) > 0 else 999)
+    rev_rank = sorted(all_companies, key=lambda x: _n(x.get('revenue_growth')), reverse=True)
+    margin_rank = sorted(all_companies, key=lambda x: _n(x.get('profit_margin')), reverse=True)
+    pe_rank = sorted(all_companies, key=lambda x: _n(x.get('forward_pe')) if _n(x.get('forward_pe')) > 0 else 999)
 
     rev_pos = next((i + 1 for i, c in enumerate(rev_rank) if c['symbol'] == symbol), 0)
     margin_pos = next((i + 1 for i, c in enumerate(margin_rank) if c['symbol'] == symbol), 0)
@@ -1156,10 +1226,10 @@ def _section_sentiment(v8_data):
     price = co.get('price', 0)
 
     rec = fin.get('recommendation', 'none')
-    n_analysts = fin.get('num_analysts', 0)
-    target = fin.get('target_mean', 0)
-    t_high = fin.get('target_high', 0)
-    t_low = fin.get('target_low', 0)
+    n_analysts = _n(fin.get('num_analysts'))
+    target = _n(fin.get('target_mean'))
+    t_high = _n(fin.get('target_high'))
+    t_low = _n(fin.get('target_low'))
     upside = (target / price - 1) * 100 if price > 0 and target > 0 else 0
 
     lines = [
@@ -1263,17 +1333,17 @@ def _generate_risks(summary, v8_data):
     tech = v8_data.get('technicals', {})
     risks = []
 
-    fwd_pe = fin.get('forward_pe', 0)
+    fwd_pe = _n(fin.get('forward_pe'))
     if fwd_pe > 25:
         risks.append(('Valuation Compression', 'Medium' if fwd_pe < 35 else 'High', 'High',
                        f"At {fwd_pe:.0f}x forward, any growth miss triggers P/E contraction"))
 
-    rg = fin.get('revenue_growth', 0)
-    if rg < 3:
+    rg = _n(fin.get('revenue_growth'))
+    if rg < 3 and fin.get('revenue_growth') is not None:
         risks.append(('Revenue Stagnation', 'Medium', 'High',
                        f"Growth at {rg:.1f}% is below market expectations"))
 
-    de = fin.get('debt_equity', 0)
+    de = _n(fin.get('debt_equity'))
     if de > 2:
         risks.append(('Leverage Risk', 'Low', 'High',
                        f"Debt/equity of {de:.1f}x exposes the company in a downturn"))
@@ -1283,8 +1353,8 @@ def _generate_risks(summary, v8_data):
         risks.append(('Volatility Risk', 'Medium', 'Medium',
                        f"VIX at {vix:.1f} signals elevated uncertainty"))
 
-    nm = fin.get('net_margin', 0)
-    eg = fin.get('earnings_growth', 0)
+    nm = _n(fin.get('net_margin'))
+    eg = _n(fin.get('earnings_growth'))
     if eg < 0 and nm > 0:
         risks.append(('Margin Pressure', 'Medium', 'Medium',
                        f"Earnings declining {eg:.1f}% despite positive margins"))
@@ -1312,7 +1382,7 @@ def _generate_catalysts(summary, v8_data):
     earnings = v8_data.get('earnings', [])
     catalysts = []
 
-    rg = fin.get('revenue_growth', 0)
+    rg = _n(fin.get('revenue_growth'))
     if rg > 10:
         catalysts.append(('Revenue Acceleration', 'Medium', 'HIGH',
                           f"Growing at {rg:.1f}% — above-market growth drives re-rating"))
@@ -1328,19 +1398,19 @@ def _generate_catalysts(summary, v8_data):
         catalysts.append(('Analyst Momentum', 'High', 'MEDIUM',
                           f"Consensus is {rec.replace('_', ' ')} — positive revision cycle"))
 
-    bb = fin.get('buyback_yield') or 0
-    dy = fin.get('dividend_yield') or 0
+    bb = _n(fin.get('buyback_yield'))
+    dy = _n(fin.get('dividend_yield'))
     if bb + dy > 2:
         catalysts.append(('Capital Return', 'Very High', 'MEDIUM',
                           f"{_fmt_pct(bb + dy)} total yield — structural EPS support"))
 
-    nm = fin.get('net_margin', 0)
-    om = fin.get('operating_margin', 0)
+    nm = _n(fin.get('net_margin'))
+    om = _n(fin.get('operating_margin'))
     if om > 20 and nm > 15:
         catalysts.append(('Margin Strength', 'High', 'MEDIUM',
                           f"Operating at {om:.1f}% margin — pricing power intact"))
 
-    fcf = fin.get('free_cash_flow', 0)
+    fcf = _n(fin.get('free_cash_flow'))
     if fcf > 0:
         catalysts.append(('Cash Generation', 'High', 'MEDIUM',
                           f"Generating {_fmt_mc(fcf)} in FCF — funds growth and returns"))
