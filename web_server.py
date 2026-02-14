@@ -1085,52 +1085,201 @@ if(INST.institutional_pct||INST.short_pct){
 h += '<div class="section-label">Risk &amp; Macro Context</div>';
 
 h += '<div class="card"><h2>Risk Analysis</h2>';
-h += '<div class="g2" style="align-items:start">';
-h += '<div>';
-h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Risk Metrics</div>';
 var sr = S.risk_structural||0;
 var tr = S.risk_tactical||0;
-h += '<div style="font-size:12px;line-height:2">';
-h += '<div>Structural Risk: <span class="mono '+(sr>0.5?'neg':sr>0.3?'warn':'pos')+'" style="font-weight:600">'+f(sr,3)+'</span></div>';
-h += '<div>Tactical Risk: <span class="mono '+(tr>0.5?'neg':tr>0.3?'warn':'pos')+'" style="font-weight:600">'+f(tr,3)+'</span></div>';
-h += '<div>Data Confidence: <span class="mono '+(dc>=70?'pos':dc>=40?'warn':'neg')+'" style="font-weight:600">'+f(dc,0)+'%</span></div>';
-h += '<div>Regime Reliability: <span class="mono" style="font-weight:600">'+f(rel,2)+'</span></div>';
-h += '</div>';
-h += '<div style="margin-top:12px">';
 var riskTotal = Math.min(1,(sr+tr)/2);
 var rC2 = riskTotal>0.5?'var(--neg)':riskTotal>0.3?'var(--warn)':'var(--pos)';
-h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;margin-bottom:4px">Combined Risk Level</div>';
-h += '<div style="height:10px;background:var(--bg2);border-radius:5px;overflow:hidden"><div style="width:'+(riskTotal*100)+'%;height:100%;background:'+rC2+';border-radius:5px;transition:width 0.5s"></div></div>';
-h += '<div class="mono" style="font-size:11px;color:'+rC2+';margin-top:2px">'+f(riskTotal*100,0)+'%</div>';
-h += '</div>';
-// Systemic Risk Dial
-h += '<div id="ch-risk-dial" style="height:140px;margin-top:12px"></div>';
-h += '</div>';
+
+// ── Top: Risk gauge + metrics side by side ──
+h += '<div class="g2" style="align-items:start">';
+
+// Left: Gauge + combined level
 h += '<div>';
-if(RISKS.length>0){
-  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Risk Drivers</div>';
-  for(var i=0;i<RISKS.length&&i<6;i++){
-    var rd = RISKS[i];
-    var rdName = typeof rd==='object'?(rd.name||rd.driver||JSON.stringify(rd)):String(rd);
-    var rdSev = typeof rd==='object'?(rd.severity||rd.impact||''):'';
-    var rdCls = rdSev.toUpperCase()==='HIGH'?'neg':rdSev.toUpperCase()==='MEDIUM'?'warn':'muted';
-    h += '<div style="font-size:12px;padding:3px 0">';
-    if(rdSev) h += '<span class="pill pill-'+rdCls+'" style="font-size:9px;margin-right:6px">'+rdSev+'</span>';
-    h += '<span>'+rdName+'</span></div>';
-  }
-}
-if(CONTRA.length>0){
-  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;margin-top:12px">Contradictions</div>';
-  for(var i=0;i<CONTRA.length&&i<4;i++){
-    var ct2 = typeof CONTRA[i]==='object'?(CONTRA[i].description||CONTRA[i].name||JSON.stringify(CONTRA[i])):String(CONTRA[i]);
-    h += '<div style="font-size:12px;padding:3px 0;color:var(--warn)">\u26A0 '+ct2+'</div>';
-  }
-}
-if(RISKS.length===0&&CONTRA.length===0){
-  h += '<div style="font-size:12px;color:var(--t3)">No significant risk drivers flagged by the engine.</div>';
-}
+h += '<div id="ch-risk-dial" style="height:150px"></div>';
+h += '<div style="text-align:center;margin-top:4px">';
+// Interpretation label
+if(riskTotal <= 0.15) h += '<span class="pill pill-pos" style="font-size:11px">Low Risk Environment</span>';
+else if(riskTotal <= 0.30) h += '<span class="pill pill-pos" style="font-size:11px">Below-Average Risk</span>';
+else if(riskTotal <= 0.50) h += '<span class="pill pill-warn" style="font-size:11px">Moderate Risk</span>';
+else if(riskTotal <= 0.70) h += '<span class="pill pill-warn" style="font-size:11px">Elevated Risk</span>';
+else h += '<span class="pill pill-neg" style="font-size:11px">High Systemic Risk</span>';
 h += '</div>';
+h += '</div>';
+
+// Right: Metric breakdown with interpretation
+h += '<div>';
+h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Engine Risk Metrics</div>';
+
+// Structural Risk
+h += '<div style="margin-bottom:10px">';
+h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+h += '<span style="font-size:12px">Structural Risk</span>';
+h += '<span class="mono '+(sr>0.5?'neg':sr>0.3?'warn':'pos')+'" style="font-size:13px;font-weight:600">'+f(sr,3)+'</span>';
+h += '</div>';
+h += '<div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-top:3px"><div style="width:'+Math.max(2,sr*100)+'%;height:100%;background:'+(sr>0.5?'var(--neg)':sr>0.3?'var(--warn)':'var(--pos)')+';border-radius:3px"></div></div>';
+h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+if(sr < 0.1) h += 'Macro environment benign. Credit, rates, and cross-asset correlations stable.';
+else if(sr < 0.3) h += 'Minor macro stress detected. Monitoring credit spreads and rate sensitivity.';
+else if(sr <= 0.5) h += 'Moderate structural stress. Credit or rate conditions showing pressure.';
+else h += 'High structural risk. Significant macro deterioration detected.';
 h += '</div></div>';
+
+// Tactical Risk
+h += '<div style="margin-bottom:10px">';
+h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+h += '<span style="font-size:12px">Tactical Risk</span>';
+h += '<span class="mono '+(tr>0.5?'neg':tr>0.3?'warn':'pos')+'" style="font-size:13px;font-weight:600">'+f(tr,3)+'</span>';
+h += '</div>';
+h += '<div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-top:3px"><div style="width:'+Math.max(2,tr*100)+'%;height:100%;background:'+(tr>0.5?'var(--neg)':tr>0.3?'var(--warn)':'var(--pos)')+';border-radius:3px"></div></div>';
+h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+if(tr < 0.1) h += 'Trend and volatility momentum are calm. No tactical dislocations.';
+else if(tr < 0.3) h += 'Some trend or volatility momentum. Normal market fluctuations.';
+else if(tr <= 0.5) h += 'Elevated tactical risk from trend acceleration or VIX stress.';
+else h += 'High tactical risk. Sharp trend moves or VIX spike in progress.';
+h += '</div></div>';
+
+// Data Confidence
+h += '<div style="margin-bottom:10px">';
+h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+h += '<span style="font-size:12px">Data Confidence</span>';
+h += '<span class="mono '+(dc>=70?'pos':dc>=40?'warn':'neg')+'" style="font-size:13px;font-weight:600">'+f(dc,0)+'%</span>';
+h += '</div>';
+h += '<div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-top:3px"><div style="width:'+Math.max(2,dc)+'%;height:100%;background:'+(dc>=70?'var(--pos)':dc>=40?'var(--warn)':'var(--neg)')+';border-radius:3px"></div></div>';
+h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+if(dc >= 80) h += 'Comprehensive data available. High confidence in analysis inputs.';
+else if(dc >= 60) h += 'Adequate data coverage with some gaps. Results are directionally reliable.';
+else if(dc >= 40) h += 'Partial data. Key inputs may be missing or stale. Interpret with caution.';
+else h += 'Thin data environment. Analysis reliability is materially reduced.';
+h += '</div></div>';
+
+// Regime Reliability — flag when at floor
+h += '<div style="margin-bottom:4px">';
+h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+h += '<span style="font-size:12px">Regime Reliability</span>';
+var _relC = rel>=0.7?'pos':rel>=0.3?'warn':rel>0.05?'neg':'neg';
+h += '<span class="mono '+_relC+'" style="font-size:13px;font-weight:600">'+f(rel,2)+'</span>';
+h += '</div>';
+h += '<div style="height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-top:3px"><div style="width:'+Math.max(2,rel*100)+'%;height:100%;background:'+(rel>=0.7?'var(--pos)':rel>=0.3?'var(--warn)':'var(--neg)')+';border-radius:3px"></div></div>';
+h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">';
+if(rel >= 0.7) h += 'Regime classification is confident. Market character is clear.';
+else if(rel >= 0.3) h += 'Moderate regime confidence. Market may be transitioning between states.';
+else if(rel > 0.06) h += 'Low reliability. High choppiness or volatility stress obscures regime.';
+else h += '<span style="color:var(--neg)">At reliability floor (0.05). Market is extremely choppy or stressed. Regime classification has minimal confidence \u2014 all engine outputs should be treated with significant caution.</span>';
+h += '</div></div>';
+
+h += '</div>'; // end right column
+h += '</div>'; // end g2
+
+// ── Engine Risk Drivers + Contradictions ──
+if(RISKS.length>0 || CONTRA.length>0){
+  h += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">';
+  if(RISKS.length>0){
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Engine Risk Drivers</div>';
+    for(var i=0;i<RISKS.length&&i<6;i++){
+      var rd = RISKS[i];
+      var rdName = typeof rd==='object'?(rd.name||rd.driver||JSON.stringify(rd)):String(rd);
+      var rdSev = typeof rd==='object'?(rd.severity||rd.impact||''):'';
+      var rdCls = rdSev.toUpperCase()==='HIGH'?'neg':rdSev.toUpperCase()==='MEDIUM'?'warn':'muted';
+      h += '<div style="font-size:12px;padding:3px 0">';
+      if(rdSev) h += '<span class="pill pill-'+rdCls+'" style="font-size:9px;margin-right:6px">'+rdSev+'</span>';
+      h += '<span>'+rdName+'</span></div>';
+    }
+  }
+  if(CONTRA.length>0){
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;margin-top:12px">Contradictions</div>';
+    for(var i=0;i<CONTRA.length&&i<4;i++){
+      var ct2 = typeof CONTRA[i]==='object'?(CONTRA[i].description||CONTRA[i].name||JSON.stringify(CONTRA[i])):String(CONTRA[i]);
+      h += '<div style="font-size:12px;padding:3px 0;color:var(--warn)">\u26A0 '+ct2+'</div>';
+    }
+  }
+  h += '</div>';
+}
+
+// ── Regime Vector Breakdown (always show — most informative when drivers empty) ──
+var _rvKeys = [['TS','Trend',0.5],['CH','Choppiness',0.5],['VL','VIX Level',0.5],['VS','VIX Stress',0.4],['CI','Corr. Instability',0.5],['RS','Rates Shock',0.5],['CS','Credit Stress',0.6],['GR','Global Risk',0.5],['BM_f','Bad Mix',0.4],['BEI','Bond-Eq. Flip',0.7]];
+var _hasRV = false;
+for(var k in RV){if(RV[k]!=null){_hasRV=true;break;}}
+if(_hasRV){
+  h += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">';
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Regime Vector Breakdown</div>';
+  h += '<div class="g2" style="gap:6px 16px">';
+  for(var i=0;i<_rvKeys.length;i++){
+    var _rk=_rvKeys[i][0], _rl=_rvKeys[i][1], _rt=_rvKeys[i][2];
+    var _rv = RV[_rk];
+    if(_rv==null) continue;
+    var _rvPct = Math.round(_rv*100);
+    var _rvC = _rv>=_rt?'var(--neg)':_rv>=_rt*0.5?'var(--warn)':'var(--pos)';
+    h += '<div style="display:flex;align-items:center;gap:8px;font-size:11px">';
+    h += '<span style="min-width:100px;color:var(--t2)">'+_rl+'</span>';
+    h += '<div style="flex:1;height:5px;background:var(--bg2);border-radius:3px;overflow:hidden"><div style="width:'+Math.max(1,_rvPct)+'%;height:100%;background:'+_rvC+';border-radius:3px"></div></div>';
+    h += '<span class="mono" style="min-width:32px;text-align:right;font-weight:500;color:'+_rvC+'">'+_rvPct+'%</span>';
+    h += '</div>';
+  }
+  h += '</div>';
+  if(RISKS.length===0){
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px;font-style:italic">All regime factors are below alert thresholds. No engine risk drivers triggered, but the vector above provides the full stress decomposition.</div>';
+  }
+  h += '</div>';
+}
+
+// ── Market-Derived Risk Signals (from v8 payload) ──
+var _mktSignals = [];
+// Short interest
+if(INST.short_pct!=null && INST.short_pct > 3){
+  var _siC = INST.short_pct>10?'neg':INST.short_pct>5?'warn':'muted';
+  var _siL = INST.short_pct>10?'Elevated — significant bearish positioning against this name':INST.short_pct>5?'Moderate — some bearish conviction among short sellers':'Low — minimal short-side pressure';
+  _mktSignals.push({name:'Short Interest',value:f(INST.short_pct)+'%',cls:_siC,note:_siL});
+}
+if(INST.short_ratio!=null && INST.short_ratio > 3){
+  _mktSignals.push({name:'Days to Cover',value:f(INST.short_ratio,1)+' days',cls:INST.short_ratio>5?'warn':'muted',note:INST.short_ratio>5?'Extended cover period increases squeeze potential and signals persistent bearish conviction':'Moderate cover timeline'});
+}
+// News sentiment skew
+var _nPos=0, _nNeg=0;
+for(var i=0;i<NEWS.length;i++){
+  if(NEWS[i].sentiment==='POSITIVE')_nPos++;
+  if(NEWS[i].sentiment==='NEGATIVE')_nNeg++;
+}
+if(NEWS.length>=3){
+  var _sentRatio = _nNeg/NEWS.length;
+  if(_sentRatio > 0.5) _mktSignals.push({name:'News Sentiment',value:_nNeg+'/'+NEWS.length+' negative',cls:'neg',note:'Majority negative news flow. Headline risk may be elevated.'});
+  else if(_sentRatio > 0.3) _mktSignals.push({name:'News Sentiment',value:_nNeg+'/'+NEWS.length+' negative',cls:'warn',note:'Mixed sentiment with notable negative coverage.'});
+  else if(_nNeg===0 && NEWS.length>=5) _mktSignals.push({name:'News Sentiment',value:'All neutral/positive',cls:'pos',note:'No negative headlines detected in recent coverage.'});
+}
+// Valuation gap (price vs IV)
+var _ivCheck = V9.intrinsic_value_base||0;
+if(_ivCheck > 0 && price){
+  var _valGap = ((price - _ivCheck)/_ivCheck)*100;
+  if(Math.abs(_valGap) > 10){
+    _mktSignals.push({name:'Valuation Gap',value:(_valGap>=0?'+':'')+f(_valGap,0)+'% vs IV',cls:_valGap>30?'neg':_valGap>0?'warn':'pos',note:_valGap>30?'Price trades significantly above estimated intrinsic value. Overpayment risk is material.':_valGap>0?'Price above estimated IV. Margin of safety is negative.':'Price below estimated IV. Directionally favorable for value.'});
+  }
+}
+// Beta
+if(CO.beta!=null && CO.beta > 1.3){
+  _mktSignals.push({name:'Beta',value:f(CO.beta,2),cls:CO.beta>1.8?'neg':'warn',note:'Above-average systematic risk. Price amplifies market moves by '+f((CO.beta-1)*100,0)+'%.'});
+}
+// VIX from engine
+if(S.vix!=null){
+  var _vixC = S.vix>28?'neg':S.vix>20?'warn':S.vix<14?'pos':'muted';
+  _mktSignals.push({name:'VIX',value:f(S.vix,1),cls:_vixC,note:S.vix>28?'Fear elevated. Implied volatility signals market stress.':S.vix>20?'Above average. Markets pricing in uncertainty.':S.vix<14?'Complacency zone. Low vol often precedes sharp moves.':'Normal volatility range.'});
+}
+
+if(_mktSignals.length > 0){
+  h += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">';
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Market-Derived Risk Signals</div>';
+  for(var i=0;i<_mktSignals.length;i++){
+    var _ms = _mktSignals[i];
+    h += '<div style="padding:6px 0;border-bottom:1px solid rgba(33,38,45,.3)">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    h += '<span style="font-size:12px;font-weight:500">'+_ms.name+'</span>';
+    h += '<span class="mono '+_ms.cls+'" style="font-size:12px;font-weight:600">'+_ms.value+'</span>';
+    h += '</div>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">'+_ms.note+'</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+}
+
+h += '</div>'; // end card
 
 // Sector Performance
 var allSectors = (SECT.all_sectors||[]);
