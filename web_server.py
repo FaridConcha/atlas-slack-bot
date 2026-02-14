@@ -183,7 +183,7 @@ if(price!=null) h += '<span class="mono" style="font-size:18px;font-weight:600">
 h += '<span class="pill '+pillV(verdict)+'" style="margin-left:auto;font-size:12px;padding:3px 10px">'+verdict+'</span>';
 h += '</div>';
 h += '<div style="font-size:11px;color:var(--t3);margin-bottom:16px">';
-h += 'ATLAS V9';
+h += 'ATLAS V10';
 if(D.created_at) h += ' · '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 if(P.fallback_mode) h += ' · Data: '+P.fallback_mode;
 h += '</div>';
@@ -208,7 +208,7 @@ h += '</div>';
 // ── V9 OWNER'S VIEW ────────────────────────────────
 if(V9.v9_decision){
   h += '<div class="card" style="border-color:var(--acc);border-width:1px">';
-  h += '<h2 style="color:var(--acc)">V9 Owner Assessment</h2>';
+  h += '<h2 style="color:var(--acc)">V10 Owner Assessment</h2>';
   h += '<div class="g2" style="align-items:start">';
 
   // Left: Scorecards + Decision
@@ -303,7 +303,7 @@ if(V9.v9_decision){
   var nar = V9.v9_narrative||'';
   if(nar){
     h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
-    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">V9 Narrative Assessment</div>';
+    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">V10 Narrative Assessment</div>';
     // Format sections: bold the headings
     nar = nar.replace(/^(INVESTMENT SUMMARY)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(RECOMMENDED ACTION)/m,'<strong style="color:var(--t1)">$1</strong>');
@@ -1033,10 +1033,10 @@ if(cAdj!=null && dc!=null && rel!=null){
 }
 h += '</div>';
 
-// V9 Owner Decision Derivation
+// V10 Owner Decision Derivation
 if(V9.v9_decision){
   h += '<div class="formula" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">';
-  h += '<span class="hl">V9 OWNER DECISION HIERARCHY</span>\n\n';
+  h += '<span class="hl">V10 OWNER DECISION HIERARCHY</span>\n\n';
   h += '  Step 1: Business Quality Gate\n';
   h += '    Quality = <span class="hl">'+f(V9.business_quality)+'/5</span>';
   if(V9.business_quality<1.5) h += '  <span class="neg">FAIL → PASS</span>';
@@ -1078,7 +1078,7 @@ h += '</div></div>';
 
 // ── PROVENANCE FOOTER ───────────────────────────────
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
-h += '<span>ATLAS V9</span>';
+h += '<span>ATLAS V10</span>';
 if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
 h += '<span>'+mode+'</span>';
 if(dc!=null) h += '<span>DC '+f(dc,0)+'%</span>';

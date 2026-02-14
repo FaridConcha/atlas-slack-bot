@@ -96,7 +96,7 @@ def generate_and_store_report(
     payload = {
         "report_id": report_id,
         "created_at": created_at,
-        "engine_version": "ATLAS V9",
+        "engine_version": "ATLAS V10",
         "symbol": symbol,
         "company_name": company_name,
         "thread_ts": thread_ts,

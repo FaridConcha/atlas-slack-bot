@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ATLAS V9 — Full-Spectrum Report Formatter
+ATLAS V10 — Full-Spectrum Report Formatter
 Transforms engine output + extended data into an 11-section Slack report.
 
-V9 adds a Buffett-aligned Owner Assessment layer on top of V8 quant signals.
+V10 adds a Buffett-aligned Owner Assessment layer on top of V8 quant signals.
 Interpretation shifts from "signal says BUY" to "would a rational capital
 allocator buy this entire business at this price?"
 
@@ -234,7 +234,7 @@ def _v8_verdict_label(score):
 
 
 # ============================================================================
-# V9 OWNER INTELLIGENCE LAYER
+# V10 OWNER INTELLIGENCE LAYER
 # ============================================================================
 
 def _compute_v9_owner_scores(summary, v8_data):
@@ -436,7 +436,7 @@ def _compute_v9_owner_scores(summary, v8_data):
     if not perm_risks:
         perm_risks.append(("General market risk", "Low", "Systemic drawdown exposure"))
 
-    # --- V9 Decision Logic ---
+    # --- V10 Decision Logic ---
     # Step 1: Business Quality Gate
     if business_quality < 1.5:
         v9_decision = "PASS"
@@ -507,11 +507,11 @@ def _stars(score, max_stars=5):
 
 
 # ============================================================================
-# SECTION 0: V9 OWNER ASSESSMENT
+# SECTION 0: V10 OWNER ASSESSMENT
 # ============================================================================
 
 def _section_owner_assessment(summary, v8_data):
-    """V9 Owner Assessment — Buffett-aligned business evaluation."""
+    """V10 Owner Assessment — Buffett-aligned business evaluation."""
     co = v8_data.get('company', {})
     fin = v8_data.get('financials', {})
     v9 = _compute_v9_owner_scores(summary, v8_data)
@@ -530,7 +530,7 @@ def _section_owner_assessment(summary, v8_data):
     header = (
         f"```\n"
         f"{'=' * 52}\n"
-        f"  ATLAS V9 — OWNER ASSESSMENT\n"
+        f"  ATLAS V10 — OWNER ASSESSMENT\n"
         f"  {symbol} — {name} — ${price:.2f}\n"
         f"  As of {now}\n"
         f"{'=' * 52}\n"
@@ -1537,7 +1537,7 @@ def _section_engine_final(summary, v8_data):
         lines.append(f"Mode:           {exec_mode}")
         lines.append("```")
 
-    # THE FINAL WORD — V9 Owner's Perspective
+    # THE FINAL WORD — V10 Owner's Perspective
     scores = _compute_v8_scores(summary, v8_data)
     v9 = v8_data.get('v9_scores') or _compute_v9_owner_scores(summary, v8_data)
     verdict = v9['v9_decision']
@@ -1549,11 +1549,11 @@ def _section_engine_final(summary, v8_data):
     lines.append(f"```")
     lines.append(f"{'=' * 50}")
     lines.append(f"  THE FINAL WORD ON {symbol}")
-    lines.append(f"  (V9 Owner's Perspective)")
+    lines.append(f"  (V10 Owner's Perspective)")
     lines.append(f"{'=' * 50}")
     lines.append("")
 
-    # V9 Decision
+    # V10 Decision
     lines.append(f"OWNER DECISION: {verdict}")
     lines.append(f"  {v9['decision_reason']}")
     lines.append("")
@@ -1639,10 +1639,10 @@ def _section_engine_final(summary, v8_data):
 
 def format_v8_report(summary, v8_data):
     """
-    Generate complete V9 report as list of Slack messages.
+    Generate complete V10 report as list of Slack messages.
     11 messages: Owner Assessment + 10 full-spectrum analysis sections.
 
-    V9 leads with business owner intelligence (Buffett-aligned),
+    V10 leads with business owner intelligence (Buffett-aligned),
     then provides full quant detail for tactical overlay.
 
     Args:
@@ -1652,12 +1652,12 @@ def format_v8_report(summary, v8_data):
     Returns:
         list of strings, each under 4000 chars
     """
-    # Compute and attach V9 scores for downstream consumers (web dashboard, Q&A)
+    # Compute and attach V10 scores for downstream consumers (web dashboard, Q&A)
     v9_scores = _compute_v9_owner_scores(summary, v8_data)
     v8_data['v9_scores'] = v9_scores
 
     messages = [
-        _section_owner_assessment(summary, v8_data),   # V9: Owner's view first
+        _section_owner_assessment(summary, v8_data),   # V10: Owner's view first
         _section_verdict(summary, v8_data),
         _section_fundamentals(v8_data),
         _section_balance_sheet(v8_data),

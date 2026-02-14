@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ATLAS Slack Bot — V9 Capital Allocation Intelligence
-Listens for @mentions and runs the ATLAS engine + V9 owner intelligence layer,
+ATLAS Slack Bot — V10 Capital Allocation Intelligence
+Listens for @mentions and runs the ATLAS engine + V10 owner intelligence layer,
 pulling LIVE data from yfinance for any ticker.
 
-V9 adds Buffett-aligned business owner assessment on top of V8 quant signals.
+V10 adds Buffett-aligned business owner assessment on top of V8 quant signals.
 Output is an 11-section report: owner assessment, verdict, fundamentals,
 valuation, technicals, peers, sentiment, risk, catalysts, macro, engine signal.
 
@@ -157,7 +157,7 @@ def _handle_shutdown(signum, frame):
             app.client.chat_postMessage(
                 channel=_last_channel,
                 thread_ts=_last_thread_ts,
-                text=":zzz: ATLAS V9 is going offline (Render free-tier sleep). "
+                text=":zzz: ATLAS V10 is going offline (Render free-tier sleep). "
                      "Mention me again to wake up — takes ~30 seconds.",
             )
         except Exception:
@@ -188,7 +188,7 @@ def handle_atlas_mention(event, say, client):
     if 'HELP' in text.upper():
         say(
             text=(
-                "*ATLAS V9 — Capital Allocation Intelligence* :chart_with_upwards_trend:\n"
+                "*ATLAS V10 — Capital Allocation Intelligence* :chart_with_upwards_trend:\n"
                 "Mention me with any ticker symbol to get analysis:\n"
                 "  `@atlas AAPL` — Apple\n"
                 "  `@atlas TSLA` — Tesla\n"
@@ -196,7 +196,7 @@ def handle_atlas_mention(event, say, client):
                 "  `@atlas SPY` — S&P 500 ETF\n"
                 "  `@atlas` — Default (SPY)\n"
                 "  `@atlas help` — This message\n\n"
-                "V9 report: Owner assessment (business quality, moat, margin of safety) + "
+                "V10 report: Owner assessment (business quality, moat, margin of safety) + "
                 "full quant analysis (fundamentals, technicals, peers, news, macro).\n"
                 "Data is pulled live from Yahoo Finance.\n\n"
                 "After a report, reply in the thread to ask follow-up questions (AI-powered)."
@@ -213,7 +213,7 @@ def handle_atlas_mention(event, say, client):
     else:
         # Acknowledge immediately (warm path)
         say(
-            text=f":gear: Running ATLAS V9 on *{symbol}*... pulling live data & building owner assessment + full report (30-45 sec)",
+            text=f":gear: Running ATLAS V10 on *{symbol}*... pulling live data & building owner assessment + full report (30-45 sec)",
             thread_ts=thread_ts
         )
         progress_ts = None
@@ -232,7 +232,7 @@ def handle_atlas_mention(event, say, client):
         if cold and progress_ts:
             try:
                 client.chat_update(channel=channel, ts=progress_ts,
-                                   text=f":chart_with_upwards_trend: Live data fetched, running V9 engine on *{symbol}*...")
+                                   text=f":chart_with_upwards_trend: Live data fetched, running V10 engine on *{symbol}*...")
             except Exception:
                 pass
 
@@ -270,21 +270,21 @@ def handle_atlas_mention(event, say, client):
             except Exception:
                 pass
 
-        # Generate V9 narrative interpretation (LLM-powered, non-blocking)
+        # Generate V10 narrative interpretation (LLM-powered, non-blocking)
         v9_narrative = None
         v9_scores = v8_extended.get('v9_scores', {}) if v8_extended else {}
         if GROQ_API_KEY and v9_scores.get('v9_decision'):
             try:
-                print(f"[BOT] Generating V9 narrative for {symbol}...")
+                print(f"[BOT] Generating V10 narrative for {symbol}...")
                 v9_narrative = gemini_qa.generate_v9_narrative(v9_scores, summary, v8_extended)
                 if v9_narrative:
                     # Store narrative in v8_extended for web dashboard persistence
                     v9_scores['v9_narrative'] = v9_narrative
                     # Insert narrative as second message (after Owner Assessment)
-                    narrative_msg = f":classical_building: *V9 NARRATIVE ASSESSMENT — {symbol}*\n\n{v9_narrative}"
+                    narrative_msg = f":classical_building: *V10 NARRATIVE ASSESSMENT — {symbol}*\n\n{v9_narrative}"
                     v8_messages.insert(1, narrative_msg)
             except Exception as e:
-                print(f"[BOT] V9 narrative generation failed (non-fatal): {e}")
+                print(f"[BOT] V10 narrative generation failed (non-fatal): {e}")
 
         # Generate web report (non-blocking — errors must not break Slack flow)
         report_url = None
@@ -345,7 +345,7 @@ def handle_atlas_mention(event, say, client):
 
         # Final confirmation
         say(
-            text=f":white_check_mark: ATLAS V9 complete for *{symbol}* — {len(v8_messages)} sections delivered"
+            text=f":white_check_mark: ATLAS V10 complete for *{symbol}* — {len(v8_messages)} sections delivered"
                 + (f"\n:mag: <{report_url}|View full web report>" if report_url else "")
                 + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GROQ_API_KEY else ""),
             thread_ts=thread_ts
@@ -478,7 +478,7 @@ if __name__ == "__main__":
     os.makedirs(STATE_DIR, exist_ok=True)
 
     print("=" * 60)
-    print("ATLAS Slack Bot — V9 Capital Allocation Intelligence")
+    print("ATLAS Slack Bot — V10 Capital Allocation Intelligence")
     print("=" * 60)
     print(f"Live data:  {'ENABLED (yfinance)' if USE_LIVE_DATA else 'DISABLED (static files)'}")
     print(f"FRED API:   {'Connected' if FRED_API_KEY else 'Not configured (using yfinance for macro)'}")
