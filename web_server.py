@@ -171,6 +171,14 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 .cap-gauge{display:flex;align-items:center;gap:8px;margin:6px 0}
 .cap-bar{flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden}
 .cap-fill{height:100%;border-radius:4px;transition:width .5s}
+/* ── Owner Memorandum Narrative ── */
+.memo{font-size:12.5px;line-height:1.85;color:var(--t2)}
+.memo p{margin:0 0 12px}
+.memo-hdr{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--t1);padding:18px 0 6px;border-bottom:1px solid var(--border);margin-bottom:10px}
+.memo-hdr:first-child{padding-top:0}
+.memo .hl{color:var(--t1);font-weight:500}
+.memo .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
+.memo-aside{background:var(--bg2);border-left:3px solid var(--acc);padding:10px 14px;margin:10px 0 14px;font-size:11.5px;line-height:1.7;color:var(--t2);border-radius:0 var(--r) var(--r) 0}
 </style>
 </head>
 <body>
@@ -433,17 +441,286 @@ if(V9.v9_decision){
   else h += 'Default action in absence of clear margin of safety is inaction.';
   h += '</div>';
 
-  // V10 Narrative (LLM-generated, web report only)
+  // ════════════════════════════════════════════════════
+  // V10 OWNER MEMORANDUM (Full Web Report only)
+  // Deterministic long-form narrative built from payload.
+  // Slackbot narrative (gemini_qa) is NOT affected.
+  // ════════════════════════════════════════════════════
+  h += '<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">';
+  h += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);margin-bottom:14px">V10 Owner Memorandum</div>';
+  h += '<div class="memo">';
+
+  // ── 1. BUSINESS OVERVIEW & ECONOMIC CHARACTER ──
+  h += '<div class="memo-hdr">I. Business Overview &amp; Economic Character</div>';
+  var _sector = CO.sector||'';
+  var _industry = CO.industry||'';
+  var _gm = FIN.gross_margin;
+  var _om = FIN.operating_margin;
+  var _nm = FIN.net_margin;
+  var _roe = FIN.roe;
+  var _roa = FIN.roa;
+  var _fcf = FIN.free_cash_flow;
+  var _rev = FIN.revenue_ttm;
+  var _de = FIN.debt_equity;
+
+  h += '<p><span class="hl">'+name+'</span> operates in the <span class="hl">'+(_industry||_sector||'undisclosed')+'</span> sector';
+  if(CO.employees) h += ', employing approximately <span class="mono hl">'+Number(CO.employees).toLocaleString()+'</span> people';
+  h += '. ';
+  if(_rev) h += 'The business generates trailing twelve-month revenue of <span class="mono hl">'+fM(_rev)+'</span>. ';
+  if(_nm!=null) h += 'Net margins stand at <span class="mono hl">'+f(_nm)+'%</span>';
+  if(_gm!=null) h += ' on a gross margin base of <span class="mono hl">'+f(_gm)+'%</span>';
+  if(_om!=null) h += ', with operating margins of <span class="mono hl">'+f(_om)+'%</span>';
+  h += '.</p>';
+
+  // Earnings durability assessment
+  h += '<p>';
+  if(_gm!=null && _om!=null){
+    if(_gm > 50 && _om > 20) h += 'The margin structure suggests a business with meaningful pricing power and operating leverage. High gross margins indicate that the company retains substantial value above variable costs, which is characteristic of businesses with durable competitive advantages. ';
+    else if(_gm > 35 && _om > 10) h += 'Margins are respectable but not exceptional. The business appears to operate in a moderately competitive environment where some pricing power exists, though it may face periodic margin pressure from competitive dynamics or input cost fluctuations. ';
+    else h += 'The margin profile reflects a business operating in a competitive or capital-intensive environment. Thin margins amplify the impact of revenue fluctuations on earnings, which demands greater caution in valuation assumptions. ';
+  }
+  if(_fcf!=null && _rev){
+    var _fcfMgn = (_fcf/_rev)*100;
+    if(_fcfMgn > 15) h += 'Free cash flow conversion is strong at <span class="mono hl">'+f(_fcfMgn,1)+'%</span> of revenue, indicating that reported earnings translate reliably into distributable cash. This is the hallmark of a high-quality earnings stream.';
+    else if(_fcfMgn > 5) h += 'Free cash flow conversion of <span class="mono hl">'+f(_fcfMgn,1)+'%</span> of revenue is adequate, though the gap between earnings and cash generation suggests ongoing capital reinvestment requirements.';
+    else if(_fcfMgn > 0) h += 'Free cash flow conversion is modest at <span class="mono hl">'+f(_fcfMgn,1)+'%</span> of revenue. A significant portion of earnings is consumed by capital expenditures or working capital requirements, which limits the cash available for shareholders.';
+    else h += 'Free cash flow is negative, indicating the business currently consumes more cash than it generates from operations. This may reflect growth-phase investment or structural capital intensity.';
+  }
+  h += '</p>';
+
+  // Return characteristics
+  if(_roe!=null || _roa!=null){
+    h += '<p>';
+    if(_roe!=null){
+      h += 'Return on equity stands at <span class="mono hl">'+f(_roe)+'%</span>';
+      if(_roe > 20) h += ', which is indicative of a business that generates surplus returns well above its cost of capital. Sustained ROE at this level typically reflects either a durable competitive advantage or efficient capital structure';
+      else if(_roe > 10) h += ', a respectable level suggesting the business earns adequate returns on shareholder capital, though not at the exceptional levels that would indicate a wide competitive moat';
+      else h += ', which is below the threshold that would suggest strong economic returns on shareholder capital. Modest ROE may reflect competitive erosion, capital misallocation, or structural impediments to profitability';
+      h += '. ';
+    }
+    if(_roa!=null){
+      h += 'Return on assets of <span class="mono hl">'+f(_roa)+'%</span>';
+      if(_de!=null && _de > 1.5) h += ' should be considered alongside leverage of <span class="mono hl">'+f(_de,2)+'x</span> debt-to-equity, as elevated leverage amplifies equity returns relative to underlying asset productivity';
+      h += '.';
+    }
+    h += '</p>';
+  }
+
+  // ── 2. QUALITY OF THE BUSINESS ──
+  h += '<div class="memo-hdr">II. Quality of the Business</div>';
+  var _bqS = V9.business_quality||0;
+  var _moS = V9.moat_durability||0;
+  var _caS = V9.capital_allocation||0;
+
+  h += '<p>ATLAS V10 assigns a Business Quality score of <span class="mono hl">'+f(_bqS,1)+'/5</span>. ';
+  if(_bqS >= 4.0) h += 'This places the business in the top tier of quality assessment \u2014 the kind of business a patient owner would prefer to hold indefinitely. Earnings are likely durable, competitive positioning appears strong, and the economics of the business reward long-term ownership.';
+  else if(_bqS >= 3.0) h += 'This reflects a business of above-average quality with identifiable strengths. While not in the highest tier, the economic characteristics suggest a business capable of sustaining reasonable returns over time, provided competitive dynamics remain favorable.';
+  else if(_bqS >= 2.0) h += 'This indicates an average-quality business. The economic returns are adequate but not exceptional, and the business likely faces competitive pressures that could erode profitability over a full economic cycle. An owner should demand a wider margin of safety to compensate for this uncertainty.';
+  else h += 'This signals a below-average business from an owner\'s perspective. Economic returns are insufficient to justify confidence in long-term value creation, and the risk of permanent capital impairment is elevated.';
+  h += '</p>';
+
+  h += '<p>Moat Durability is assessed at <span class="mono hl">'+f(_moS,1)+'/5</span>. ';
+  if(_moS >= 4.0) h += 'The competitive position appears well-entrenched. Durable moats \u2014 whether from brand strength, switching costs, network effects, or cost advantages \u2014 are the single most important determinant of long-term owner returns. A business that can sustain pricing power and repel competitive entry protects the owner\'s capital through economic cycles.';
+  else if(_moS >= 3.0) h += 'The competitive position shows identifiable advantages, though these may face erosion over time. Moderate moats require ongoing reinvestment to maintain, and the owner must monitor whether returns on capital are being sustained or gradually declining.';
+  else if(_moS >= 2.0) h += 'Competitive durability is limited. The business may generate adequate returns currently, but the absence of strong structural advantages means that competitors can replicate its economics. Returns above the cost of capital are unlikely to persist without continuous reinvestment and execution.';
+  else h += 'The absence of meaningful competitive protection exposes the business to margin compression and market share erosion. Without a moat, above-average returns attract competition that ultimately drives returns toward the cost of capital.';
+  h += '</p>';
+
+  h += '<p>Capital Allocation scores <span class="mono hl">'+f(_caS,1)+'/5</span>. ';
+  if(_caS >= 4.0) h += 'Management demonstrates disciplined capital stewardship. High-quality capital allocation \u2014 investing at attractive incremental returns, avoiding value-destructive acquisitions, and returning surplus cash efficiently \u2014 is the mechanism through which business quality translates to shareholder value over time. This score suggests management acts as responsible stewards of owner capital.';
+  else if(_caS >= 3.0) h += 'Capital allocation is adequate. Management appears to make reasonable decisions regarding reinvestment and shareholder returns, though there may be room for improvement in capital discipline. The business is not destroying value through its allocation decisions, but neither is it maximizing the return on every dollar retained.';
+  else if(_caS >= 2.0) h += 'Capital allocation is a point of concern. Management\'s track record suggests mixed results in deploying retained earnings at attractive incremental returns. Every dollar retained by the business rather than returned to shareholders bears an implicit obligation to generate returns above the cost of capital \u2014 a standard that does not appear consistently met.';
+  else h += 'Capital allocation represents a significant risk factor. Poor allocation decisions compound over time, eroding the value of even a high-quality business. When management retains earnings without generating adequate returns, the owner effectively subsidizes value destruction.';
+  h += '</p>';
+
+  // ── 3. INTRINSIC VALUE & MARGIN OF SAFETY ──
+  h += '<div class="memo-hdr">III. Intrinsic Value &amp; Margin of Safety</div>';
+  var _ivB = V9.intrinsic_value_base||0;
+  var _ivBear = V9.intrinsic_value_bear||0;
+  var _ivBull = V9.intrinsic_value_bull||0;
+  var _mosP = V9.mos_pct||0;
+  var _reqM = (V9.required_mos||0)*100;
+  var _btype = V9.business_type||'Normal';
+
+  h += '<p>Intrinsic value represents the present value of all future cash flows the business will generate for its owners, discounted at a rate reflecting the uncertainty of those cash flows. It is not a precise number \u2014 it is an estimate anchored in assumptions about growth, profitability, and discount rates. The discipline lies not in precision but in the margin of safety demanded between estimated value and the price paid.</p>';
+
+  if(_ivB > 0 && price){
+    h += '<p>ATLAS estimates base-case intrinsic value at <span class="mono hl">$'+f(_ivB,2)+'</span>';
+    if(_ivBear > 0 && _ivBull > 0) h += ', within a range of <span class="mono neg">$'+f(_ivBear,2)+'</span> (bear) to <span class="mono pos">$'+f(_ivBull,2)+'</span> (bull)';
+    h += '. At the current price of <span class="mono hl">$'+f(price,2)+'</span>, the implied margin of safety is <span class="mono '+(_mosP>=0?'pos':'neg')+'">'+fS(_mosP,1)+'%</span>.</p>';
+
+    if(_mosP < 0){
+      h += '<p>A negative margin of safety means the market price exceeds the estimated intrinsic value by <span class="mono hl">'+f(Math.abs(_mosP),1)+'%</span>. ';
+      h += 'Purchasing at this level requires the belief that intrinsic value is meaningfully higher than the model estimates \u2014 in other words, that the assumptions are too conservative. While this is possible, disciplined capital allocation demands that the burden of proof fall on the buyer, not the seller. ';
+      h += 'When price exceeds estimated value, capital would be deployed without adequate protection against estimation error, competitive deterioration, or macroeconomic disruption.</p>';
+
+      var _fallNeeded = Math.abs(_mosP) + _reqM;
+      h += '<div class="memo-aside">';
+      h += 'To satisfy the required margin of safety of <span class="mono hl">'+f(_reqM,0)+'%</span> for a '+_btype+' business, the price would need to decline approximately <span class="mono hl">'+f(_fallNeeded,0)+'%</span> from current levels \u2014 or intrinsic value would need to grow correspondingly through improved business fundamentals.';
+      h += '</div>';
+    } else if(_mosP < _reqM){
+      h += '<p>The current margin of safety of <span class="mono hl">'+fS(_mosP,1)+'%</span> falls short of the required <span class="mono hl">'+f(_reqM,0)+'%</span> threshold for a '+_btype+' business. ';
+      h += 'While the stock trades below estimated intrinsic value \u2014 which is directionally favorable \u2014 the gap is insufficient to compensate for the inherent imprecision of any valuation model. The margin of safety requirement exists precisely because intrinsic value is an estimate, not a fact. It is the investor\'s protection against being wrong.</p>';
+    } else {
+      h += '<p>The margin of safety of <span class="mono hl">'+fS(_mosP,1)+'%</span> meets or exceeds the required <span class="mono hl">'+f(_reqM,0)+'%</span> for a '+_btype+' business. ';
+      h += 'This suggests the current price offers adequate protection against estimation error. The owner is paying a price that embeds a reasonable buffer for scenarios where growth falls short, margins compress, or the discount rate rises.</p>';
+    }
+  } else {
+    h += '<p>Intrinsic value could not be computed for this security. Without a quantitative anchor for value, no margin of safety can be established, and the default posture is to refrain from capital commitment.</p>';
+  }
+
+  if(DCF && DCF.assumptions){
+    var _da = DCF.assumptions;
+    h += '<p>The DCF model assumes a discount rate of <span class="mono hl">'+f(_da.discount_rate)+'%</span> and terminal growth of <span class="mono hl">'+f(_da.terminal_growth)+'%</span>. ';
+    h += 'Valuation is highly sensitive to these inputs. A one-percentage-point increase in WACC reduces fair value by approximately 15\u201320%, while terminal growth assumptions compound indefinitely. ';
+    h += 'The investor should treat the base case as a reference point, not a prediction, and pay close attention to the bear-case scenario as the more relevant downside anchor.</p>';
+  }
+
+  // ── 4. RISK OF PERMANENT LOSS ──
+  h += '<div class="memo-hdr">IV. Risk of Permanent Loss</div>';
+  h += '<p>Risk, properly defined, is the probability of permanent capital impairment \u2014 not price volatility. Markets fluctuate; businesses deteriorate. The relevant question is whether an adverse scenario could render the investment permanently worth less than the price paid, with no subsequent recovery.</p>';
+
+  // Leverage
+  var _nde = FIN.net_debt_ebitda;
+  var _ic = FIN.interest_coverage;
+  h += '<p>';
+  if(_de!=null || _nde!=null || _ic!=null){
+    h += 'On leverage: ';
+    if(_nde!=null){
+      if(_nde > 3) h += 'Net debt-to-EBITDA of <span class="mono neg">'+f(_nde,1)+'x</span> is elevated. High leverage amplifies both returns and losses, and at this level, a sustained earnings decline could impair the company\'s ability to service its obligations. This introduces meaningful permanent loss risk. ';
+      else if(_nde > 1.5) h += 'Net debt-to-EBITDA of <span class="mono warn">'+f(_nde,1)+'x</span> is moderate. The balance sheet can absorb some adversity, but sustained earnings declines would begin to stress the capital structure. ';
+      else if(_nde > 0) h += 'Net debt-to-EBITDA of <span class="mono pos">'+f(_nde,1)+'x</span> is conservative. The business operates with manageable leverage that provides a buffer against cyclical or competitive shocks. ';
+      else h += 'The company carries net cash on its balance sheet, which substantially reduces permanent loss risk from leverage. ';
+    }
+    if(_ic!=null){
+      if(_ic < 3) h += 'Interest coverage of <span class="mono neg">'+f(_ic,1)+'x</span> is thin \u2014 a modest earnings decline could challenge debt service, which is a direct path to permanent value destruction.';
+      else if(_ic < 8) h += 'Interest coverage of <span class="mono hl">'+f(_ic,1)+'x</span> provides adequate but not excessive cushion against earnings volatility.';
+      else h += 'Interest coverage of <span class="mono pos">'+f(_ic,1)+'x</span> is strong, indicating minimal risk that debt obligations will impair the business under reasonable stress scenarios.';
+    }
+  } else {
+    h += 'Leverage data is not available in the current dataset. The inability to assess balance sheet risk is itself a reason for caution.';
+  }
+  h += '</p>';
+
+  // Permanent loss risks from payload
+  var _plr = V9.permanent_loss_risks||[];
+  if(_plr.length > 0){
+    h += '<p>ATLAS has identified <span class="mono hl">'+_plr.length+'</span> potential permanent loss risk factor'+ (_plr.length>1?'s':'')+': ';
+    var _plrNames = [];
+    for(var _pi=0;_pi<_plr.length;_pi++) _plrNames.push(_plr[_pi][0]+' ('+_plr[_pi][1]+')');
+    h += _plrNames.join('; ')+'. ';
+    var _highP = _plr.filter(function(r){return r[1]==='High'}).length;
+    if(_highP > 0) h += '<span class="hl">'+_highP+' high-severity risk'+ (_highP>1?'s':'')+' flagged.</span> High-severity permanent loss risks demand that any investment thesis meet an elevated burden of proof. The potential for irrecoverable capital destruction outweighs the opportunity cost of inaction.';
+    else h += 'None are classified as high severity, but their presence warrants monitoring as conditions evolve.';
+    h += '</p>';
+  } else {
+    h += '<p>No specific permanent loss risks have been flagged by the engine. This does not mean risk is absent \u2014 it means the quantitative screens have not identified structural threats above threshold. Qualitative analysis remains the investor\'s responsibility.</p>';
+  }
+
+  // ── 5. CAPITAL ALLOCATION DISCIPLINE ──
+  h += '<div class="memo-hdr">V. Capital Allocation Discipline</div>';
+
+  h += '<p>';
+  if(_roe!=null && _caS > 0){
+    h += 'The central question for any long-term holder is whether retained earnings are being deployed at rates of return that exceed the cost of capital. ';
+    if(_roe > 15 && _caS >= 3.0) h += 'With ROE of <span class="mono hl">'+f(_roe)+'%</span> and a Capital Allocation score of <span class="mono hl">'+f(_caS,1)+'/5</span>, the evidence suggests that reinvestment is value-accretive. Each dollar retained has historically generated returns above what the shareholder could expect from alternative deployments at equivalent risk.';
+    else if(_roe > 10) h += 'ROE of <span class="mono hl">'+f(_roe)+'%</span> is adequate but not exceptional. The question is whether these returns justify the earnings retained by management or whether shareholders would be better served by higher distributions.';
+    else h += 'With ROE of <span class="mono hl">'+f(_roe)+'%</span>, the returns generated on retained capital are modest. Unless reinvestment opportunities improve materially, the business may be retaining earnings that would be more productively deployed elsewhere.';
+  }
+  h += '</p>';
+
+  // Buyback & dividend
+  if(FIN.buyback_yield!=null || FIN.dividend_yield!=null){
+    h += '<p>';
+    if(FIN.dividend_yield!=null && FIN.dividend_yield > 0){
+      h += 'The company pays a dividend yielding <span class="mono hl">'+f(FIN.dividend_yield,2)+'%</span>';
+      if(FIN.payout_ratio!=null) h += ' with a payout ratio of <span class="mono hl">'+f(FIN.payout_ratio)+'%</span>';
+      h += '. ';
+      if(FIN.payout_ratio!=null && FIN.payout_ratio > 80) h += 'The elevated payout ratio limits reinvestment flexibility and may be unsustainable if earnings contract. ';
+      else if(FIN.payout_ratio!=null && FIN.payout_ratio < 40) h += 'The low payout ratio suggests management retains the majority of earnings for reinvestment, which is appropriate only if reinvestment returns exceed the cost of capital. ';
+    }
+    if(FIN.buyback_yield!=null && FIN.buyback_yield > 0) h += 'Share repurchases contribute an additional <span class="mono hl">'+f(FIN.buyback_yield)+'%</span> yield. Buybacks are value-accretive only when executed below intrinsic value \u2014 at current pricing, this discipline warrants scrutiny.';
+    h += '</p>';
+  }
+
+  // ── 6. ENGINE OVERLAY (SECONDARY) ──
+  h += '<div class="memo-hdr">VI. Quantitative Engine Overlay</div>';
+  h += '<p style="margin-bottom:6px"><em>These signals influence timing, not intrinsic value. Valuation discipline remains primary.</em></p>';
+
+  h += '<p>The ATLAS composite score is <span class="mono hl">'+fS(comp,1)+'</span>';
+  if(cRaw!=null && cAdj!=null && Math.abs(cRaw-cAdj)>1) h += ' (risk-adjusted from raw <span class="mono">'+fS(cRaw,1)+'</span>)';
+  h += ', reflecting the weighted consensus of eight independent analytical engines spanning trend, valuation, consensus, volatility, macro, liquidity, global, and correlation dimensions. ';
+  h += 'The current market regime is classified as <span class="hl">'+regime+'</span>';
+  if(rel!=null) h += ' with <span class="mono hl">'+f(rel,2)+'</span> classification reliability';
+  h += '.</p>';
+
+  h += '<p>Trade Quality of <span class="mono hl">'+f(tq,3)+'</span> reflects the combined signal strength and data reliability. ';
+  if(tq!=null){
+    if(tq >= 0.10) h += 'This indicates a high-quality signal environment where the quantitative framework has sufficient confidence and data backing to provide actionable guidance on timing.';
+    else if(tq >= 0.03) h += 'Signal quality is moderate. The engine has directional conviction but data limitations or regime uncertainty reduce confidence. Position sizing should reflect this ambiguity.';
+    else h += 'Signal quality is low. The quantitative engine does not have sufficient confidence in the current data environment to provide reliable timing guidance. In such conditions, the engine output should be treated as informational rather than actionable.';
+  }
+  h += '</p>';
+
+  h += '<div class="memo-aside">The composite score and trade quality are tools for position sizing and entry timing within an already-validated investment thesis. They are not substitutes for margin-of-safety analysis. A high composite score on an overvalued security remains a pass.</div>';
+
+  // ── 7. OWNER CONCLUSION ──
+  h += '<div class="memo-hdr">VII. Owner Conclusion</div>';
+  var _dec = V9.v9_decision||verdict;
+  var _reason = V9.decision_reason||'';
+  var _conv = V9.conviction||0;
+
+  h += '<p style="font-size:14px;font-weight:600;color:var(--t1)">Decision: <span class="pill '+pillV(_dec)+'" style="font-size:13px;padding:3px 12px">'+_dec+'</span></p>';
+
+  if(_dec === 'BUY'){
+    h += '<p>The analysis supports capital deployment. Business quality, competitive durability, and margin of safety each meet the required thresholds. Conviction stands at <span class="mono hl">'+f(_conv,0)+'/100</span>, reflecting integrated confidence across all assessment dimensions. ';
+    h += 'The margin of safety provides a buffer against estimation error, and the business economics support long-term compounding at rates likely to exceed the cost of capital.</p>';
+    h += '<p>The alternative \u2014 inaction \u2014 would forgo an investment where the price-to-value relationship favors the buyer. Patience is a virtue, but excessive caution when a clear margin of safety exists is itself a form of capital misallocation.</p>';
+  } else if(_dec === 'PASS'){
+    h += '<p>Capital allocation discipline dictates that this position not be initiated at the current price. ';
+    if(_mosP < 0) h += 'The stock trades <span class="mono hl">'+f(Math.abs(_mosP),1)+'%</span> above estimated intrinsic value, which means purchasing today embeds negative margin of safety. ';
+    else if(_mosP < _reqM) h += 'While the stock trades near or modestly below estimated intrinsic value, the margin of safety of <span class="mono hl">'+fS(_mosP,1)+'%</span> does not meet the <span class="mono hl">'+f(_reqM,0)+'%</span> required for a '+_btype+' business. ';
+    h += 'Conviction stands at <span class="mono hl">'+f(_conv,0)+'/100</span>.</p>';
+    h += '<p>'+(_reason?_reason+'. ':'')+'The opposite action \u2014 buying \u2014 would require either a materially lower price, materially higher intrinsic value estimates (driven by improved fundamentals), or a reassessment of business quality that justifies a narrower margin of safety. None of these conditions is currently met.</p>';
+    h += '<p>Capital preservation takes precedence. The cost of inaction is the opportunity cost of this specific investment, which is bounded. The cost of overpaying is the permanent impairment of capital, which compounds. Intrinsic value remains the governing principle.</p>';
+  } else if(_dec === 'WATCH' || _dec === 'RESEARCH'){
+    h += '<p>The current analysis places this security in an observation category. ';
+    if(_bqS >= 2.5) h += 'Business quality is sufficient to warrant continued attention \u2014 the underlying economics are not disqualifying. ';
+    h += 'However, the conditions required for capital deployment are not yet satisfied. Conviction stands at <span class="mono hl">'+f(_conv,0)+'/100</span>. '+(_reason?_reason+'.':'')+'</p>';
+    h += '<p>What would change this assessment: ';
+    var _triggers = [];
+    if(_ivB > 0 && _mosP < _reqM) _triggers.push('a price decline to approximately $'+f(_ivB*(1-_reqM/100),0)+' or below (satisfying '+f(_reqM,0)+'% MOS)');
+    if(_bqS < 3.0) _triggers.push('improvement in business quality metrics through sustained margin expansion or competitive positioning');
+    if(_caS < 3.0) _triggers.push('evidence of improved capital allocation discipline');
+    if(_triggers.length > 0) h += _triggers.join('; ')+'. ';
+    else h += 'a meaningful shift in either price or business fundamentals that opens a clear margin of safety. ';
+    h += 'Until then, the rational posture is observation without commitment.</p>';
+  } else {
+    // HOLD, TRIM, EXIT, or other
+    h += '<p>Current assessment: <span class="hl">'+_dec+'</span>. '+(_reason?_reason+'. ':'')+'Conviction: <span class="mono hl">'+f(_conv,0)+'/100</span>. ';
+    h += 'The decision framework prioritizes protection of capital already deployed. Position management should reflect the current margin of safety and conviction level.</p>';
+  }
+
+  h += '<div class="memo-aside" style="margin-top:16px;border-left-color:var(--t3)">';
+  h += '<em>This memorandum is generated deterministically from ATLAS V10 engine output and publicly available financial data. It does not constitute financial advice, a recommendation to buy or sell securities, or a guarantee of future performance. All intrinsic value estimates are model-dependent and inherently uncertain. The investor bears full responsibility for independent analysis and capital allocation decisions.</em>';
+  h += '</div>';
+
+  h += '</div>'; // end .memo
+  h += '</div>'; // end narrative border-top wrapper
+
+  // Preserve LLM-generated narrative as collapsible reference (if available)
   var nar = V9.v9_narrative||'';
   if(nar){
-    h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
-    h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">V10 Narrative Assessment</div>';
+    h += '<div style="margin-top:12px">';
+    h += '<button class="collapse-btn" onclick="var b=this.nextElementSibling;b.classList.toggle(\'open\');this.textContent=b.classList.contains(\'open\')?\'\u25BE Hide AI Narrative\':\'\u25B8 AI Narrative (Slack Version)\'">\u25B8 AI Narrative (Slack Version)</button>';
+    h += '<div class="collapse-body">';
+    h += '<div style="font-size:10px;color:var(--t3);margin-bottom:6px">LLM-generated summary \u2014 provided for reference alongside the deterministic memorandum above.</div>';
     nar = nar.replace(/^(INVESTMENT SUMMARY)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(RECOMMENDED ACTION)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(DECISION TRIGGERS)/m,'<strong style="color:var(--t1)">$1</strong>');
     nar = nar.replace(/^(QUANTITATIVE OVERLAY)/m,'<strong style="color:var(--t1)">$1</strong>');
     h += '<div style="font-size:12px;line-height:1.7;color:var(--t2);white-space:pre-line">'+nar+'</div>';
-    h += '</div>';
+    h += '</div></div>';
   }
 
   h += '</div>'; // end card
