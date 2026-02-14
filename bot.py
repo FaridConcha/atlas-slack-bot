@@ -157,7 +157,7 @@ def _handle_shutdown(signum, frame):
             app.client.chat_postMessage(
                 channel=_last_channel,
                 thread_ts=_last_thread_ts,
-                text=":zzz: ATLAS is going offline (Render free-tier sleep). "
+                text=":zzz: ATLAS V9 is going offline (Render free-tier sleep). "
                      "Mention me again to wake up — takes ~30 seconds.",
             )
         except Exception:

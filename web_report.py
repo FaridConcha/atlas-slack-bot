@@ -23,7 +23,17 @@ import functools
 print = functools.partial(print, flush=True)  # noqa: A001
 
 ATLAS_WEB_BASE_URL = os.environ.get("ATLAS_WEB_BASE_URL", "http://localhost:8000")
-DB_PATH = str(Path(__file__).parent / "reports.db")
+
+# Use /opt/render/project/.data/ on Render (persists across sleep/wake, lost on deploy)
+# Fallback to local dir for development
+_RENDER_DATA_DIR = Path("/opt/render/project/.data")
+if _RENDER_DATA_DIR.exists():
+    _RENDER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    DB_PATH = str(_RENDER_DATA_DIR / "reports.db")
+else:
+    DB_PATH = str(Path(__file__).parent / "reports.db")
+
+print(f"[WEB_REPORT] Database path: {DB_PATH}")
 
 
 def _get_db() -> sqlite3.Connection:
