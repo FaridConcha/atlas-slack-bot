@@ -1083,19 +1083,33 @@ def _build_institutional(info):
 # ============================================================================
 
 def _build_dcf(info, financials):
-    """Simplified DCF fair value estimate."""
+    """Simplified DCF fair value estimate with fallback cash flow proxies."""
     try:
         mc = info.get('marketCap', 0) or 0
         price = resolve_price(info)
         revenue = financials.get('revenue_ttm', 0)
         fcf = financials.get('free_cash_flow', 0)
+        net_income = financials.get('net_income_ttm', 0)
+        ebitda = financials.get('ebitda', 0)
         rev_growth = financials.get('revenue_growth', 5) / 100  # As decimal
         shares = mc / price if price > 0 else 1
 
-        if revenue <= 0 or fcf <= 0 or shares <= 0:
+        if revenue <= 0 or shares <= 0:
             return {'bear': 0, 'base': 0, 'bull': 0}
 
-        fcf_margin = fcf / revenue
+        # Cash flow proxy: FCF → Net Income (75% haircut) → EBITDA (50% haircut)
+        cash_flow_source = 'fcf'
+        cash_proxy = fcf
+        if cash_proxy <= 0 and net_income > 0:
+            cash_proxy = net_income * 0.75  # Approximate FCF from earnings
+            cash_flow_source = 'net_income'
+        if cash_proxy <= 0 and ebitda > 0:
+            cash_proxy = ebitda * 0.50  # Conservative EBITDA-to-FCF conversion
+            cash_flow_source = 'ebitda'
+        if cash_proxy <= 0:
+            return {'bear': 0, 'base': 0, 'bull': 0}
+
+        fcf_margin = cash_proxy / revenue
         discount_rate = 0.10
         terminal_growth = 0.03
 
@@ -1123,10 +1137,15 @@ def _build_dcf(info, financials):
 
         base_fv = pv / shares
 
+        # Widen bear/bull range when using proxy cash flows
+        bear_mult = 0.70 if cash_flow_source != 'fcf' else 0.80
+        bull_mult = 1.30 if cash_flow_source != 'fcf' else 1.25
+
         return {
-            'bear': round(base_fv * 0.80, 2),
+            'bear': round(base_fv * bear_mult, 2),
             'base': round(base_fv, 2),
-            'bull': round(base_fv * 1.25, 2),
+            'bull': round(base_fv * bull_mult, 2),
+            'cash_flow_source': cash_flow_source,
             'assumptions': {
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),

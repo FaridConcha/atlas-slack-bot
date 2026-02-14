@@ -1316,6 +1316,10 @@ if(DCF && DCF.assumptions){
   h += '<div style="margin-top:12px;padding:8px 12px;background:var(--bg2);border-radius:var(--r);font-size:11px;color:var(--t2);font-style:italic">';
   h += 'DCF is a simplified 5-year model. Revenue growth decays toward terminal rate. FCF margin held constant. ';
   h += 'A 1% change in WACC shifts fair value by ~15-20%. Treat as directional guidance, not precision.';
+  if(DCF.cash_flow_source && DCF.cash_flow_source!=='fcf'){
+    var _cfs = DCF.cash_flow_source==='net_income'?'net income (75% conversion)':'EBITDA (50% conversion)';
+    h += '<div style="margin-top:6px;color:var(--warn)">Note: FCF was not available. Cash flow proxy used: '+_cfs+'. Wider bear/bull range applied to reflect additional uncertainty.</div>';
+  }
   h += '</div>';
   h += '</div>';
 }
