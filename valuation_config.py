@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATLAS V10 — Valuation Governance Configuration
+ATLAS V12 — Valuation Governance Configuration
 
 Single source of truth for all institutional valuation constants.
 Every governance module imports from here. No magic numbers elsewhere.

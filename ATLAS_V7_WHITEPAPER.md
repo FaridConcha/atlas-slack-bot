@@ -642,8 +642,12 @@ These are surfaced in Message 3 as warnings to the user.
 | V4 | Complete 11-layer engine rewrite from mathematical specification |
 | V5 | Added Layer 11 trader abstraction with decision rules and suppression |
 | V6 | Narrative rewrite: _build_narrative(), _expand_driver(), context-aware triggers, 4-message format |
-| V7 (current) | Middle-ground format: engine scoreboard, buy zones, dual stops, R:R, risk decomposition, conditional triggers, regime annotations, weight matrix, execution mode explanations |
-| V10 Stage 1 Hardening (Feb 14, 2026) | `atlas_engine.py` code hygiene: removed unused `import os`, narrowed 3 bare `except:` clauses to `except (ValueError, TypeError):` at `safe_float()`, `slope()`, and `load_meta_state()`. No engine math, scoring formulas, or trading logic modified. Dead `_pct_return()` function removed from `v8_data.py`. |
+| V7 | Middle-ground format: engine scoreboard, buy zones, dual stops, R:R, risk decomposition, conditional triggers, regime annotations, weight matrix, execution mode explanations |
+| V8 | Full-spectrum data fetcher, 10-section report, extended analytics |
+| V9 | Owner intelligence layer: BQ, Moat, CA, conviction, MOS, decision hierarchy |
+| V10 | Integrated web dashboard, full report platform |
+| V11 | Institutional governance: beta stabilization, WACC clamps, dynamic MOS, fragility scoring, terminal governance, narrative gating, InstitutionalDCF scaffold |
+| V12 (current) | Data resilience: null propagation, canonical suppression mode, TQ reconciliation, fast_info fallback, financial statement fallbacks |
 
 ---
 

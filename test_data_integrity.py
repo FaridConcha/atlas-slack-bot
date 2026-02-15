@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATLAS V10 — Data Integrity Regression Tests
+ATLAS V12 — Data Integrity Regression Tests
 
 Tests the None-safe data pipeline, fundamental integrity checks,
 DCF gating, and scoring behavior with missing data.

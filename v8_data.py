@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATLAS V8 — Extended Data Fetcher
+ATLAS V12 — Extended Data Fetcher
 Fetches additional data beyond what the ATLAS engine needs.
 Used by v8_report.py to generate the full 10-section report.
 
@@ -317,7 +317,7 @@ def _safe_info(ticker):
             if enriched > 0:
                 info['_fast_info_enriched'] = True
                 info['_fast_info_fields'] = enriched
-                print(f"[V8]   fast_info enriched {enriched} missing fields")
+                print(f"[V12]   fast_info enriched {enriched} missing fields")
 
     return info
 
@@ -350,7 +350,7 @@ def fetch_v8_data(symbol, fred_api_key=None):
         dict with keys: company, financials, earnings, technicals,
         peers, news, sector, market, economic, institutional, dcf
     """
-    print(f"[V8] Fetching extended data for {symbol}...")
+    print(f"[V12] Fetching extended data for {symbol}...")
     ticker = yf.Ticker(symbol)
     info = _safe_info(ticker)
 
@@ -360,10 +360,10 @@ def fetch_v8_data(symbol, fred_api_key=None):
     except Exception:
         hist = None
 
-    print(f"[V8]   Building company info...")
+    print(f"[V12]   Building company info...")
     company = _build_company_info(info, symbol, hist=hist)
 
-    print(f"[V8]   Building financials...")
+    print(f"[V12]   Building financials...")
     financials = _build_financials(ticker, info, hist=hist)
 
     # Sync fundamentals quality with financial integrity status and serialize
@@ -390,34 +390,34 @@ def fetch_v8_data(symbol, fred_api_key=None):
             'report_mode': fq.report_mode.value,
         }
 
-    print(f"[V8]   Building earnings history...")
+    print(f"[V12]   Building earnings history...")
     earnings = _build_earnings(ticker)
 
-    print(f"[V8]   Computing technicals...")
+    print(f"[V12]   Computing technicals...")
     technicals = _build_technicals(hist, info)
 
-    print(f"[V8]   Fetching peer data...")
+    print(f"[V12]   Fetching peer data...")
     peers = _build_peers(symbol, info)
 
-    print(f"[V8]   Fetching news...")
+    print(f"[V12]   Fetching news...")
     news = _build_news(ticker)
 
-    print(f"[V8]   Fetching sector performance...")
+    print(f"[V12]   Fetching sector performance...")
     sector = _build_sector(info)
 
-    print(f"[V8]   Building market dashboard...")
+    print(f"[V12]   Building market dashboard...")
     market = _build_market_dashboard()
 
-    print(f"[V8]   Fetching economic indicators...")
+    print(f"[V12]   Fetching economic indicators...")
     economic = _build_economic(fred_api_key)
 
-    print(f"[V8]   Building institutional data...")
+    print(f"[V12]   Building institutional data...")
     institutional = _build_institutional(info)
 
-    print(f"[V8]   Computing DCF model...")
+    print(f"[V12]   Computing DCF model...")
     dcf = _build_dcf(info, financials, sector=info.get('sector'))
 
-    print(f"[V8] Extended data complete for {symbol}")
+    print(f"[V12] Extended data complete for {symbol}")
 
     return {
         'company': company,
@@ -1188,7 +1188,7 @@ def _build_news(ticker):
             })
         return articles
     except Exception as e:
-        print(f"[V8]   News fetch error: {e}")
+        print(f"[V12]   News fetch error: {e}")
         return []
 
 
@@ -1361,7 +1361,7 @@ def _build_market_dashboard():
             })
 
     except Exception as e:
-        print(f"[V8]   Market dashboard error: {e}")
+        print(f"[V12]   Market dashboard error: {e}")
 
     return result
 
@@ -1468,10 +1468,10 @@ def _build_economic(fred_api_key=None):
         return default
 
     except ImportError:
-        print("[V8]   fredapi not installed, using yfinance proxies")
+        print("[V12]   fredapi not installed, using yfinance proxies")
         return default
     except Exception as e:
-        print(f"[V8]   FRED error: {e}")
+        print(f"[V12]   FRED error: {e}")
         return default
 
 

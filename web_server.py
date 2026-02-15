@@ -317,7 +317,7 @@ if(price!=null) h += '<span class="mono" style="font-size:18px;font-weight:600">
 h += '<span class="pill '+pillV(verdict)+'" style="margin-left:auto;font-size:12px;padding:3px 10px">'+verdict+'</span>';
 h += '</div>';
 h += '<div style="font-size:11px;color:var(--t3);margin-bottom:16px">';
-h += 'ATLAS V10';
+h += 'ATLAS V12';
 if(D.created_at) h += ' &middot; '+new Date(D.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
 if(P.fallback_mode) h += ' &middot; Data: '+P.fallback_mode;
 h += '</div>';
@@ -355,7 +355,7 @@ if(_reconErrs.length > 0){
 // SECTION: OWNER ASSESSMENT
 // ════════════════════════════════════════════════════
 if(V9.v9_decision){
-  h += '<div class="section-label">V10 Owner Assessment</div>';
+  h += '<div class="section-label">V12 Owner Assessment</div>';
   // Data integrity banner
   if(_dataStatus==='INVALID'){
     h += '<div class="card" style="border-color:var(--neg);border-width:2px;background:rgba(248,81,73,0.08);padding:12px;margin-bottom:8px">';
@@ -524,12 +524,12 @@ if(V9.v9_decision){
   h += '</div>';
 
   // ════════════════════════════════════════════════════
-  // V10 OWNER MEMORANDUM (Full Web Report only)
+  // V12 OWNER MEMORANDUM (Full Web Report only)
   // Deterministic long-form narrative built from payload.
   // Slackbot narrative (gemini_qa) is NOT affected.
   // ════════════════════════════════════════════════════
   h += '<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:16px">';
-  h += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);margin-bottom:14px">V10 Owner Memorandum</div>';
+  h += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);margin-bottom:14px">V12 Owner Memorandum</div>';
   var _dc = S.data_confidence||100;
   if(_dc < 70){
     h += '<div class="memo-aside" style="border-left-color:var(--warn);margin-bottom:12px">\u26A0 Data confidence '+f(_dc,0)+'% \u2014 below 70% threshold. Quantitative conclusions should be treated with additional skepticism. Missing data may bias valuation estimates.</div>';
@@ -616,7 +616,7 @@ if(V9.v9_decision){
   var _moS = V9.moat_durability||0;
   var _caS = V9.capital_allocation||0;
 
-  h += '<p>ATLAS V10 assigns a Business Quality score of <span class="mono hl">'+f(_bqS,1)+'/5</span>. ';
+  h += '<p>ATLAS V12 assigns a Business Quality score of <span class="mono hl">'+f(_bqS,1)+'/5</span>. ';
   if(_bqS >= 4.0) h += 'This places the business in the top tier of quality assessment \u2014 the kind of business a patient owner would prefer to hold indefinitely. Earnings are likely durable, competitive positioning appears strong, and the economics of the business reward long-term ownership.';
   else if(_bqS >= 3.0) h += 'This reflects a business of above-average quality with identifiable strengths. While not in the highest tier, the economic characteristics suggest a business capable of sustaining reasonable returns over time, provided competitive dynamics remain favorable.';
   else if(_bqS >= 2.0) h += 'This indicates an average-quality business. The economic returns are adequate but not exceptional, and the business likely faces competitive pressures that could erode profitability over a full economic cycle. An owner should demand a wider margin of safety to compensate for this uncertainty.';
@@ -832,7 +832,7 @@ if(V9.v9_decision){
   }
 
   h += '<div class="memo-aside" style="margin-top:16px;border-left-color:var(--t3)">';
-  h += '<em>This memorandum is generated deterministically from ATLAS V10 engine output and publicly available financial data. It does not constitute financial advice, a recommendation to buy or sell securities, or a guarantee of future performance. All intrinsic value estimates are model-dependent and inherently uncertain. The investor bears full responsibility for independent analysis and capital allocation decisions.</em>';
+  h += '<em>This memorandum is generated deterministically from ATLAS V12 engine output and publicly available financial data. It does not constitute financial advice, a recommendation to buy or sell securities, or a guarantee of future performance. All intrinsic value estimates are model-dependent and inherently uncertain. The investor bears full responsibility for independent analysis and capital allocation decisions.</em>';
   h += '</div>';
 
   h += '</div>'; // end .memo
@@ -2282,10 +2282,10 @@ if(cAdj!=null && dc!=null && rel!=null){
 }
 h += '</div>';
 
-// V10 Owner Decision Derivation
+// V12 Owner Decision Derivation
 if(V9.v9_decision){
   h += '<div class="formula" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">';
-  h += '<span class="hl">V10 OWNER DECISION HIERARCHY</span>\n\n';
+  h += '<span class="hl">V12 OWNER DECISION HIERARCHY</span>\n\n';
   h += '  Step 1: Business Quality Gate\n';
   h += '    Quality = <span class="hl">'+f(V9.business_quality)+'/5</span>';
   if(V9.business_quality<1.5) h += '  <span class="neg">FAIL \u2192 PASS</span>';
@@ -2598,8 +2598,8 @@ h += '</div>';
 
 // ── H) Owner Decision Hierarchy (Expanded) ──
 if(V9.v9_decision){
-  h += '<div class="mhdr">V10 OWNER DECISION HIERARCHY \u2014 GATE LOGIC</div>';
-  h += '<div class="mnote">ATLAS V10 uses a sequential gate system (Buffett/Munger). Each gate must pass before the next is evaluated. Failure at any gate produces a PASS decision (do not buy). Capital is only deployed when ALL conditions are met.</div>';
+  h += '<div class="mhdr">V12 OWNER DECISION HIERARCHY \u2014 GATE LOGIC</div>';
+  h += '<div class="mnote">ATLAS V12 uses a sequential gate system (Buffett/Munger). Each gate must pass before the next is evaluated. Failure at any gate produces a PASS decision (do not buy). Capital is only deployed when ALL conditions are met.</div>';
   h += '<div class="mblk">';
   h += '<span class="hl">STEP 1 \u2014 BUSINESS QUALITY GATE</span>\n';
   h += '  Test: BQ \u2265 1.5\n';
@@ -2672,7 +2672,7 @@ h += '</div></div>'; // end collapse-body and card
 
 // PROVENANCE FOOTER
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
-h += '<span>ATLAS V10</span>';
+h += '<span>ATLAS V12</span>';
 if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
 h += '<span>'+mode+'</span>';
 if(dc!=null) h += '<span>DC '+f(dc,0)+'%</span>';
