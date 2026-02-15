@@ -16,6 +16,7 @@ from valuation_config import (
     CONFIG, MOAT_PROTECTED_INDUSTRIES, THIN_MARGIN_NET_THRESHOLD,
     THIN_MARGIN_OP_THRESHOLD, FRAGILITY_LOW_WACC, FRAGILITY_HIGH_TERMINAL_DEP,
     FRAGILITY_LOW_DATA_CONF, FRAGILITY_FLAT_MARGINS,
+    BetaPath, SectorProvenance,
 )
 
 
@@ -319,17 +320,21 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
     build = []
     total_pp = 0.0
 
-    # 1. Base
+    # 1. Base — always present
     base_pct = cfg.base_for_type(business_type) * 100
     build.append({'component': 'base', 'adjustment': base_pct, 'reason': f'{business_type} business'})
     total_pp += base_pct
 
+    # P4: Show ALL components for audit transparency, even those at 0
     # 2. Data confidence uplift
     dc = data_confidence if data_confidence is not None else 100
     if dc < cfg.data_confidence_threshold:
         build.append({'component': 'data_confidence', 'adjustment': cfg.uplift_low_data_confidence,
                       'reason': f'Data confidence {dc:.0f}% < {cfg.data_confidence_threshold:.0f}%'})
         total_pp += cfg.uplift_low_data_confidence
+    else:
+        build.append({'component': 'data_confidence', 'adjustment': 0,
+                      'reason': f'Data confidence {dc:.0f}% >= {cfg.data_confidence_threshold:.0f}% (no uplift)'})
 
     # 3. Terminal dependence uplift
     assumptions = dcf.get('assumptions', {}) if dcf else {}
@@ -338,6 +343,9 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
         build.append({'component': 'terminal_dependence', 'adjustment': cfg.uplift_high_terminal_dep,
                       'reason': f'Terminal dependence {terminal_pct:.0f}% >= {cfg.terminal_dep_threshold:.0f}%'})
         total_pp += cfg.uplift_high_terminal_dep
+    else:
+        build.append({'component': 'terminal_dependence', 'adjustment': 0,
+                      'reason': f'Terminal dependence {terminal_pct:.0f}% < {cfg.terminal_dep_threshold:.0f}% (no uplift)'})
 
     # 4. WACC clamp uplift
     wacc_clamp_codes = assumptions.get('wacc_clamp_codes', []) or []
@@ -345,6 +353,9 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
         build.append({'component': 'wacc_clamp', 'adjustment': cfg.uplift_wacc_clamp,
                       'reason': f'WACC clamp applied: {", ".join(wacc_clamp_codes)}'})
         total_pp += cfg.uplift_wacc_clamp
+    else:
+        build.append({'component': 'wacc_clamp', 'adjustment': 0,
+                      'reason': 'No WACC clamp applied'})
 
     # 5. Leverage uplift
     de = _n(financials.get('debt_equity'))
@@ -356,6 +367,9 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
         build.append({'component': 'leverage', 'adjustment': cfg.uplift_high_leverage,
                       'reason': f'D/E {de:.1f}x > {cfg.leverage_high_threshold:.0f}x (high)'})
         total_pp += cfg.uplift_high_leverage
+    else:
+        build.append({'component': 'leverage', 'adjustment': 0,
+                      'reason': f'D/E {de:.1f}x <= {cfg.leverage_high_threshold:.0f}x (no uplift)'})
 
     # 6. Value creation shortfall (ROE < WACC proxy)
     roe = _n(financials.get('roe'))
@@ -364,6 +378,12 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
         build.append({'component': 'value_creation', 'adjustment': cfg.uplift_value_destruction,
                       'reason': f'ROE {roe:.1f}% < WACC {wacc_proxy:.1f}% (value destruction)'})
         total_pp += cfg.uplift_value_destruction
+    elif roe > 0:
+        build.append({'component': 'value_creation', 'adjustment': 0,
+                      'reason': f'ROE {roe:.1f}% >= WACC {wacc_proxy:.1f}% (value creator)'})
+    else:
+        build.append({'component': 'value_creation', 'adjustment': 0,
+                      'reason': 'ROE not available'})
 
     # 7. Fragility uplift (per extra contributor beyond 1)
     n_frag = len(fragility_contributors)
@@ -374,9 +394,11 @@ def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragil
                       'reason': f'{n_frag} fragility contributors ({", ".join(fragility_contributors)})'})
         total_pp += frag_uplift
     elif n_frag == 1:
-        # Single contributor: note it but no extra uplift
         build.append({'component': 'fragility', 'adjustment': 0,
                       'reason': f'1 fragility contributor ({fragility_contributors[0]})'})
+    else:
+        build.append({'component': 'fragility', 'adjustment': 0,
+                      'reason': 'No fragility contributors'})
 
     required_mos = total_pp / 100.0
     return (round(required_mos, 4), build)
@@ -468,26 +490,38 @@ def _compute_v9_owner_scores(summary, v8_data):
     data_status = fin.get('_data_status', 'OK')
 
     # --- GATE: If fundamentals INVALID, return degraded assessment ---
+    # P3: Return None (not 0) for BQ/Moat/CA — "not scoreable" not "scored zero"
     if data_status == 'INVALID':
         data_reasons = fin.get('_data_reasons', [])
         return {
-            'business_quality': 0,
-            'moat_durability': 0,
-            'capital_allocation': 0,
-            'mos_pct': 0,
-            'mos_price_based': 0,
+            'business_quality': None,
+            'moat_durability': None,
+            'capital_allocation': None,
+            'mos_pct': None,
+            'mos_price_based': None,
+            'mos_iv_basis': None,
+            'premium_to_iv': None,
             'intrinsic_value_base': 0,
             'intrinsic_value_bear': 0,
             'intrinsic_value_bull': 0,
             'v9_decision': 'RESEARCH',
             'decision_reason': f"Fundamental data unavailable ({', '.join(data_reasons[:3])}). Cannot assess.",
-            'required_mos': 0.45,
+            'required_mos': None,
             'required_price': 0,
             'business_type': 'Unknown',
-            'conviction': 0,
+            'conviction': None,
             'permanent_loss_risks': [("Data integrity failure", "High",
                 "Core financial data missing or invalid — analysis suppressed")],
             '_data_status': data_status,
+            'mos_build': [],
+            'fragility_score': 0,
+            'fragility_contributors': [],
+            'ca_evidence': {},
+            'iv_confidence': None,
+            'terminal_penalty': 0,
+            'terminal_pct': 0,
+            'terminal_flags': [],
+            '_dcf_disabled': True,
         }
 
     # --- Business Quality Score (0-5) ---
@@ -748,36 +782,55 @@ def _compute_v9_owner_scores(summary, v8_data):
     # IV confidence: LOW when terminal_pct >= extreme threshold
     iv_confidence = 'LOW' if terminal_pct >= CONFIG.terminal.extreme_threshold else 'NORMAL'
 
-    # Price-based MOS for display
+    # P0: MOS semantics — explicit IV-basis and premium-to-IV fields
+    # mos_iv_basis: (IV - Price) / IV — "discount from IV" (positive = undervalued)
+    # premium_to_iv: (Price / IV) - 1 — "how much over IV" (positive = overvalued)
+    mos_iv_basis = round((base_iv - price) / base_iv * 100, 1) if base_iv > 0 else None
+    premium_to_iv = round((price / base_iv - 1) * 100, 1) if base_iv > 0 else None
+
+    # Price-based MOS for display (legacy: relative to price)
     mos_price_based = round((base_iv - price) / price * 100, 1) if price > 0 else 0
 
-    # --- Capital Allocation Evidence (Stage 5) ---
+    # --- Capital Allocation Evidence (Stage 5 + P5 fix) ---
     ca_evidence = {}
     if CONFIG.flags.ca_evidence:
         wacc_proxy_used = dcf.get('assumptions', {}).get('discount_rate', 8) or 8
         roic_proxy = roe * (1 - de / (1 + de)) if de >= 0 and (1 + de) > 0 else roe
+        is_value_creator = roic_proxy > wacc_proxy_used
+
+        # P5: Buyback discipline must account for value creation.
+        # If ROIC < WACC, buybacks destroy value regardless of PE level.
+        if bb > 0:
+            if not is_value_creator:
+                buyback_discipline = 'DESTROYS_VALUE'  # P5: buybacks at any PE destroy value
+            elif fwd_pe > 0 and fwd_pe < 20:
+                buyback_discipline = 'GOOD'
+            elif fwd_pe > 30:
+                buyback_discipline = 'QUESTIONABLE'
+            else:
+                buyback_discipline = 'ADEQUATE'
+        else:
+            buyback_discipline = 'NONE'
+
         ca_evidence = {
             'roic_proxy': round(roic_proxy, 2),
             'wacc_proxy': round(wacc_proxy_used, 2),
             'roic_wacc_spread': round(roic_proxy - wacc_proxy_used, 2),
             'buyback_yield': round(_n(fin.get('buyback_yield')), 2),
             'buyback_fwd_pe': round(fwd_pe, 1),
-            'buyback_discipline': (
-                'GOOD' if bb > 0 and fwd_pe > 0 and fwd_pe < 20
-                else 'QUESTIONABLE' if bb > 0 and fwd_pe > 30
-                else 'ADEQUATE' if bb > 0
-                else 'NONE'
-            ),
+            'buyback_discipline': buyback_discipline,
             'reason_codes': [],
         }
-        if roic_proxy > wacc_proxy_used:
+        if is_value_creator:
             ca_evidence['reason_codes'].append('VALUE_CREATOR')
         else:
             ca_evidence['reason_codes'].append('VALUE_DESTROYER')
-        if bb > 0 and fwd_pe > 0 and fwd_pe < 20:
+        if bb > 0 and is_value_creator and fwd_pe > 0 and fwd_pe < 20:
             ca_evidence['reason_codes'].append('BUYBACK_DISCIPLINED')
-        elif bb > 0 and fwd_pe > 30:
+        elif bb > 0 and is_value_creator and fwd_pe > 30:
             ca_evidence['reason_codes'].append('BUYBACK_OVERPRICED')
+        elif bb > 0 and not is_value_creator:
+            ca_evidence['reason_codes'].append('BUYBACK_VALUE_DESTRUCTIVE')
 
     return {
         'business_quality': business_quality,
@@ -785,6 +838,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         'capital_allocation': capital_allocation,
         'mos_pct': mos_pct,
         'mos_price_based': mos_price_based,
+        'mos_iv_basis': mos_iv_basis,
+        'premium_to_iv': premium_to_iv,
         'intrinsic_value_base': base_iv,
         'intrinsic_value_bear': dcf.get('bear', 0) if not dcf_disabled else 0,
         'intrinsic_value_bull': dcf.get('bull', 0) if not dcf_disabled else 0,
@@ -862,52 +917,80 @@ def _section_owner_assessment(summary, v8_data):
             + ". Results may have reduced accuracy.\n\n"
         )
 
-    # Scorecard
+    # Scorecard — P3: Handle None scores
     iv = v9['intrinsic_value_base']
     mos = v9['mos_pct']
-    mos_str = f"{mos:+.1f}%" if iv > 0 else "N/A"
+    bq = v9['business_quality']
+    moat = v9['moat_durability']
+    ca_score = v9['capital_allocation']
+    conv = v9['conviction']
+    req_mos = v9['required_mos']
+
+    # P0: Use premium_to_iv for overvalued, mos_iv_basis for undervalued
+    if iv > 0 and mos is not None:
+        premium = v9.get('premium_to_iv')
+        if premium is not None and premium > 0:
+            mos_str = f"{mos:+.1f}% (trading at {premium:.0f}% premium to IV)"
+        else:
+            mos_str = f"{mos:+.1f}%"
+    else:
+        mos_str = "N/A"
+
+    bq_str = f"{_stars(bq)}  {bq:.1f}/5" if bq is not None else "N/A  (data unavailable)"
+    moat_str = f"{_stars(moat)}  {moat:.1f}/5" if moat is not None else "N/A  (data unavailable)"
+    ca_str = f"{_stars(ca_score)}  {ca_score:.1f}/5" if ca_score is not None else "N/A  (data unavailable)"
+    conv_str = f"{conv}/100" if conv is not None else "N/A"
+    req_mos_str = f"{req_mos*100:.0f}%  ({v9['business_type']})" if req_mos is not None else "N/A"
 
     scorecard = (
         f"```\n"
-        f"Business Quality:     {_stars(v9['business_quality'])}  {v9['business_quality']:.1f}/5\n"
-        f"Moat Durability:      {_stars(v9['moat_durability'])}  {v9['moat_durability']:.1f}/5\n"
-        f"Capital Allocation:   {_stars(v9['capital_allocation'])}  {v9['capital_allocation']:.1f}/5\n"
+        f"Business Quality:     {bq_str}\n"
+        f"Moat Durability:      {moat_str}\n"
+        f"Capital Allocation:   {ca_str}\n"
         f"\n"
         f"Intrinsic Value:      ${iv:.2f}  (base DCF)\n"
         f"Current Price:        ${price:.2f}\n"
         f"Margin of Safety:     {mos_str}\n"
-        f"Required MOS:         {v9['required_mos']*100:.0f}%  ({v9['business_type']})\n"
+        f"Required MOS:         {req_mos_str}\n"
         f"\n"
-        f"Conviction:           {v9['conviction']}/100\n"
+        f"Conviction:           {conv_str}\n"
         f"```\n"
     )
 
     decision_block = f"{dec_emoji} *Decision: {decision}*\n> {v9['decision_reason']}\n"
 
-    # WHY (3 bullets)
+    # WHY (3 bullets) — P6: Evidence-gated assertions
     why_bullets = []
-    bq = v9['business_quality']
-    if bq >= 3.5:
-        why_bullets.append(f"Business quality {bq:.1f}/5 — high-quality compounder with durable economics")
-    elif bq >= 2.0:
-        why_bullets.append(f"Business quality {bq:.1f}/5 — adequate but not exceptional")
+    if bq is not None:
+        if bq >= 3.5:
+            why_bullets.append(f"Business quality {bq:.1f}/5 — high-quality compounder with durable economics")
+        elif bq >= 2.0:
+            why_bullets.append(f"Business quality {bq:.1f}/5 — adequate but not exceptional")
+        else:
+            why_bullets.append(f"Business quality {bq:.1f}/5 — structural weaknesses in business model")
     else:
-        why_bullets.append(f"Business quality {bq:.1f}/5 — structural weaknesses in business model")
+        why_bullets.append("Business quality: data insufficient to assess")
 
-    if iv > 0 and mos > 0:
+    if iv > 0 and mos is not None and mos > 0:
         why_bullets.append(f"Trading at {mos:.0f}% discount to intrinsic value (${iv:.2f}) — margin of safety present")
-    elif iv > 0:
+    elif iv > 0 and mos is not None:
         why_bullets.append(f"Trading at {abs(mos):.0f}% premium to intrinsic value — no margin of safety")
     else:
         why_bullets.append("Insufficient data for reliable intrinsic value estimate")
 
-    ca = v9['capital_allocation']
-    if ca >= 3.5:
-        why_bullets.append(f"Capital allocation {ca:.1f}/5 — management creating per-share value")
-    elif ca >= 2.0:
-        why_bullets.append(f"Capital allocation {ca:.1f}/5 — reasonable but room for improvement")
+    if ca_score is not None:
+        # P5/P6: Gate CA narrative on evidence — check ca_evidence for contradictions
+        ca_ev = v9.get('ca_evidence', {})
+        if ca_ev.get('reason_codes') and 'VALUE_DESTROYER' in ca_ev.get('reason_codes', []):
+            why_bullets.append(f"Capital allocation {ca_score:.1f}/5 — ROIC below cost of capital (value destruction)")
+        elif ca_score >= 3.5:
+            why_bullets.append(f"Capital allocation {ca_score:.1f}/5 — management creating per-share value")
+        elif ca_score >= 2.0:
+            why_bullets.append(f"Capital allocation {ca_score:.1f}/5 — reasonable but room for improvement")
+        else:
+            why_bullets.append(f"Capital allocation {ca_score:.1f}/5 — potential value destruction")
     else:
-        why_bullets.append(f"Capital allocation {ca:.1f}/5 — potential value destruction")
+        why_bullets.append("Capital allocation: data insufficient to assess")
 
     why_text = "\n".join(f"- {b}" for b in why_bullets[:3])
 
@@ -917,11 +1000,11 @@ def _section_owner_assessment(summary, v8_data):
         risk_bullets.append(f"[{severity}] {rname} — {rdesc}")
     risk_text = "\n".join(f"- {b}" for b in risk_bullets)
 
-    # WHAT WOULD CHANGE MY MIND
+    # WHAT WOULD CHANGE MY MIND — P6: guard None values
     change_bullets = []
     if decision in ('PASS', 'WATCH'):
-        if mos < v9['required_mos'] * 100:
-            needed_price = iv * (1 - v9['required_mos']) if iv > 0 else 0
+        if mos is not None and req_mos is not None and mos < req_mos * 100:
+            needed_price = iv * (1 - req_mos) if iv > 0 else 0
             if needed_price > 0:
                 change_bullets.append(f"Price decline to ~${needed_price:.0f} would provide adequate margin of safety")
         change_bullets.append("Structural improvement in business quality or competitive position")
@@ -940,18 +1023,19 @@ def _section_owner_assessment(summary, v8_data):
     tq = summary.get('trade_quality', 0)
     vix = summary.get('vix', 0)
 
-    # Engine conflict protocol
+    # Engine conflict protocol — P6: guard None mos
     conflict_note = ""
-    if composite > 30 and mos < 0:
-        conflict_note = (
-            "\n:warning: *Engine Conflict:* Quant engine favors momentum, but intrinsic value "
-            "suggests full valuation. Under capital preservation framework, patience is warranted."
-        )
-    elif composite < -30 and mos > v9['required_mos'] * 100:
-        conflict_note = (
-            "\n:bulb: *Engine Conflict:* Engine reacting to short-term trend weakness. However, "
-            "intrinsic value provides significant margin of safety. Long-term case remains intact."
-        )
+    if mos is not None and req_mos is not None:
+        if composite > 30 and mos < 0:
+            conflict_note = (
+                "\n:warning: *Engine Conflict:* Quant engine favors momentum, but intrinsic value "
+                "suggests full valuation. Under capital preservation framework, patience is warranted."
+            )
+        elif composite < -30 and mos > req_mos * 100:
+            conflict_note = (
+                "\n:bulb: *Engine Conflict:* Engine reacting to short-term trend weakness. However, "
+                "intrinsic value provides significant margin of safety. Long-term case remains intact."
+            )
 
     tactical = (
         f"\n_Tactical Overlay (engine): Regime={regime} | Composite={composite:+.1f} | "
@@ -1890,16 +1974,21 @@ def _section_engine_final(summary, v8_data):
     lines.append(f"  {v9['decision_reason']}")
     lines.append("")
 
-    # Business case
+    # Business case — P3/P6: guard None scores
     lines.append("BUSINESS CASE:")
     bq = v9['business_quality']
     moat = v9['moat_durability']
     ca = v9['capital_allocation']
     mos = v9['mos_pct']
     iv = v9['intrinsic_value_base']
-    lines.append(f"  Quality: {bq:.1f}/5  Moat: {moat:.1f}/5  CapAlloc: {ca:.1f}/5")
-    if iv > 0:
+    bq_s = f"{bq:.1f}" if bq is not None else "N/A"
+    moat_s = f"{moat:.1f}" if moat is not None else "N/A"
+    ca_s = f"{ca:.1f}" if ca is not None else "N/A"
+    lines.append(f"  Quality: {bq_s}/5  Moat: {moat_s}/5  CapAlloc: {ca_s}/5")
+    if iv > 0 and mos is not None:
         lines.append(f"  Intrinsic Value: ${iv:.2f}  |  MOS: {mos:+.1f}%")
+    elif iv > 0:
+        lines.append(f"  Intrinsic Value: ${iv:.2f}  |  MOS: N/A")
     lines.append("")
 
     # Quant overlay
@@ -1908,16 +1997,18 @@ def _section_engine_final(summary, v8_data):
     lines.append(f"  Signal: {quant_verdict} ({scores['composite']}/100)")
     lines.append(f"  Regime: {regime} | VIX: {summary.get('vix', 0):.1f}")
 
-    # Conflict note
+    # Conflict note — P6: guard None mos
     c_raw = summary.get('composite_raw', 0)
-    if c_raw > 30 and mos < 0:
-        lines.append("")
-        lines.append("  NOTE: Engine bullish but overvalued.")
-        lines.append("  Patience over momentum.")
-    elif c_raw < -30 and mos > v9['required_mos'] * 100:
-        lines.append("")
-        lines.append("  NOTE: Engine bearish but undervalued.")
-        lines.append("  Temporary weakness in durable business.")
+    req_mos = v9.get('required_mos')
+    if mos is not None and req_mos is not None:
+        if c_raw > 30 and mos < 0:
+            lines.append("")
+            lines.append("  NOTE: Engine bullish but overvalued.")
+            lines.append("  Patience over momentum.")
+        elif c_raw < -30 and mos > req_mos * 100:
+            lines.append("")
+            lines.append("  NOTE: Engine bearish but undervalued.")
+            lines.append("  Temporary weakness in durable business.")
 
     # Tactical levels (secondary)
     lines.append("")
@@ -1930,8 +2021,8 @@ def _section_engine_final(summary, v8_data):
         if tp and tp[0] > 0:
             lines.append(f"  Target: ${tp[0]:.2f} - ${tp[1]:.2f}")
     elif verdict in ('WATCH', 'RESEARCH'):
-        if iv > 0:
-            needed = iv * (1 - v9['required_mos'])
+        if iv > 0 and req_mos is not None:
+            needed = iv * (1 - req_mos)
             lines.append(f"  Buy below: ~${needed:.0f} (MOS threshold)")
         if sma50 > 0:
             lines.append(f"  Watch: ${sma50:.0f} (50d MA)")
@@ -1941,17 +2032,20 @@ def _section_engine_final(summary, v8_data):
         if stop > 0:
             lines.append(f"  Protect capital: stop at ${stop:.2f}")
 
-    # Position sizing by conviction
+    # Position sizing by conviction — P3: guard None
     conv = v9['conviction']
-    if conv >= 80:
-        size_note = "Candidate for top-10 holding"
-    elif conv >= 60:
-        size_note = "Meaningful but not core position"
-    elif conv >= 40:
-        size_note = "Opportunistic / small allocation"
+    if conv is not None:
+        if conv >= 80:
+            size_note = "Candidate for top-10 holding"
+        elif conv >= 60:
+            size_note = "Meaningful but not core position"
+        elif conv >= 40:
+            size_note = "Opportunistic / small allocation"
+        else:
+            size_note = "Insufficient conviction for capital deployment"
+        lines.append(f"  Sizing: {size_note} (conviction {conv}/100)")
     else:
-        size_note = "Insufficient conviction for capital deployment"
-    lines.append(f"  Sizing: {size_note} (conviction {conv}/100)")
+        lines.append(f"  Sizing: Data insufficient for conviction assessment")
 
     lines.append("")
     lines.append(f"{'=' * 50}")

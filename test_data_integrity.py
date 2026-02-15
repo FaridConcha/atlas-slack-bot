@@ -328,7 +328,8 @@ class TestV8Scoring:
         assert scores['_data_status'] == 'INVALID'
 
     def test_v9_scores_with_invalid_data(self):
-        """V9 owner scores should return RESEARCH with INVALID data."""
+        """V9 owner scores should return RESEARCH with INVALID data.
+        P3: scores are None (not 0) for INVALID — 'not scoreable' not 'scored zero'."""
         summary = {}
         v8_data = {
             'financials': {'_data_status': 'INVALID', '_data_reasons': ['market_cap_missing']},
@@ -339,8 +340,11 @@ class TestV8Scoring:
         }
         v9 = _compute_v9_owner_scores(summary, v8_data)
         assert v9['v9_decision'] == 'RESEARCH'
-        assert v9['business_quality'] == 0
-        assert v9['conviction'] == 0
+        assert v9['business_quality'] is None  # P3: not scoreable
+        assert v9['moat_durability'] is None
+        assert v9['capital_allocation'] is None
+        assert v9['conviction'] is None
+        assert v9['mos_pct'] is None
 
     def test_v9_scores_with_valid_data(self):
         """V9 owner scores should work normally with OK data."""
@@ -1635,8 +1639,8 @@ class TestCanonicalSuppression:
         fq = FundamentalsQuality(data_status='DEGRADED')
         assert fq.report_mode == ReportMode.PARTIAL
 
-    def test_invalid_scores_all_zero(self):
-        """Under INVALID, all scores return 0/null consistently."""
+    def test_invalid_scores_all_none(self):
+        """Under INVALID, all scores return None consistently (P3: 'not scoreable')."""
         v8_data = {
             'financials': {'_data_status': 'INVALID', '_data_reasons': ['market_cap_missing']},
             'company': {'price': 100, 'sector': None},
@@ -1646,11 +1650,11 @@ class TestCanonicalSuppression:
         }
         summary = {}
         v9 = _compute_v9_owner_scores(summary, v8_data)
-        assert v9['conviction'] == 0
-        assert v9['business_quality'] == 0
-        assert v9['moat_durability'] == 0
-        assert v9['capital_allocation'] == 0
-        assert v9['mos_pct'] == 0
+        assert v9['conviction'] is None
+        assert v9['business_quality'] is None
+        assert v9['moat_durability'] is None
+        assert v9['capital_allocation'] is None
+        assert v9['mos_pct'] is None
         assert v9['v9_decision'] == 'RESEARCH'
 
 
@@ -1738,6 +1742,285 @@ class TestBetaDefaulted:
         # DEFAULT_BETA_BOUNDS is (0.80, 1.60), so 0.42 → 0.80
         assert beta == 0.80
         assert 'BETA_FLOOR_APPLIED' in flags
+
+
+# ============================================================================
+# P0: MOS Semantics Tests
+# ============================================================================
+
+class TestMOSSemantics:
+    """P0: mos_iv_basis, premium_to_iv, narrative consistency."""
+
+    def _make_v9(self, price=200, iv=100):
+        v8_data = {
+            'financials': {
+                '_data_status': 'OK', 'roe': 20.0, 'net_margin': 15.0,
+                'revenue_growth': 8.0, 'free_cash_flow': 5e9, 'fcf_yield': 3.0,
+                'debt_equity': 1.0, 'gross_margin': 35.0, 'operating_margin': 18.0,
+                'market_cap': 150e9, 'interest_coverage': 12.0, 'buyback_yield': 2.0,
+                'forward_pe': 18.0, 'dividend_yield': 1.5, 'payout_ratio': 35.0,
+                'net_debt_ebitda': 2.0, 'total_cash': 8e9, 'total_debt': 40e9,
+                'recommendation': 'buy',
+            },
+            'company': {'price': price, 'market_cap': 150e9},
+            'dcf': {'bear': iv * 0.8, 'base': iv, 'bull': iv * 1.25,
+                    'assumptions': {'terminal_value_pct': 65, 'discount_rate': 9,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 10}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [{'beat': True}, {'beat': True}, {'beat': False}, {'beat': True}],
+        }
+        return _compute_v9_owner_scores({}, v8_data)
+
+    def test_mos_iv_basis_present(self):
+        """mos_iv_basis field exists and is IV-denominated."""
+        v9 = self._make_v9(price=80, iv=100)
+        assert 'mos_iv_basis' in v9
+        assert v9['mos_iv_basis'] is not None
+        # (100 - 80) / 100 = 20%
+        assert abs(v9['mos_iv_basis'] - 20.0) < 0.5
+
+    def test_premium_to_iv_present(self):
+        """premium_to_iv field exists: (price/IV - 1)."""
+        v9 = self._make_v9(price=120, iv=100)
+        assert 'premium_to_iv' in v9
+        # (120/100 - 1) = 20%
+        assert abs(v9['premium_to_iv'] - 20.0) < 0.5
+
+    def test_premium_positive_when_overvalued(self):
+        """premium_to_iv > 0 when price > IV."""
+        v9 = self._make_v9(price=150, iv=100)
+        assert v9['premium_to_iv'] > 0
+
+    def test_premium_negative_when_undervalued(self):
+        """premium_to_iv < 0 when price < IV."""
+        v9 = self._make_v9(price=80, iv=100)
+        assert v9['premium_to_iv'] < 0
+
+    def test_mos_none_when_invalid(self):
+        """P3+P0: mos_iv_basis is None when data INVALID."""
+        v8_data = {
+            'financials': {'_data_status': 'INVALID', '_data_reasons': ['mc_missing']},
+            'company': {'price': 100}, 'dcf': {'_dcf_disabled': True, 'bear': 0, 'base': 0, 'bull': 0},
+            'institutional': {}, 'earnings': [],
+        }
+        v9 = _compute_v9_owner_scores({}, v8_data)
+        assert v9['mos_iv_basis'] is None
+        assert v9['premium_to_iv'] is None
+
+
+# ============================================================================
+# P1: Sector Provenance Tests
+# ============================================================================
+
+class TestSectorProvenance:
+    """P1: Sector provenance tracking in DCF governance."""
+
+    def test_provider_sector_has_provenance(self):
+        """Known sector → sector_provenance = PROVIDER."""
+        info = {'currentPrice': 200.0, 'beta': 1.0, 'sector': 'Industrials'}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        dcf = _build_dcf(info, fin, sector='Industrials')
+        assert dcf['assumptions']['sector_provenance'] == 'PROVIDER'
+
+    def test_missing_sector_is_defaulted(self):
+        """Missing sector → sector_provenance = DEFAULTED."""
+        info = {'currentPrice': 200.0, 'beta': 1.0}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        dcf = _build_dcf(info, fin)
+        assert dcf['assumptions']['sector_provenance'] == 'DEFAULTED'
+
+    def test_defaulted_sector_no_sector_floor(self):
+        """P1: When sector is DEFAULTED, sector-specific WACC floor should NOT apply."""
+        from v8_data import _compute_wacc_governed
+        from valuation_config import SectorProvenance
+        # With Industrials floor (8.5%): if sector is DEFAULTED, should only use general floor (6.5%)
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(
+            0.80, 'Industrials', 1.5, sector_provenance=SectorProvenance.DEFAULTED
+        )
+        # General floor is 6.5%, WACC for beta=0.80 D/E=1.5 is ~5.5%
+        # Should floor at general (6.5%), NOT sector (8.5%)
+        assert abs(dr - 0.065) < 0.001
+        assert not any('SECTOR' in c for c in codes)
+
+    def test_provider_sector_applies_sector_floor(self):
+        """P1: When sector is from PROVIDER, sector floor DOES apply."""
+        from v8_data import _compute_wacc_governed
+        from valuation_config import SectorProvenance
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(
+            0.80, 'Industrials', 1.5, sector_provenance=SectorProvenance.PROVIDER
+        )
+        # Industrials sector floor is 8.5%
+        assert abs(dr - 0.085) < 0.001
+        assert any('SECTOR' in c for c in codes)
+
+
+# ============================================================================
+# P2: Beta Path Tests
+# ============================================================================
+
+class TestBetaPath:
+    """P2: Measured vs proxy beta paths."""
+
+    def test_measured_beta_path(self):
+        """When beta is reported, beta_path = MEASURED."""
+        info = {'currentPrice': 200.0, 'beta': 0.42, 'sector': 'Industrials'}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        dcf = _build_dcf(info, fin, sector='Industrials')
+        assert dcf['assumptions']['beta_path'] == 'MEASURED'
+
+    def test_proxy_beta_path(self):
+        """When beta is missing, beta_path = PROXY."""
+        info = {'currentPrice': 200.0, 'sector': 'Industrials'}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        dcf = _build_dcf(info, fin, sector='Industrials')
+        assert dcf['assumptions']['beta_path'] == 'PROXY'
+        assert dcf['assumptions']['beta_defaulted'] is True
+
+    def test_proxy_beta_skips_sector_stabilization(self):
+        """P2: Proxy beta (1.0) should NOT be sector-floored/capped."""
+        from valuation_config import BetaPath
+        # Proxy beta is 1.0 — should pass through without Industrials floor (0.80)
+        beta, flags = _stabilize_beta(1.0, 'Industrials', beta_path=BetaPath.PROXY)
+        assert beta == 1.0
+        assert 'BETA_PROXY_1_0' in flags
+        assert 'BETA_FLOOR_APPLIED' not in flags
+
+    def test_measured_beta_gets_stabilized(self):
+        """P2: Measured beta IS subject to sector stabilization."""
+        from valuation_config import BetaPath
+        beta, flags = _stabilize_beta(0.42, 'Industrials', beta_path=BetaPath.MEASURED)
+        assert beta == 0.80  # Industrials floor
+        assert 'BETA_FLOOR_APPLIED' in flags
+
+
+# ============================================================================
+# P4: MOS Build Completeness Tests
+# ============================================================================
+
+class TestMOSBuildCompleteness:
+    """P4: All MOS components shown, even non-triggered."""
+
+    def test_all_components_present(self):
+        """Even when no uplifts trigger, all 7 components present in build."""
+        dcf = {'assumptions': {'terminal_value_pct': 50, 'wacc_clamp_codes': [], 'discount_rate': 10}}
+        fin = {'debt_equity': 0.5, 'roe': 15}
+        mos, build = _compute_dynamic_mos('Very Stable', dcf, fin, 90, [])
+        components = [b['component'] for b in build]
+        assert 'base' in components
+        assert 'data_confidence' in components
+        assert 'terminal_dependence' in components
+        assert 'wacc_clamp' in components
+        assert 'leverage' in components
+        assert 'value_creation' in components
+        assert 'fragility' in components
+        assert len(build) == 7
+
+    def test_zero_adjustment_for_non_triggered(self):
+        """Non-triggered components show adjustment=0."""
+        dcf = {'assumptions': {'terminal_value_pct': 50, 'wacc_clamp_codes': [], 'discount_rate': 10}}
+        fin = {'debt_equity': 0.5, 'roe': 15}
+        mos, build = _compute_dynamic_mos('Very Stable', dcf, fin, 90, [])
+        dc_entry = next(b for b in build if b['component'] == 'data_confidence')
+        assert dc_entry['adjustment'] == 0
+        assert 'no uplift' in dc_entry['reason']
+
+
+# ============================================================================
+# P5: CA Evidence Contradiction Tests
+# ============================================================================
+
+class TestCAEvidenceContradictions:
+    """P5: Resolve ADEQUATE + VALUE_DESTROYER contradiction."""
+
+    def test_value_destroyer_buyback_discipline(self):
+        """P5: If ROIC < WACC, buybacks labeled DESTROYS_VALUE regardless of PE."""
+        v8_data = {
+            'financials': {
+                '_data_status': 'OK', 'roe': 5.0, 'net_margin': 3.0,
+                'revenue_growth': 2.0, 'free_cash_flow': 1e9, 'fcf_yield': 2.0,
+                'debt_equity': 1.5, 'gross_margin': 25.0, 'operating_margin': 8.0,
+                'market_cap': 50e9, 'interest_coverage': 6.0, 'buyback_yield': 3.0,
+                'forward_pe': 15.0, 'dividend_yield': 1.0, 'payout_ratio': 40.0,
+                'net_debt_ebitda': 3.0, 'total_cash': 5e9, 'total_debt': 20e9,
+                'recommendation': 'hold',
+            },
+            'company': {'price': 100.0, 'market_cap': 50e9},
+            'dcf': {'bear': 60.0, 'base': 80.0, 'bull': 100.0,
+                    'assumptions': {'terminal_value_pct': 70, 'discount_rate': 9,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 5}},
+            'institutional': {'short_pct': 3.0},
+            'earnings': [{'beat': True}, {'beat': False}],
+        }
+        v9 = _compute_v9_owner_scores({}, v8_data)
+        ca_ev = v9['ca_evidence']
+        # ROE 5% with D/E 1.5 → ROIC proxy ≈ 2% < WACC 9% → VALUE_DESTROYER
+        assert 'VALUE_DESTROYER' in ca_ev['reason_codes']
+        # P5: buyback_discipline must NOT be ADEQUATE when destroying value
+        assert ca_ev['buyback_discipline'] != 'ADEQUATE'
+        assert ca_ev['buyback_discipline'] == 'DESTROYS_VALUE'
+
+    def test_value_creator_good_buyback(self):
+        """Value creator with low PE → GOOD buyback discipline."""
+        v8_data = {
+            'financials': {
+                '_data_status': 'OK', 'roe': 25.0, 'net_margin': 20.0,
+                'revenue_growth': 10.0, 'free_cash_flow': 8e9, 'fcf_yield': 5.0,
+                'debt_equity': 0.5, 'gross_margin': 45.0, 'operating_margin': 25.0,
+                'market_cap': 150e9, 'interest_coverage': 20.0, 'buyback_yield': 4.0,
+                'forward_pe': 15.0, 'dividend_yield': 1.5, 'payout_ratio': 30.0,
+                'net_debt_ebitda': 1.0, 'total_cash': 10e9, 'total_debt': 15e9,
+                'recommendation': 'buy',
+            },
+            'company': {'price': 100.0, 'market_cap': 150e9},
+            'dcf': {'bear': 90.0, 'base': 110.0, 'bull': 140.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 12}},
+            'institutional': {'short_pct': 1.0},
+            'earnings': [{'beat': True}, {'beat': True}, {'beat': True}],
+        }
+        v9 = _compute_v9_owner_scores({}, v8_data)
+        ca_ev = v9['ca_evidence']
+        assert 'VALUE_CREATOR' in ca_ev['reason_codes']
+        assert ca_ev['buyback_discipline'] == 'GOOD'
+        assert 'BUYBACK_VALUE_DESTRUCTIVE' not in ca_ev['reason_codes']
+
+
+# ============================================================================
+# P6: Narrative Guardrails Tests
+# ============================================================================
+
+class TestNarrativeGuardrails:
+    """P6: Narrative assertions gated on evidence."""
+
+    def test_invalid_data_no_numeric_assertions(self):
+        """Under INVALID data, narrative should say 'data insufficient', not numeric claims."""
+        from v8_report import _section_owner_assessment
+        v8_data = {
+            'financials': {'_data_status': 'INVALID', '_data_reasons': ['market_cap_missing']},
+            'company': {'symbol': 'TEST', 'name': 'Test Corp', 'price': 100},
+            'dcf': {'_dcf_disabled': True, 'bear': 0, 'base': 0, 'bull': 0},
+            'institutional': {}, 'earnings': [],
+        }
+        section = _section_owner_assessment({}, v8_data)
+        assert 'data unavailable' in section.lower() or 'data insufficient' in section.lower()
+        # Should NOT contain score assertions like "X.X/5" for BQ/Moat/CA
+        assert 'N/A  (data unavailable)' in section
 
 
 if __name__ == '__main__':

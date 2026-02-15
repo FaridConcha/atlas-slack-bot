@@ -115,15 +115,15 @@ def _build_v9_data_block(v9_scores, summary, v8_extended):
         "--- V12 OWNER SCORES ---",
         f"Decision: {v9.get('v9_decision', 'N/A')}",
         f"Decision Reason: {v9.get('decision_reason', '')}",
-        f"Business Quality: {_safe_float(v9.get('business_quality')):.1f}/5",
-        f"Moat Durability: {_safe_float(v9.get('moat_durability')):.1f}/5",
-        f"Capital Allocation: {_safe_float(v9.get('capital_allocation')):.1f}/5",
+        f"Business Quality: {_safe_float(v9.get('business_quality')):.1f}/5" if v9.get('business_quality') is not None else "Business Quality: N/A (data unavailable)",
+        f"Moat Durability: {_safe_float(v9.get('moat_durability')):.1f}/5" if v9.get('moat_durability') is not None else "Moat Durability: N/A (data unavailable)",
+        f"Capital Allocation: {_safe_float(v9.get('capital_allocation')):.1f}/5" if v9.get('capital_allocation') is not None else "Capital Allocation: N/A (data unavailable)",
         f"Business Type: {v9.get('business_type', 'N/A')}",
         f"Intrinsic Value (Base): ${iv:.2f}" if iv > 0 else "Intrinsic Value (Base): N/A",
         f"Current Price: ${price:.2f}",
-        f"Margin of Safety: {_safe_float(v9.get('mos_pct')):+.1f}%",
-        f"Required MOS: {_safe_float(v9.get('required_mos'))*100:.0f}%",
-        f"Conviction: {v9.get('conviction', 0)}/100",
+        f"Margin of Safety: {_safe_float(v9.get('mos_pct')):+.1f}%" if v9.get('mos_pct') is not None else "Margin of Safety: N/A",
+        f"Required MOS: {_safe_float(v9.get('required_mos'))*100:.0f}%" if v9.get('required_mos') is not None else "Required MOS: N/A",
+        f"Conviction: {v9.get('conviction')}/100" if v9.get('conviction') is not None else "Conviction: N/A",
     ]
 
     risks = v9.get('permanent_loss_risks', [])
@@ -262,15 +262,21 @@ def build_context(symbol, summary, v8_extended):
         lines.append("")
         lines.append("--- V12 OWNER ASSESSMENT ---")
         lines.append(f"Decision: {v9.get('v9_decision', 'N/A')} — {v9.get('decision_reason', '')}")
-        lines.append(f"Business Quality: {v9.get('business_quality', 0):.1f}/5")
-        lines.append(f"Moat Durability: {v9.get('moat_durability', 0):.1f}/5")
-        lines.append(f"Capital Allocation: {v9.get('capital_allocation', 0):.1f}/5")
+        bq = v9.get('business_quality')
+        lines.append(f"Business Quality: {bq:.1f}/5" if bq is not None else "Business Quality: N/A")
+        md = v9.get('moat_durability')
+        lines.append(f"Moat Durability: {md:.1f}/5" if md is not None else "Moat Durability: N/A")
+        ca = v9.get('capital_allocation')
+        lines.append(f"Capital Allocation: {ca:.1f}/5" if ca is not None else "Capital Allocation: N/A")
         iv = v9.get('intrinsic_value_base', 0)
         if iv > 0:
             lines.append(f"Intrinsic Value (Base): ${iv:.2f}")
-            lines.append(f"Margin of Safety: {v9.get('mos_pct', 0):+.1f}%")
-            lines.append(f"Required MOS: {v9.get('required_mos', 0)*100:.0f}% ({v9.get('business_type', '')})")
-        lines.append(f"Conviction: {v9.get('conviction', 0)}/100")
+            mos_v = v9.get('mos_pct')
+            lines.append(f"Margin of Safety: {mos_v:+.1f}%" if mos_v is not None else "Margin of Safety: N/A")
+            req = v9.get('required_mos')
+            lines.append(f"Required MOS: {req*100:.0f}% ({v9.get('business_type', '')})" if req is not None else "Required MOS: N/A")
+        conv = v9.get('conviction')
+        lines.append(f"Conviction: {conv}/100" if conv is not None else "Conviction: N/A")
         perm_risks = v9.get('permanent_loss_risks', [])
         if perm_risks:
             lines.append(f"Permanent Loss Risks: {'; '.join(f'{r[0]} [{r[1]}]' for r in perm_risks[:3])}")

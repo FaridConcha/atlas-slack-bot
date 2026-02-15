@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from data_fetcher import resolve_price
 from valuation_config import (
     CONFIG, SECTOR_BETA_BOUNDS, DEFAULT_BETA_BOUNDS, SECTOR_WACC_FLOORS,
+    BetaPath, SectorProvenance,
 )
 
 
@@ -1493,9 +1494,12 @@ def _build_institutional(info):
 # BETA STABILIZATION + WACC GOVERNANCE (Stage 5)
 # ============================================================================
 
-def _stabilize_beta(raw_beta, sector):
+def _stabilize_beta(raw_beta, sector, beta_path=None):
     """
     Clamp raw beta to sector-appropriate bounds.
+
+    P2: When beta_path is PROXY, skip sector-specific stabilization
+    and only apply general bounds (the proxy already IS the fallback).
 
     Returns:
         (beta_used, flags: list[str])
@@ -1503,8 +1507,14 @@ def _stabilize_beta(raw_beta, sector):
     if not CONFIG.flags.beta_stabilization:
         return (raw_beta, [])
 
-    bounds = SECTOR_BETA_BOUNDS.get(sector, DEFAULT_BETA_BOUNDS)
     flags = []
+
+    # P2: Proxy betas skip sector stabilization — they're already conservative defaults
+    if beta_path == BetaPath.PROXY:
+        flags.append('BETA_PROXY_1_0')
+        return (round(raw_beta, 2), flags)
+
+    bounds = SECTOR_BETA_BOUNDS.get(sector, DEFAULT_BETA_BOUNDS)
 
     if raw_beta < 0.5:
         flags.append('LOW_BETA_WARNING')
@@ -1520,9 +1530,12 @@ def _stabilize_beta(raw_beta, sector):
     return (round(beta_used, 2), flags)
 
 
-def _compute_wacc_governed(beta, sector, de):
+def _compute_wacc_governed(beta, sector, de, sector_provenance=None):
     """
     Multi-layer WACC computation with sector and general floors.
+
+    P1: When sector_provenance is DEFAULTED, only apply general floor
+    (don't silently apply sector-specific floors for unknown sectors).
 
     Returns:
         (discount_rate, wacc_raw, reason_codes: list[str], audit: dict)
@@ -1568,16 +1581,21 @@ def _compute_wacc_governed(beta, sector, de):
     else:
         # Multi-layer governance clamp
         general_floor = cfg.wacc_general_floor
-        sector_floor = SECTOR_WACC_FLOORS.get(sector, general_floor)
         ceiling = cfg.wacc_ceiling
+
+        # P1: Only apply sector floor when sector is from PROVIDER (real data)
+        if sector_provenance == SectorProvenance.DEFAULTED or not sector:
+            sector_floor = general_floor  # Don't apply sector-specific floor
+        else:
+            sector_floor = SECTOR_WACC_FLOORS.get(sector, general_floor)
 
         discount_rate = wacc_raw
 
         # Apply floors (take the highest)
         if discount_rate < general_floor:
             reason_codes.append('FLOOR_GENERAL')
-        if discount_rate < sector_floor:
-            reason_codes.append(f'FLOOR_SECTOR_{sector.upper().replace(" ", "_")}' if sector else 'FLOOR_SECTOR_DEFAULT')
+        if sector_provenance != SectorProvenance.DEFAULTED and sector and discount_rate < sector_floor:
+            reason_codes.append(f'FLOOR_SECTOR_{sector.upper().replace(" ", "_")}')
 
         effective_floor = max(general_floor, sector_floor)
         if discount_rate < effective_floor:
@@ -1595,7 +1613,8 @@ def _compute_wacc_governed(beta, sector, de):
         'debt_weight': round(debt_weight, 4),
         'cap_structure_warning': cap_structure_warning,
         'wacc_general_floor': round(cfg.wacc_general_floor * 100, 2) if CONFIG.flags.wacc_governance else None,
-        'wacc_sector_floor': round(SECTOR_WACC_FLOORS.get(sector, cfg.wacc_general_floor) * 100, 2) if CONFIG.flags.wacc_governance else None,
+        'wacc_sector_floor': round(sector_floor * 100, 2) if CONFIG.flags.wacc_governance else None,
+        'sector_provenance': sector_provenance.value if sector_provenance else None,
     }
 
     return (round(discount_rate, 6), round(wacc_raw, 6), reason_codes, audit)
@@ -1657,8 +1676,14 @@ def _build_dcf(info, financials, sector=None):
         if _sector in ('Unknown', 'N/A', ''):
             _sector = ''
 
-        # Beta stabilization: clamp to sector bounds
-        beta, beta_flags = _stabilize_beta(beta_raw, _sector)
+        # P1: Sector provenance — track whether sector is real or defaulted
+        _sector_provenance = SectorProvenance.PROVIDER if _sector else SectorProvenance.DEFAULTED
+
+        # P2: Beta path — separate measured vs proxy
+        _beta_path = BetaPath.PROXY if beta_defaulted else BetaPath.MEASURED
+
+        # Beta stabilization: clamp to sector bounds (P2: proxy skips sector stabilization)
+        beta, beta_flags = _stabilize_beta(beta_raw, _sector, beta_path=_beta_path)
 
         risk_free = cfg.risk_free_rate
         erp = cfg.equity_risk_premium
@@ -1672,8 +1697,10 @@ def _build_dcf(info, financials, sector=None):
         # Capital structure weights from D/E — stored as decimals in [0,1]
         de = financials.get('debt_equity') or 0
 
-        # WACC governance: multi-layer clamp
-        discount_rate, wacc, wacc_clamp_codes, wacc_audit = _compute_wacc_governed(beta, _sector, de)
+        # WACC governance: multi-layer clamp (P1: pass sector provenance)
+        discount_rate, wacc, wacc_clamp_codes, wacc_audit = _compute_wacc_governed(
+            beta, _sector, de, sector_provenance=_sector_provenance
+        )
         equity_weight = wacc_audit['equity_weight']
         debt_weight = wacc_audit['debt_weight']
         cap_structure_warning = wacc_audit['cap_structure_warning']
@@ -1767,6 +1794,7 @@ def _build_dcf(info, financials, sector=None):
                 'beta': round(beta, 2),
                 'beta_raw': round(beta_raw, 2),
                 'beta_defaulted': beta_defaulted,
+                'beta_path': _beta_path.value,
                 'beta_flags': beta_flags,
                 'cost_of_equity': round(cost_of_equity * 100, 2),
                 'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),
@@ -1787,6 +1815,7 @@ def _build_dcf(info, financials, sector=None):
                 'wacc_general_floor': round(_gen_floor * 100, 2),
                 'wacc_sector_floor': round(_sec_floor * 100, 2),
                 'sector': _sector,
+                'sector_provenance': _sector_provenance.value,
                 # Growth & margin
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),

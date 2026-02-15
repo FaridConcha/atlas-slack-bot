@@ -23,6 +23,28 @@ class ReportMode(Enum):
 
 
 # ============================================================================
+# BETA POLICY (P2)
+# ============================================================================
+
+class BetaPath(Enum):
+    """Tracks how beta was determined."""
+    MEASURED = 'MEASURED'          # Provider-reported beta → stabilized
+    PROXY = 'PROXY'               # No beta available → default 1.0 proxy
+    DISABLED = 'DISABLED'         # Feature flag off → raw passthrough
+
+
+# ============================================================================
+# SECTOR PROVENANCE (P1)
+# ============================================================================
+
+class SectorProvenance(Enum):
+    """Tracks how sector classification was determined."""
+    PROVIDER = 'PROVIDER'         # Real sector from data provider
+    DEFAULTED = 'DEFAULTED'       # Sector unknown → governance uses general defaults
+    OVERRIDE = 'OVERRIDE'         # Manually overridden (future)
+
+
+# ============================================================================
 # FUNDAMENTALS QUALITY
 # ============================================================================
 
