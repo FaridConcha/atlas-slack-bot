@@ -346,7 +346,7 @@ def _score_sentiment(title):
 # MAIN ENTRY POINT
 # ============================================================================
 
-def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
+def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0, dc=None):
     """
     Fetch all extended data for V8 report.
 
@@ -354,10 +354,11 @@ def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
         symbol: Ticker symbol (e.g. 'AAPL')
         fred_api_key: Optional FRED API key for economic indicators
         regime_variance_mult: WACC sigma scaling from engine regime (default 1.0)
+        dc: Data confidence (0-100) from ATLAS engine. If < 50, MC is suppressed.
 
     Returns:
         dict with keys: company, financials, earnings, technicals,
-        peers, news, sector, market, economic, institutional, dcf
+        peers, news, sector, market, economic, institutional, dcf, _provenance
     """
     if regime_variance_mult is None:
         regime_variance_mult = 1.0
@@ -429,9 +430,24 @@ def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
     _price_for_dcf = company.get('price')
     dcf = _build_dcf(info, financials, sector=info.get('sector'),
                      ticker=symbol, price=_price_for_dcf,
-                     regime_variance_mult=regime_variance_mult)
+                     regime_variance_mult=regime_variance_mult, dc=dc)
 
     print(f"[V12] Extended data complete for {symbol}")
+
+    # Build provenance metadata
+    _estimated_fields = []
+    if financials and financials.get('interest_coverage') is not None:
+        _estimated_fields.append('interest_coverage')
+    if dcf and dcf.get('assumptions', {}).get('cash_flow_source') != 'fcf':
+        _estimated_fields.append('dcf_cash_flow')
+    _provenance = {
+        'timestamp_utc': datetime.now(tz=__import__('datetime').timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'data_source': 'yfinance',
+        'fundamentals_status': (financials or {}).get('_data_status', 'OK'),
+        'dcf_status': 'enabled' if not (dcf or {}).get('_dcf_disabled') else (dcf or {}).get('_dcf_reason', 'unknown'),
+        'cash_flow_source': (dcf or {}).get('assumptions', {}).get('cash_flow_source', 'unknown'),
+        'estimated_fields': _estimated_fields,
+    }
 
     return {
         'company': company,
@@ -445,6 +461,7 @@ def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
         'economic': economic,
         'institutional': institutional,
         'dcf': dcf,
+        '_provenance': _provenance,
     }
 
 
@@ -460,7 +477,7 @@ def _build_company_info(info, symbol, hist=None):
     """
     from valuation_config import FundamentalsQuality, CONFIG
 
-    price = resolve_price(info, hist)
+    price, _price_key = resolve_price(info, hist)
 
     # --- Raw extraction: None if truly missing ---
     # Beta/52w: treat 0 as missing (yfinance returns 0 for unavailable)
@@ -743,7 +760,7 @@ def _validate_financials(fin, info, price):
 
 def _build_financials(ticker, info, hist=None):
     """Comprehensive financial metrics with None-safe data propagation."""
-    price = resolve_price(info, hist)
+    price, _ = resolve_price(info, hist)
 
     # --- Core fundamentals: use None for missing, NEVER coerce to 0/1 ---
     mc = _safe_num(info.get('marketCap'), min_val=0)
@@ -940,7 +957,7 @@ def _build_technicals(hist, info):
     }
 
     if hist is None or len(hist) < 30:
-        default['price'] = resolve_price(info)
+        default['price'], _ = resolve_price(info)
         return default
 
     closes = hist['Close'].values.astype(float)
@@ -1111,7 +1128,7 @@ def _fetch_single_peer(sym):
         return {
             'symbol': sym,
             'name': i.get('shortName', sym),
-            'price': resolve_price(i),
+            'price': resolve_price(i)[0],
             'market_cap': i.get('marketCap', 0) or 0,
             'revenue_growth': round((i.get('revenueGrowth', 0) or 0) * 100, 1),
             'profit_margin': round((i.get('profitMargins', 0) or 0) * 100, 1),
@@ -1900,13 +1917,14 @@ def _compute_sensitivity(revenue, fcf_margin, discount_rate, terminal_growth,
 # DCF MODEL
 # ============================================================================
 
-def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_variance_mult=1.0):
+def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_variance_mult=1.0, dc=None):
     """
     DCF fair value estimate with full audit trail.
 
     Discounts UNLEVERED free cash flow at WACC.
     Produces EV, then subtracts net debt to arrive at equity value per share.
     regime_variance_mult: WACC sigma scaling from engine regime (1.0 = no scaling).
+    dc: Data confidence (0-100). If < 50, Monte Carlo is suppressed.
     """
     if regime_variance_mult is None:
         regime_variance_mult = 1.0
@@ -2061,7 +2079,9 @@ def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_va
         mc_result = None
         sensitivity_result = None
 
-        if CONFIG.flags.monte_carlo_dcf:
+        # Gate: skip Monte Carlo when data confidence is critically low
+        _mc_gated = dc is not None and dc < 50
+        if CONFIG.flags.monte_carlo_dcf and not _mc_gated:
             _ticker = ticker or ''
             _price = price
             seed = _ticker_seed(_ticker) if _ticker else 42
@@ -2075,6 +2095,9 @@ def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_va
                 price=_price, n_simulations=CONFIG.monte_carlo.n_simulations,
                 regime_variance_mult=regime_variance_mult,
             )
+            # Flag low-confidence MC results
+            if dc is not None and dc < 70 and mc_result is not None:
+                mc_result['_low_confidence'] = True
 
             sensitivity_result = _compute_sensitivity(
                 revenue=revenue, fcf_margin=fcf_margin,

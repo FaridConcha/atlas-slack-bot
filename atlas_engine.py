@@ -2964,6 +2964,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
 
     # Layer 0: Data Integrity
     dc, dc_details = compute_data_confidence(data)
+    assert 0 <= dc <= 100, f"DC out of bounds: {dc}"
 
     # Layer 1: Regime Vector (hard classification)
     regime_vector, rel, regime_label_hard = compute_regime_vector(data, scores_dict, engine_details)
@@ -2977,6 +2978,18 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     regime_probs = smooth_regime_probs(regime_probs, regime_probs_prev)
     regime_label = max(regime_probs, key=regime_probs.get)  # argmax of smoothed π
     state['regime_probs_prev'] = regime_probs
+
+    # Invariant: regime probabilities must sum to 1
+    assert abs(sum(regime_probs.values()) - 1.0) < 1e-4, f"Regime probs sum to {sum(regime_probs.values())}"
+
+    # Reliability correction: blend feature-based rel with regime classification quality
+    # High-confidence regimes (max_prob near 1, low entropy) boost reliability
+    # compute_regime_entropy returns normalized entropy in [0, 1]
+    _regime_entropy_norm = compute_regime_entropy(regime_probs)
+    _max_regime_prob = max(regime_probs.values())
+    _entropy_factor = 1.0 - min(_regime_entropy_norm, 1.0)  # 0=max entropy, 1=min entropy
+    rel = rel * 0.4 + _max_regime_prob * _entropy_factor * 0.6
+    rel = np.clip(rel, 0.05, 1.0)
 
     # [Step 10] DPMM Regime (opt-in alternative)
     dpmm_active = False
@@ -3081,12 +3094,23 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         regime_vector, c_raw, regime_label, dc, e_norm,
         risk_blend_alpha=risk_blend_alpha
     )
+    assert 0.0 <= g <= 1.0, f"Gate out of bounds: {g}"
 
-    # Layer 7: Trade Quality
-    tq, tq_category = compute_trade_quality(c_raw, rel, g, dc)
+    # Layer 7: Trade Quality (uses confidence-adjusted composite so high-uncertainty
+    # signals produce lower TQ)
+    tq, tq_category = compute_trade_quality(c_conf, rel, g, dc)
+
+    # DC threshold suppression: low data confidence caps directional sizing
+    if dc < 70 and tq_category in ("NORMAL_DIRECTIONAL", "STRONG_DIRECTIONAL"):
+        tq_category = "SMALL_DIRECTIONAL"
 
     # Layer 8: Portfolio Policy
     policy, mu, b = compute_portfolio_policy(regime_label, tq, c_adjusted, capital)
+    # Invariant: policy weights must sum to 1
+    _policy_sum = sum(policy.values())
+    if _policy_sum <= 0:
+        policy = {'long': 0.5, 'cash': 0.5}  # safe fallback
+    assert abs(sum(policy.values()) - 1.0) < 1e-4, f"Policy sums to {sum(policy.values())}"
 
     # [CVaR Gate] Tail-risk control — blocks Kelly when CVaR breaches threshold
     cvar_pass, cvar_value = compute_cvar_gate(c_raw / 100.0, sigma_C)

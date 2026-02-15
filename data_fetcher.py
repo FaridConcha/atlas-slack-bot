@@ -31,6 +31,9 @@ def resolve_price(info, hist=None):
     Fallback chain:
         currentPrice → preMarketPrice → postMarketPrice → regularMarketPrice
         → previousClose → regularMarketPreviousClose → last OHLCV close → open → 0
+
+    Returns:
+        tuple: (price, source_key) where source_key indicates which field provided the price.
     """
     for key in (
         'currentPrice',
@@ -42,29 +45,45 @@ def resolve_price(info, hist=None):
     ):
         val = info.get(key)
         if val is not None and val > 0:
-            return float(val)
+            return float(val), key
 
     # Try last OHLCV bar
     if hist is not None and not getattr(hist, 'empty', True):
         try:
             last_close = float(hist['Close'].iloc[-1])
             if last_close > 0:
-                return last_close
+                return last_close, 'ohlcv_close'
         except Exception:
             pass
         try:
             last_open = float(hist['Open'].iloc[-1])
             if last_open > 0:
-                return last_open
+                return last_open, 'ohlcv_open'
         except Exception:
             pass
 
     # Try info 'open' as last resort
     open_val = info.get('open')
     if open_val is not None and open_val > 0:
-        return float(open_val)
+        return float(open_val), 'info_open'
 
-    return 0
+    return 0, 'none'
+
+
+def _safe_num(val):
+    """Return val as float if it is a valid positive number, else None.
+
+    Treats 0, None, NaN as missing.
+    """
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        if f == 0 or np.isnan(f):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
 
 
 def _validate_symbol(symbol):
@@ -163,63 +182,110 @@ def _fetch_fundamentals(ticker, symbol, data_dir):
     print(f"[ATLAS]   Fetching {symbol} fundamentals...")
     try:
         info = ticker.info
+        missing_fields = []
+        synthetic_fields = []
 
-        trailing_pe = info.get('trailingPE', 0) or 0
-        forward_pe = info.get('forwardPE', 0) or 0
-        ev_ebitda = info.get('enterpriseToEbitda', 0) or 0
-        ev_revenue = info.get('enterpriseToRevenue', 0) or 0
+        trailing_pe = _safe_num(info.get('trailingPE'))
+        forward_pe = _safe_num(info.get('forwardPE'))
+        ev_ebitda = _safe_num(info.get('enterpriseToEbitda'))
+        ev_revenue = _safe_num(info.get('enterpriseToRevenue'))
+
+        for name, val in [('trailingPE', trailing_pe), ('forwardPE', forward_pe),
+                          ('enterpriseToEbitda', ev_ebitda), ('enterpriseToRevenue', ev_revenue)]:
+            if val is None:
+                missing_fields.append(name)
 
         # Margins
-        gross_margin = (info.get('grossMargins', 0) or 0) * 100
-        ebitda_margin = (info.get('ebitdaMargins', 0) or 0) * 100
-        net_margin = (info.get('profitMargins', 0) or 0) * 100
+        gross_margin_raw = _safe_num(info.get('grossMargins'))
+        ebitda_margin_raw = _safe_num(info.get('ebitdaMargins'))
+        net_margin_raw = _safe_num(info.get('profitMargins'))
+        gross_margin = gross_margin_raw * 100 if gross_margin_raw is not None else 0
+        ebitda_margin = ebitda_margin_raw * 100 if ebitda_margin_raw is not None else 0
+        net_margin = net_margin_raw * 100 if net_margin_raw is not None else 0
+        for name, val in [('grossMargins', gross_margin_raw), ('ebitdaMargins', ebitda_margin_raw),
+                          ('profitMargins', net_margin_raw)]:
+            if val is None:
+                missing_fields.append(name)
 
         # Returns
-        roe = (info.get('returnOnEquity', 0) or 0) * 100
-        roa = (info.get('returnOnAssets', 0) or 0) * 100
+        roe_raw = _safe_num(info.get('returnOnEquity'))
+        roa_raw = _safe_num(info.get('returnOnAssets'))
+        roe = roe_raw * 100 if roe_raw is not None else 0
+        roa = roa_raw * 100 if roa_raw is not None else 0
+        if roe_raw is None:
+            missing_fields.append('returnOnEquity')
+        if roa_raw is None:
+            missing_fields.append('returnOnAssets')
 
         # FCF yield
-        market_cap = info.get('marketCap', 0) or 1
-        free_cf = info.get('freeCashflow', 0) or 0
+        market_cap = _safe_num(info.get('marketCap'))
+        free_cf = _safe_num(info.get('freeCashflow'))
+        if market_cap is None:
+            missing_fields.append('marketCap')
+            market_cap = 1  # fallback for division
+        if free_cf is None:
+            missing_fields.append('freeCashflow')
+            free_cf = 0
         fcf_yield = (free_cf / market_cap * 100) if market_cap > 0 else 0
 
         # Balance sheet
-        current_ratio = info.get('currentRatio', 0) or 0
-        debt_equity = info.get('debtToEquity', 0) or 0
+        current_ratio = _safe_num(info.get('currentRatio'))
+        debt_equity = _safe_num(info.get('debtToEquity'))
+        if current_ratio is None:
+            missing_fields.append('currentRatio')
+            current_ratio = 0
+        if debt_equity is None:
+            missing_fields.append('debtToEquity')
+            debt_equity = 0
         if debt_equity > 10:  # yfinance sometimes returns as percentage
             debt_equity = debt_equity / 100
 
         # EPS
-        trailing_eps = info.get('trailingEps', 0) or 0
-        forward_eps = info.get('forwardEps', 0) or 0
+        trailing_eps = _safe_num(info.get('trailingEps'))
+        forward_eps = _safe_num(info.get('forwardEps'))
+        if trailing_eps is None:
+            missing_fields.append('trailingEps')
+            trailing_eps = 0
+        if forward_eps is None:
+            missing_fields.append('forwardEps')
+            forward_eps = 0
 
         # Revenue
-        revenue = info.get('totalRevenue', 0) or 0
+        revenue = _safe_num(info.get('totalRevenue'))
+        if revenue is None:
+            missing_fields.append('totalRevenue')
+            revenue = 0
 
-        # Build historical PE approximation (use trailing PE with slight variation)
-        if trailing_pe > 0:
-            pe_history = [round(trailing_pe * (1 + np.random.uniform(-0.1, 0.1)), 2) for _ in range(8)]
-            pe_history.append(trailing_pe)
+        # Price source for provenance
+        _, price_source = resolve_price(info)
+
+        # Deterministic historical PE approximation (no randomness)
+        pe_history_synthetic = True
+        if trailing_pe is not None and trailing_pe > 0:
+            pe_history = [round(trailing_pe, 2)] * 9
         else:
             pe_history = [20]
+        synthetic_fields.append('trailing_pe_history')
 
-        if ev_ebitda > 0:
-            ev_history = [round(ev_ebitda * (1 + np.random.uniform(-0.08, 0.08)), 2) for _ in range(8)]
-            ev_history.append(ev_ebitda)
+        ev_history_synthetic = True
+        if ev_ebitda is not None and ev_ebitda > 0:
+            ev_history = [round(ev_ebitda, 2)] * 9
         else:
             ev_history = [15]
+        synthetic_fields.append('ev_ebitda_history')
 
+        fcf_history_synthetic = True
         if fcf_yield > 0:
-            fcf_history = [round(fcf_yield * (1 + np.random.uniform(-0.1, 0.1)), 2) for _ in range(8)]
-            fcf_history.append(round(fcf_yield, 2))
+            fcf_history = [round(fcf_yield, 2)] * 9
         else:
             fcf_history = [3.0]
+        synthetic_fields.append('fcf_yield_history')
 
         fundamentals = {
-            "trailing_pe": round(trailing_pe, 2),
-            "forward_pe": round(forward_pe, 2),
-            "ev_ebitda": round(ev_ebitda, 2),
-            "ev_revenue": round(ev_revenue, 2),
+            "trailing_pe": round(trailing_pe, 2) if trailing_pe is not None else 0,
+            "forward_pe": round(forward_pe, 2) if forward_pe is not None else 0,
+            "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda is not None else 0,
+            "ev_revenue": round(ev_revenue, 2) if ev_revenue is not None else 0,
             "fcf_yield": round(fcf_yield, 2),
             "roic": round((roe + roa) / 2, 2),  # Approximate ROIC
             "roa": round(roa, 2),
@@ -235,14 +301,27 @@ def _fetch_fundamentals(ticker, symbol, data_dir):
             "market_cap_m": round(market_cap / 1e6, 0),
             "trailing_pe_history": pe_history,
             "ev_ebitda_history": ev_history,
-            "fcf_yield_history": fcf_history
+            "fcf_yield_history": fcf_history,
+            "_pe_history_synthetic": pe_history_synthetic,
+            "_ev_history_synthetic": ev_history_synthetic,
+            "_fcf_history_synthetic": fcf_history_synthetic,
+            "_provenance": {
+                "timestamp_utc": datetime.now(tz=__import__('datetime').timezone.utc).isoformat().replace('+00:00', 'Z'),
+                "source": "yfinance",
+                "synthetic_fields": synthetic_fields,
+                "missing_fields": missing_fields,
+                "price_source": price_source,
+            },
         }
 
         filepath = os.path.join(data_dir, "fundamentals.json")
         with open(filepath, 'w') as f:
             json.dump(fundamentals, f, indent=2)
 
-        print(f"[ATLAS]   PE: {trailing_pe:.1f}, Fwd PE: {forward_pe:.1f}, EV/EBITDA: {ev_ebitda:.1f}")
+        _tpe = trailing_pe if trailing_pe is not None else 0
+        _fpe = forward_pe if forward_pe is not None else 0
+        _eve = ev_ebitda if ev_ebitda is not None else 0
+        print(f"[ATLAS]   PE: {_tpe:.1f}, Fwd PE: {_fpe:.1f}, EV/EBITDA: {_eve:.1f}")
 
     except Exception as e:
         print(f"[ATLAS]   ERROR fetching fundamentals: {e}")
@@ -260,7 +339,7 @@ def _fetch_consensus(ticker, symbol, data_dir):
         target_price = info.get('targetMeanPrice', 0) or 0
         target_high = info.get('targetHighPrice', 0) or 0
         target_low = info.get('targetLowPrice', 0) or 0
-        current_price = resolve_price(info)
+        current_price, _ = resolve_price(info)
         num_analysts = info.get('numberOfAnalystOpinions', 0) or 0
         recommendation = info.get('recommendationKey', 'none')
 
@@ -348,25 +427,31 @@ def _fetch_volatility(data_dir):
         filepath = os.path.join(data_dir, "volatility.csv")
         with open(filepath, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["date", "vix", "vix_3m", "put_call_ratio"])
+            writer.writerow(["date", "vix", "vix_3m", "put_call_ratio",
+                            "vix3m_synthetic", "pcr_synthetic"])
 
             for date, row in vix_hist.iterrows():
                 vix_close = row['Close']
                 # Match VIX3M by date if available
+                vix3m_is_synthetic = False
                 if vix3m_hist is not None and date in vix3m_hist.index:
                     vix3m_val = vix3m_hist.loc[date, 'Close']
                 else:
                     vix3m_val = vix_close * 1.1  # Approximate contango
+                    vix3m_is_synthetic = True
 
                 # Put/call ratio not freely available, use approximation
                 pcr = 0.85 + (vix_close - 18) * 0.02  # Higher VIX = higher PCR
                 pcr = max(0.4, min(1.6, pcr))
+                pcr_synthetic = True  # Always synthetic — no free source
 
                 writer.writerow([
                     date.strftime("%Y-%m-%d"),
                     round(vix_close, 2),
                     round(vix3m_val, 2),
-                    round(pcr, 3)
+                    round(pcr, 3),
+                    vix3m_is_synthetic,
+                    pcr_synthetic
                 ])
 
         latest_vix = vix_hist['Close'].iloc[-1]
@@ -400,25 +485,31 @@ def _fetch_macro(data_dir, fred_api_key=None):
         filepath = os.path.join(data_dir, "macro_rates.csv")
         with open(filepath, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["date", "us_10y", "us_2y", "us_2s10s", "hy_spread", "real_yield"])
+            writer.writerow(["date", "us_10y", "us_2y", "us_2s10s", "hy_spread", "real_yield",
+                            "us_2y_synthetic", "hy_spread_synthetic", "real_yield_synthetic"])
 
             for date, row in tnx_hist.iterrows():
                 us_10y = row['Close']
 
                 # Approximate 2Y from IRX or offset
+                us_2y_is_synthetic = False
                 if irx_hist is not None and date in irx_hist.index:
                     us_2y = irx_hist.loc[date, 'Close'] + 0.3  # IRX is 3mo, add spread
+                    us_2y_is_synthetic = True  # Still derived from IRX, not direct 2Y
                 else:
                     us_2y = us_10y - 0.5  # Approximate
+                    us_2y_is_synthetic = True
 
                 spread_2s10s = round(us_10y - us_2y, 3)
 
                 # HY spread approximation (not freely available)
                 hy_spread = 300 + (us_10y - 4.0) * 30  # Rough approximation
                 hy_spread = max(200, min(600, hy_spread))
+                hy_spread_synthetic = True  # Always synthetic — no free source
 
                 # Real yield = 10Y - breakeven inflation (~2.3%)
                 real_yield = round(us_10y - 2.3, 3)
+                real_yield_synthetic = True  # Assumes fixed 2.3% breakeven
 
                 writer.writerow([
                     date.strftime("%Y-%m-%d"),
@@ -426,7 +517,10 @@ def _fetch_macro(data_dir, fred_api_key=None):
                     round(us_2y, 3),
                     spread_2s10s,
                     round(hy_spread, 1),
-                    real_yield
+                    real_yield,
+                    us_2y_is_synthetic,
+                    hy_spread_synthetic,
+                    real_yield_synthetic
                 ])
 
         latest_10y = tnx_hist['Close'].iloc[-1]
@@ -498,7 +592,7 @@ def _fetch_breadth(data_dir):
         with open(filepath, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(["date", "advancing", "declining", "new_highs", "new_lows",
-                           "pct_above_50dma", "pct_above_200dma"])
+                           "pct_above_50dma", "pct_above_200dma", "breadth_synthetic"])
 
             closes = spy_hist['Close'].values
             sma50 = []
@@ -533,7 +627,8 @@ def _fetch_breadth(data_dir):
                 writer.writerow([
                     date.strftime("%Y-%m-%d"),
                     adv, dec, nh, nl,
-                    round(pct_50, 1), round(pct_200, 1)
+                    round(pct_50, 1), round(pct_200, 1),
+                    True  # All breadth data is synthetic (approximated from SPY)
                 ])
 
         print(f"[ATLAS]   Breadth approximated from SPY, {len(spy_hist)} bars")
@@ -643,26 +738,28 @@ def _write_default_volatility(data_dir):
     filepath = os.path.join(data_dir, "volatility.csv")
     with open(filepath, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["date", "vix", "vix_3m", "put_call_ratio"])
+        writer.writerow(["date", "vix", "vix_3m", "put_call_ratio",
+                        "vix3m_synthetic", "pcr_synthetic"])
         today = datetime.now().strftime("%Y-%m-%d")
-        writer.writerow([today, 20.0, 22.0, 0.85])
+        writer.writerow([today, 20.0, 22.0, 0.85, True, True])
 
 def _write_default_macro(data_dir):
     filepath = os.path.join(data_dir, "macro_rates.csv")
     with open(filepath, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["date", "us_10y", "us_2y", "us_2s10s", "hy_spread", "real_yield"])
+        writer.writerow(["date", "us_10y", "us_2y", "us_2s10s", "hy_spread", "real_yield",
+                        "us_2y_synthetic", "hy_spread_synthetic", "real_yield_synthetic"])
         today = datetime.now().strftime("%Y-%m-%d")
-        writer.writerow([today, 4.2, 3.8, 0.4, 300, 1.9])
+        writer.writerow([today, 4.2, 3.8, 0.4, 300, 1.9, True, True, True])
 
 def _write_default_breadth(data_dir):
     filepath = os.path.join(data_dir, "breadth.csv")
     with open(filepath, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(["date", "advancing", "declining", "new_highs", "new_lows",
-                        "pct_above_50dma", "pct_above_200dma"])
+                        "pct_above_50dma", "pct_above_200dma", "breadth_synthetic"])
         today = datetime.now().strftime("%Y-%m-%d")
-        writer.writerow([today, 280, 220, 40, 20, 60, 55])
+        writer.writerow([today, 280, 220, 40, 20, 60, 55, True])
 
 
 # ============================================================================

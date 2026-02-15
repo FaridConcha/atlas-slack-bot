@@ -15,6 +15,7 @@ Usage:
 import os
 import sys
 import re
+import json
 import shutil
 import signal
 import time
@@ -286,7 +287,8 @@ def handle_atlas_mention(event, say, client):
         v8_extended = fetch_v8_data(
             symbol=symbol,
             fred_api_key=FRED_API_KEY,
-            regime_variance_mult=_rvm
+            regime_variance_mult=_rvm,
+            dc=summary.get('data_confidence')
         )
 
         # Generate V12full-spectrum report (10 sections)
@@ -495,13 +497,112 @@ def handle_message_events(event, say, client, logger):
 
 
 # ============================================================================
+# CLI PIPELINE
+# ============================================================================
+
+def run_single_ticker(symbol, capital=None, state_dir=None, fred_api_key=None):
+    """Run the full ATLAS pipeline on a single ticker and return results.
+
+    Args:
+        symbol: Ticker symbol (e.g. 'AAPL')
+        capital: Portfolio capital (default: CAPITAL env var)
+        state_dir: Path to state directory (default: STATE_DIR)
+        fred_api_key: Optional FRED API key
+
+    Returns:
+        tuple: (summary, v8_extended, provenance)
+    """
+    from valuation_config import REGIME_VARIANCE_MULTIPLIER
+
+    if capital is None:
+        capital = CAPITAL
+    if state_dir is None:
+        state_dir = STATE_DIR
+    if fred_api_key is None:
+        fred_api_key = FRED_API_KEY
+
+    os.makedirs(state_dir, exist_ok=True)
+
+    # Fetch live data
+    data_path = fetch_live_data(symbol=symbol, fred_api_key=fred_api_key)
+
+    # Run engine
+    summary = run_atlas(symbol=symbol, data_path=data_path, capital=capital, state_dir=state_dir)
+
+    # Derive regime-conditioned WACC scaling
+    _regime = summary.get('regime_label') or 'Calm'
+    _rvm = REGIME_VARIANCE_MULTIPLIER.get(_regime, 1.0) or 1.0
+
+    # Fetch extended data
+    v8_extended = fetch_v8_data(
+        symbol=symbol, fred_api_key=fred_api_key,
+        regime_variance_mult=_rvm, dc=summary.get('data_confidence')
+    )
+
+    provenance = {
+        "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "data_confidence": summary.get("data_confidence"),
+        "fallback_mode": "LIVE",
+    }
+
+    # Clean up temp data
+    if data_path != STATIC_DATA_PATH:
+        try:
+            shutil.rmtree(data_path)
+        except OSError:
+            pass
+
+    return summary, v8_extended, provenance
+
+
+# ============================================================================
 # STARTUP
 # ============================================================================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ATLAS V12+ Engine")
+    parser.add_argument('--ticker', type=str, help='Run single ticker analysis (CLI mode)')
+    parser.add_argument('--output', type=str, default='json', choices=['json', 'text'],
+                        help='Output format for CLI mode')
+    args = parser.parse_args()
+
     # Create state directory for meta-learning persistence
     os.makedirs(STATE_DIR, exist_ok=True)
 
+    if args.ticker:
+        # CLI mode: run single ticker and exit
+        symbol = args.ticker.upper()
+        print(f"[CLI] Running ATLAS V12+ on {symbol}...", file=sys.stderr)
+        summary, v8_extended, provenance = run_single_ticker(symbol)
+        if args.output == 'json':
+            result = {
+                'summary': summary,
+                'v8_extended': v8_extended,
+                'provenance': provenance,
+            }
+            print(json.dumps(result, indent=2, default=str))
+        else:
+            # Text summary
+            print(f"{'=' * 60}")
+            print(f"ATLAS V12+ — {symbol}")
+            print(f"{'=' * 60}")
+            print(f"Verdict:      {summary.get('verdict', 'N/A')}")
+            print(f"Price:        ${summary.get('price', 0):.2f}")
+            print(f"Composite:    {summary.get('composite_raw', 0):.1f} (adj: {summary.get('composite_adjusted', 0):.1f})")
+            print(f"Trade Quality:{summary.get('trade_quality', 0):.4f} ({summary.get('tq_category', 'N/A')})")
+            print(f"Data Conf:    {summary.get('data_confidence', 0):.1f}%")
+            print(f"Regime:       {summary.get('regime_label', 'N/A')} (rel: {summary.get('regime_reliability', 0):.2f})")
+            print(f"Gate:         {summary.get('gate_value', 0):.2f}")
+            print(f"Position:     ${summary.get('position_size', 0):,.0f} ({summary.get('position_pct', 0):.2f}%)")
+            dcf = (v8_extended or {}).get('dcf') or {}
+            if dcf.get('base'):
+                print(f"IV (DCF):     ${dcf['base']:.2f} (Bear: ${dcf.get('bear', 0):.2f}, Bull: ${dcf.get('bull', 0):.2f})")
+            print(f"{'=' * 60}")
+        sys.exit(0)
+
+    # Slack bot mode
     print("=" * 60)
     print("ATLAS Slack Bot — V12 Capital Allocation Intelligence")
     print("=" * 60)

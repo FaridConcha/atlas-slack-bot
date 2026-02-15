@@ -152,6 +152,7 @@ const CT = S.contributions||{};
 const SN = S.scores_norm||{};
 const RV = S.regime_vector||{};
 const ENGINES = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
+const PROV = V8._provenance||{};
 const RF = [['TS','Trend'],['CH','Choppiness'],['VL','VIX Level'],['VS','VIX Stress'],['CI','Corr Instab.'],['RS','Rates Shock'],['CS','Credit Stress'],['GR','Global Risk'],['BM_f','Bad Mix'],['BEI','Bond-Eq Flip']];
 const V9 = V8.v9_scores||{};
 const FQ = CO._fundamentals_quality||{};
@@ -850,7 +851,11 @@ h += '</div>';
 
 // DCF Row
 h += '<div class="g2">';
-h += '<div class="card"><h2>DCF Fair Value</h2>';
+h += '<div class="card"><h2>DCF Fair Value';
+if(DCF && DCF.assumptions && DCF.assumptions.cash_flow_source && DCF.assumptions.cash_flow_source !== 'fcf'){
+  h += ' <span class="pill pill-warn" style="font-size:9px;margin-left:4px">ESTIMATE</span>';
+}
+h += '</h2>';
 if(DCF && (DCF.bear||DCF.base||DCF.bull)){
   h += '<div id="ch-dcf" class="chart-box"></div>';
   if(DCF.assumptions){
@@ -991,7 +996,7 @@ h += '</div>';
 // Monte Carlo Distribution
 h += '<div class="g2">';
 h += '<div class="card"><h2>Monte Carlo IV Distribution</h2>';
-if(DCF && DCF.monte_carlo){
+if(DCF && DCF.monte_carlo && dc >= 70){
   var MC = DCF.monte_carlo;
   h += '<div id="ch-mc-dist" class="chart-box" style="height:220px"></div>';
   h += '<div style="margin-top:8px">';
@@ -1026,6 +1031,8 @@ if(DCF && DCF.monte_carlo){
   if(MC.tail_df!=null) h += ' &middot; \u03BD='+MC.tail_df+' (Student\'s t)';
   if(MC.regime_variance_mult!=null && MC.regime_variance_mult!=1.0) h += ' &middot; Regime \u03C3\u00D7'+f(MC.regime_variance_mult,2);
   h += '</div>';
+} else if(DCF && DCF.monte_carlo){
+  h += '<div class="empty" style="color:var(--warn)">Monte Carlo distribution suppressed — data confidence ('+f(dc,0)+'%) below 70% threshold</div>';
 } else {
   h += '<div class="empty">Monte Carlo DCF not available</div>';
 }
@@ -1033,7 +1040,7 @@ h += '</div>';
 
 // Sensitivity Analysis
 h += '<div class="card"><h2>DCF Sensitivity Analysis</h2>';
-if(DCF && DCF.sensitivity){
+if(DCF && DCF.sensitivity && dc >= 70){
   var SEN = DCF.sensitivity;
   h += '<table style="width:100%;font-size:11px;border-collapse:collapse;color:var(--t2)">';
   h += '<thead><tr style="border-bottom:1px solid var(--border)">';
@@ -1052,6 +1059,8 @@ if(DCF && DCF.sensitivity){
     h += '<td style="text-align:right;padding:4px 8px" class="mono">$'+f(SEN.cross_wacc_growth*0.01*0.01,2)+'</td></tr>';
   }
   h += '</tbody></table>';
+} else if(DCF && DCF.sensitivity){
+  h += '<div class="empty" style="color:var(--warn)">Sensitivity analysis suppressed — data confidence ('+f(dc,0)+'%) below 70% threshold</div>';
 } else {
   h += '<div class="empty">Sensitivity data not available</div>';
 }
@@ -1378,6 +1387,12 @@ h += '</div>';
 h += '<div class="section-label">Fundamentals &amp; Valuation</div>';
 
 h += '<div class="card"><h2>Fundamentals</h2>';
+if(PROV.estimated_fields && PROV.estimated_fields.length > 0){
+  h += '<div style="font-size:9px;color:var(--warn);margin-bottom:6px"><span class="pill pill-warn" style="font-size:8px">SYNTHETIC</span> Some fields are estimated or derived: '+PROV.estimated_fields.join(', ')+'</div>';
+}
+if(DCF && DCF.assumptions && DCF.assumptions.cash_flow_source && DCF.assumptions.cash_flow_source !== 'fcf'){
+  h += '<div style="font-size:9px;color:var(--warn);margin-bottom:6px"><span class="pill pill-warn" style="font-size:8px">ESTIMATE</span> DCF uses proxy cash flows ('+DCF.assumptions.cash_flow_source+') — not reported free cash flow</div>';
+}
 if(FIN.revenue_ttm||FIN.net_income_ttm||FIN.gross_margin!=null){
   h += '<div class="g4" style="font-size:12px">';
   var fm = [
@@ -1691,6 +1706,13 @@ else if(dc >= 60) h += 'Adequate data coverage with some gaps. Results are direc
 else if(dc >= 40) h += 'Partial data. Key inputs may be missing or stale. Interpret with caution.';
 else h += 'Thin data environment. Analysis reliability is materially reduced.';
 h += '</div></div>';
+
+// RESEARCH MODE banner when data confidence is below threshold
+if(dc != null && dc < 70){
+  h += '<div style="background:rgba(227,179,65,0.12);border:1px solid var(--warn);border-radius:var(--r);padding:8px 12px;margin:8px 0;font-size:11px;color:var(--warn)">';
+  h += '<strong>RESEARCH MODE</strong> — Data confidence '+f(dc,0)+'% is below 70% threshold. ';
+  h += 'Derived statistics (Monte Carlo distribution, sensitivity analysis, precise multiples) are reduced or hidden. Treat quantitative conclusions with additional skepticism.</div>';
+}
 
 // Regime Reliability — flag when at floor
 h += '<div style="margin-bottom:4px">';
