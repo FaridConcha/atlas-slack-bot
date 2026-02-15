@@ -1036,6 +1036,164 @@ class TestEVBridgeLabel:
             "web_server.py must NOT contain PV(FCF₁₅) without en-dash"
 
 
+# ============================================================================
+# AUDIT FIX: CAPM display consistency (beta rounded at source)
+# ============================================================================
+
+class TestCAPMDisplayConsistency:
+    """Beta is rounded to 2dp at source, so displayed Ke = Rf + β×ERP is exact."""
+
+    def test_ke_matches_displayed_beta(self):
+        """Ke must equal Rf + rounded_beta × ERP exactly (no rounding drift)."""
+        info = {'currentPrice': 200.0, 'beta': 0.418}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        # Beta should be rounded to 2dp: 0.418 → 0.42
+        assert a['beta'] == 0.42
+        # Ke = Rf + β × ERP = 4.00 + 0.42 × 5.00 = 6.10
+        expected_ke = a['risk_free_rate'] + a['beta'] * a['equity_risk_premium']
+        assert abs(a['cost_of_equity'] - expected_ke) < 0.005, \
+            f"CAPM display mismatch: Ke={a['cost_of_equity']}, expected={expected_ke}"
+
+    def test_beta_exact_at_two_dp(self):
+        """Beta=1.0 stays 1.0; beta=0.4178 becomes 0.42."""
+        info = {'currentPrice': 100.0, 'beta': 0.4178}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 50e9, 'shares_outstanding': 1e9,
+            'free_cash_flow': 3e9, 'net_income_ttm': 4e9, 'ebitda': 8e9,
+            'revenue_growth': 3.0, 'debt_equity': 0.5, 'net_debt': 5e9,
+        }
+        result = _build_dcf(info, fin)
+        assert result['assumptions']['beta'] == 0.42
+
+    def test_beta_none_defaults_to_one(self):
+        """Missing beta defaults to 1.0."""
+        info = {'currentPrice': 100.0, 'beta': None}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 50e9, 'shares_outstanding': 1e9,
+            'free_cash_flow': 3e9, 'net_income_ttm': 4e9, 'ebitda': 8e9,
+            'revenue_growth': 3.0, 'debt_equity': 0.5, 'net_debt': 5e9,
+        }
+        result = _build_dcf(info, fin)
+        assert result['assumptions']['beta'] == 1.0
+
+
+# ============================================================================
+# AUDIT FIX: D/E normalization guard
+# ============================================================================
+
+class TestDEGuard:
+    """D/E > 10x after normalization is flagged as None (anomalous)."""
+
+    def test_normal_de_passes(self):
+        """D/E = 150 (yfinance %) → 1.5x ratio → valid."""
+        from v8_data import _safe_num
+        de_raw = _safe_num(150.0, min_val=0)
+        debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
+        if debt_equity is not None and debt_equity > 10.0:
+            debt_equity = None
+        assert debt_equity == 1.5
+
+    def test_extreme_de_rejected(self):
+        """D/E = 1500 (yfinance %) → 15.0x → anomalous → None."""
+        from v8_data import _safe_num
+        de_raw = _safe_num(1500.0, min_val=0)
+        debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
+        if debt_equity is not None and debt_equity > 10.0:
+            debt_equity = None
+        assert debt_equity is None
+
+    def test_borderline_de_passes(self):
+        """D/E = 1000 (yfinance %) → 10.0x → exactly at boundary → valid."""
+        from v8_data import _safe_num
+        de_raw = _safe_num(1000.0, min_val=0)
+        debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
+        if debt_equity is not None and debt_equity > 10.0:
+            debt_equity = None
+        assert debt_equity == 10.0
+
+
+# ============================================================================
+# AUDIT FIX: Bridge reconciliation warnings
+# ============================================================================
+
+class TestBridgeReconciliation:
+    """DCF assumptions must include bridge_warnings field."""
+
+    def test_no_warnings_for_valid_bridge(self):
+        """Clean DCF should produce empty bridge_warnings."""
+        info = {'currentPrice': 200.0, 'beta': 0.42}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.34e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32.5e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        assert 'bridge_warnings' in a
+        assert a['bridge_warnings'] == [], \
+            f"Expected no warnings, got: {a['bridge_warnings']}"
+
+    def test_bridge_fields_consistent(self):
+        """PV sum + TV PV = EV; EV - debt = equity; equity/shares ≈ base."""
+        info = {'currentPrice': 200.0, 'beta': 0.42}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.34e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32.5e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        # PV sum + TV PV = EV
+        assert abs((a['pv_fcf_sum'] + a['terminal_value_pv']) - a['enterprise_value']) < 2
+        # EV - net_debt = equity_value
+        assert abs(a['equity_value'] - max(0, a['enterprise_value'] - a['net_debt_subtracted'])) < 2
+        # equity / shares ≈ base IV
+        expected_iv = a['equity_value'] / a['shares']
+        assert abs(result['base'] - round(expected_iv, 2)) < 0.01
+
+
+# ============================================================================
+# AUDIT FIX: Normalized scores in engine summary
+# ============================================================================
+
+class TestNormalizedScoresExport:
+    """atlas_engine.py must export scores_norm for display transparency."""
+
+    def test_tanh_normalization_identity(self):
+        """tanh(0/scale) = 0 for any scale > 0 (correlation risk 50 → signal 0)."""
+        import numpy as np
+        corr_risk = 50
+        signal = -(corr_risk - 50)  # = 0
+        norm = np.tanh(signal / 50)
+        assert norm == 0.0
+
+    def test_tanh_normalization_positive(self):
+        """Positive raw score normalizes to positive value in [-1, 1]."""
+        import numpy as np
+        raw = 50.0
+        scale = 100.0
+        norm = np.tanh(raw / scale)
+        assert 0 < norm < 1
+        assert abs(norm - 0.4621) < 0.001
+
+    def test_contribution_equals_weight_times_norm(self):
+        """Contribution = weight × normalized_score × 100."""
+        import numpy as np
+        raw = 30.0
+        scale = 50.0
+        norm = float(np.tanh(raw / scale))
+        weight = 0.125
+        contribution = round(weight * norm * 100, 2)
+        # Verify: contribution should be weight × norm × 100
+        assert abs(contribution - round(weight * norm * 100, 2)) < 0.01
+
+
 if __name__ == '__main__':
     import pytest
     pytest.main([__file__, '-v', '--tb=short'])

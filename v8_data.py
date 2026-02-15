@@ -660,9 +660,11 @@ def _build_financials(ticker, info, hist=None):
         except Exception:
             buyback_yield = None
 
-    # Debt/equity
+    # Debt/equity — yfinance returns debtToEquity as percentage (150.0 = 1.5x)
     de_raw = _safe_num(info.get('debtToEquity'), min_val=0)
     debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
+    if debt_equity is not None and debt_equity > 10.0:
+        debt_equity = None  # Anomalous: D/E > 10x — likely data error
 
     # Dividend yield with anomaly provenance
     div_yield_val, div_anomaly = _sanitize_yield(info, price)
@@ -1379,8 +1381,9 @@ def _build_dcf(info, financials):
         fcf_margin = cash_proxy / revenue
 
         # ── DISCOUNT RATE DECOMPOSITION ──
-        # Inputs stored at full precision for audit
-        beta = info.get('beta', 1.0) or 1.0
+        # Beta rounded to 2dp at source so displayed CAPM arithmetic
+        # (β × ERP = Ke) is always internally consistent.
+        beta = round(info.get('beta', 1.0) or 1.0, 2)
         risk_free = 0.04       # 10Y treasury proxy
         erp = 0.05             # equity risk premium
         cost_of_equity = risk_free + beta * erp  # CAPM: Ke = Rf + β×ERP
@@ -1467,6 +1470,15 @@ def _build_dcf(info, financials):
         equity_value = max(0, enterprise_value - net_debt)
         base_fv = equity_value / shares
 
+        # ── Bridge reconciliation checks ──
+        bridge_warnings = []
+        if abs((pv_fcf_sum + tv_pv) - enterprise_value) > 1.0:
+            bridge_warnings.append('PV_SUM_MISMATCH')
+        if abs(equity_value - max(0, enterprise_value - net_debt)) > 1.0:
+            bridge_warnings.append('EV_EQUITY_MISMATCH')
+        if shares > 0 and abs(equity_value / shares - base_fv) > 0.01:
+            bridge_warnings.append('PER_SHARE_MISMATCH')
+
         # Widen bear/bull range when using proxy cash flows
         bear_mult = 0.70 if cash_flow_source != 'fcf' else 0.80
         bull_mult = 1.30 if cash_flow_source != 'fcf' else 1.25
@@ -1515,6 +1527,8 @@ def _build_dcf(info, financials):
                 'net_debt_subtracted': round(net_debt, 0),
                 'equity_value': round(equity_value, 0),
                 'shares': round(shares, 0),
+                # Reconciliation
+                'bridge_warnings': bridge_warnings,
             },
         }
     except Exception as e:

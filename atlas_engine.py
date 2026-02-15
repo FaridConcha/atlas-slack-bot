@@ -1825,10 +1825,12 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # No math changes — data transport only
     engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
     summary['scores'] = dict(scores_dict)
+    summary['scores_norm'] = {}
     summary['contributions'] = {}
     for eng in engines:
         w_val = w_dynamic.get(eng, 1/8)
         e_val = e_norm.get(f'{eng}_norm', 0)
+        summary['scores_norm'][eng] = round(float(e_val), 4)
         summary['contributions'][eng] = round(float(w_val * e_val * 100), 2)
     summary['w0'] = {k: float(v) for k, v in state['w0'].items()}
     summary['w_dynamic'] = {k: float(v) for k, v in w_dynamic.items()}

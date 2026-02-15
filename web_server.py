@@ -226,6 +226,7 @@ const EARN = V8.earnings||[];
 const SC = S.scores||{};
 const W = S.w_dynamic||{};
 const CT = S.contributions||{};
+const SN = S.scores_norm||{};
 const RV = S.regime_vector||{};
 const ENGINES = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
 const RF = [['TS','Trend'],['CH','Choppiness'],['VL','VIX Level'],['VS','VIX Stress'],['CI','Corr Instab.'],['RS','Rates Shock'],['CS','Credit Stress'],['GR','Global Risk'],['BM_f','Bad Mix'],['BEI','Bond-Eq Flip']];
@@ -902,10 +903,15 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
       h += '<span style="font-weight:600">EV \u2192 Equity Bridge:</span><br>';
       h += '&nbsp;&nbsp;PV(FCF\u2081\u2013\u2085) = '+fM(a.pv_fcf_sum)+' &nbsp;+&nbsp; PV(Terminal) = '+fM(a.terminal_value_pv)+' &nbsp;\u2192&nbsp; Enterprise Value = <span class="mono hl" style="font-size:11px">'+fM(a.enterprise_value)+'</span><br>';
       h += '&nbsp;&nbsp;Enterprise Value '+fM(a.enterprise_value)+' \u2212 Net Debt '+fM(a.net_debt_subtracted)+' = Equity Value <span class="mono hl" style="font-size:11px">'+fM(a.equity_value)+'</span><br>';
-      h += '&nbsp;&nbsp;Equity Value / '+fN(a.shares)+' shares = <span class="mono hl" style="font-size:11px">$'+f(DCF.base,2)+'</span> per share';
+      var _sharesStr = a.shares>=1e9?(a.shares/1e9).toFixed(2)+'B':fN(a.shares);
+      h += '&nbsp;&nbsp;Equity Value / '+_sharesStr+' shares = <span class="mono hl" style="font-size:11px">$'+f(DCF.base,2)+'</span> per share';
       h += '</div>';
     } else if(a.net_debt_subtracted!=null){
       h += '<div style="font-size:10px;color:var(--t3)">Enterprise Value \u2192 Equity: Net debt of '+fM(a.net_debt_subtracted)+' subtracted from DCF enterprise value</div>';
+    }
+    // Bridge reconciliation warnings
+    if(a.bridge_warnings && a.bridge_warnings.length > 0){
+      h += '<div style="font-size:10px;color:var(--neg);margin-top:4px">\u26A0 Bridge reconciliation: '+a.bridge_warnings.join(', ')+'</div>';
     }
 
     // ── Year-by-year projections table ──
@@ -1138,7 +1144,7 @@ h += '</div>';
 // Engine Detail
 h += '<div class="card"><h2>Engine Detail</h2>';
 h += '<div style="overflow-x:auto"><table id="tbl-eng"><thead><tr>';
-var ec = ['Engine','Raw Score','Weight','Contribution'];
+var ec = ['Engine','Raw Score','Norm.','Weight','Contribution'];
 for(var i=0;i<ec.length;i++){
   var align=i===0?'':'text-r';
   h+='<th class="'+align+'" onclick="sortTbl(\'tbl-eng\','+i+')">'+ec[i]+' \u21C5</th>';
@@ -1146,16 +1152,17 @@ for(var i=0;i<ec.length;i++){
 h += '</tr></thead><tbody>';
 var totalCt=0;
 for(var i=0;i<ENGINES.length;i++){
-  var e=ENGINES[i],sc=SC[e],w=W[e],ct=CT[e];
+  var e=ENGINES[i],sc=SC[e],sn=SN[e],w=W[e],ct=CT[e];
   if(ct!=null) totalCt+=ct;
   h += '<tr>';
   h += '<td style="font-weight:500">'+e+'</td>';
   h += '<td class="text-r mono '+cls(sc)+'">'+(sc!=null?fS(sc,1):'N/A')+'</td>';
+  h += '<td class="text-r mono '+cls(sn)+'">'+(sn!=null?fS(sn,3):'N/A')+'</td>';
   h += '<td class="text-r mono">'+(w!=null?f(w,3):'')+'</td>';
   h += '<td class="text-r mono '+cls(ct)+'">'+(ct!=null?fS(ct,2):'')+'</td>';
   h += '</tr>';
 }
-h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td></td><td></td>';
+h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td></td><td></td><td></td>';
 h += '<td class="text-r mono '+cls(totalCt)+'">'+fS(totalCt,2)+'</td></tr>';
 h += '</tbody></table></div></div>';
 
@@ -1987,13 +1994,15 @@ h += '<div id="syw-standard">';
 // Composite derivation
 h += '<div class="formula">';
 h += '<span class="hl">COMPOSITE SCORE DERIVATION</span>\n';
-h += 'C_raw = \u03A3(w\u1D62 \u00D7 S\u1D62)\n\n';
+h += 'C_raw = \u03A3(w\u1D62 \u00D7 S\u1D62_norm)  where S\u1D62_norm = tanh(S\u1D62_raw / scale\u1D62)\n\n';
+h += '  Engine        Weight    Raw     Norm.   Contribution\n';
+h += '  '+'\u2500'.repeat(56)+'\n';
 var computedRaw = 0;
 for(var i=0;i<ENGINES.length;i++){
-  var e=ENGINES[i],sc=SC[e]||0,w=W[e]||0,ct=CT[e]||0;
+  var e=ENGINES[i],sc=SC[e]||0,sn=SN[e]||0,w=W[e]||0,ct=CT[e]||0;
   computedRaw += ct;
   var cCls = ct>=0?'pos':'neg';
-  h += '  '+e.padEnd(14)+f(w,3)+' \u00D7 '+(sc>=0?'+':'')+f(sc,1).padStart(6)+' = <span class="'+cCls+'">'+(ct>=0?'+':'')+f(ct,2).padStart(7)+'</span>\n';
+  h += '  '+e.padEnd(14)+f(w,3).padStart(6)+'  '+(sc>=0?'+':'')+f(sc,1).padStart(6)+'  '+(sn>=0?'+':'')+f(sn,3).padStart(6)+' = <span class="'+cCls+'">'+(ct>=0?'+':'')+f(ct,2).padStart(7)+'</span>\n';
 }
 h += '  '+'\u2500'.repeat(44)+'\n';
 h += '  C_raw (computed) = <span class="hl">'+fS(computedRaw,2)+'</span>\n';
@@ -2117,16 +2126,17 @@ h += '<div class="mhdr">COMPOSITE SCORE \u2014 FULL DERIVATION</div>';
 h += '<div class="mnote">The composite score aggregates 8 independent engines. Each engine produces a raw score S\u1D62 in [\u2212100, +100]. Weights w\u1D62 are determined by the meta-learning layer based on historical regime performance and sum to 1.0.</div>';
 h += '<div class="mblk">';
 h += '<span class="hl">FORMULA</span>\n';
-h += '  C_raw = \u03A3 (w\u1D62 \u00D7 S\u1D62)  for i \u2208 {trend, valuation, consensus, volatility, macro, liquidity, global, correlation}\n\n';
+h += '  C_raw = \u03A3 (w\u1D62 \u00D7 S\u1D62_norm)  for i \u2208 {trend, valuation, consensus, volatility, macro, liquidity, global, correlation}\n';
+h += '  S\u1D62_norm = tanh(S\u1D62_raw / scale\u1D62)\n\n';
 h += '<span class="hl">SUBSTITUTION</span>\n';
-h += '  Engine          Weight    Score       w\u1D62 \u00D7 S\u1D62 = Contribution\n';
-h += '  ' + '\u2500'.repeat(66) + '\n';
+h += '  Engine          Weight    Raw       Norm.      w\u1D62 \u00D7 S\u1D62_norm = Contribution\n';
+h += '  ' + '\u2500'.repeat(76) + '\n';
 var _xCR = 0, _xWS = 0;
 for(var i=0;i<ENGINES.length;i++){
-  var _e=ENGINES[i], _sc=SC[_e]||0, _w=W[_e]||0, _ct=CT[_e]||0;
+  var _e=ENGINES[i], _sc=SC[_e]||0, _sn=SN[_e]||0, _w=W[_e]||0, _ct=CT[_e]||0;
   _xCR += _ct; _xWS += _w;
   var _cc = _ct>=0?'pos':'neg';
-  h += '  '+_e.padEnd(14)+f(_w,3).padStart(7)+'  '+((_sc>=0)?'+':'')+f(_sc,1).padStart(7)+'    '+f(_w,3)+' \u00D7 '+((_sc>=0)?'+':'')+f(_sc,1)+' = <span class="'+_cc+'">'+((_ct>=0)?'+':'')+f(_ct,2).padStart(8)+'</span>\n';
+  h += '  '+_e.padEnd(14)+f(_w,3).padStart(7)+'  '+((_sc>=0)?'+':'')+f(_sc,1).padStart(7)+'  '+((_sn>=0)?'+':'')+f(_sn,3).padStart(7)+'    '+f(_w,3)+' \u00D7 '+((_sn>=0)?'+':'')+f(_sn,3)+' = <span class="'+_cc+'">'+((_ct>=0)?'+':'')+f(_ct,2).padStart(8)+'</span>\n';
 }
 h += '  ' + '\u2500'.repeat(66) + '\n';
 h += '  Weight sum: \u03A3 w\u1D62 = <span class="hl">'+f(_xWS,3)+'</span>';
@@ -2143,7 +2153,7 @@ h += '</div>';
 if(cRaw!=null && Math.abs(_xCR - cRaw) > 0.5){
   h += '<div class="recon">\u26A0 Computed C_raw diverges from reported by '+f(Math.abs(_xCR - cRaw),2)+'. Causes: intermediate rounding, normalization clamps after weighted sum, or float accumulation. Reported value reflects engine internal float.</div>';
 }
-h += '<div class="mnote">Engine definitions: <strong>trend</strong> = price momentum vs SMAs; <strong>valuation</strong> = relative/absolute multiples; <strong>consensus</strong> = analyst revisions; <strong>volatility</strong> = VIX regime; <strong>macro</strong> = rates/spreads/yield curve; <strong>liquidity</strong> = volume and flow; <strong>global</strong> = cross-market stress; <strong>correlation</strong> = inter-asset divergence. Scores shown are already normalized upstream.</div>';
+h += '<div class="mnote">Engine definitions: <strong>trend</strong> = price momentum vs SMAs; <strong>valuation</strong> = relative/absolute multiples; <strong>consensus</strong> = analyst revisions; <strong>volatility</strong> = VIX regime; <strong>macro</strong> = rates/spreads/yield curve; <strong>liquidity</strong> = volume and flow; <strong>global</strong> = cross-market stress; <strong>correlation</strong> = inter-asset divergence. Raw scores are engine outputs; Norm. = tanh(Raw/scale) in [\u22121, +1]; Contribution = Weight \u00D7 Norm. \u00D7 100.</div>';
 
 // ── C) Risk Governor Deep Dive ──
 h += '<div class="mhdr">RISK GOVERNOR \u2014 GATE MECHANISM</div>';
