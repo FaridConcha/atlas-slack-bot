@@ -448,9 +448,18 @@ def _check_fundamental_integrity(mc, shares, revenue, price):
 
 def _sanitize_yield(info, price):
     """
-    Cross-validate dividend yield against dividendRate/price.
-    Returns (yield_value, anomaly_info_dict).
-    anomaly_info is always returned for provenance.
+    Normalize dividend yield to canonical internal representation.
+
+    Returns (display_yield_pct, anomaly_info_dict).
+      display_yield_pct: float (e.g. 1.36 meaning 1.36%) or None if anomalous.
+      anomaly_info: provenance dict with raw values, unit determination, and flags.
+
+    Pipeline:
+      1. Capture raw provider value exactly as received.
+      2. Determine unit via cross-check with dividend_rate/price when available.
+      3. Normalize to canonical decimal (e.g. 0.0136 for 1.36%).
+      4. Out-of-range evaluated AFTER normalization (decimal > 0.25 → flag).
+      5. Convert to display percent for return value.
     """
     raw_dy = info.get('dividendYield')
     div_rate = info.get('dividendRate')
@@ -458,6 +467,11 @@ def _sanitize_yield(info, price):
         'raw_provider_value': raw_dy,
         'dividend_rate': div_rate,
         'provider': 'yfinance',
+        'unit_hint': None,
+        'normalized_decimal': None,
+        'normalized_pct': None,
+        'expected_yield_decimal': None,
+        'expected_yield_pct': None,
         'reason_codes': [],
     }
 
@@ -469,35 +483,66 @@ def _sanitize_yield(info, price):
     raw_dy = raw_dy or 0
     div_rate = div_rate or 0
 
+    # ── Step 1: Compute expected yield from dividend_rate / price ──
+    expected_decimal = None
     if price > 0 and div_rate > 0:
-        computed_dy = div_rate / price  # Always a decimal
-        anomaly['computed_from_rate'] = round(computed_dy * 100, 3)
-        # Pick whichever raw interpretation is closer to computed
-        if abs(raw_dy - computed_dy) <= abs(raw_dy * 100 - computed_dy * 100):
-            dividend_yield = raw_dy * 100  # raw was decimal, convert
+        expected_decimal = div_rate / price
+        anomaly['expected_yield_decimal'] = round(expected_decimal, 6)
+        anomaly['expected_yield_pct'] = round(expected_decimal * 100, 3)
+
+    # ── Step 2: Determine raw_dy unit ──
+    # Compare two hypotheses:
+    #   H_decimal: raw_dy IS a decimal (e.g. 0.0136)  → normalized = raw_dy
+    #   H_percent: raw_dy IS percent points (e.g. 1.36) → normalized = raw_dy / 100
+    # Pick whichever is closer to expected_decimal (the ground truth).
+    if expected_decimal is not None and raw_dy > 0:
+        error_if_decimal = abs(raw_dy - expected_decimal)
+        error_if_percent = abs(raw_dy / 100 - expected_decimal)
+
+        if error_if_percent < error_if_decimal:
+            # raw is percent points (e.g. 1.36 meaning 1.36%)
+            normalized_decimal = raw_dy / 100
+            anomaly['unit_hint'] = 'percent_points'
         else:
-            dividend_yield = raw_dy  # raw was already percentage
-            anomaly['reason_codes'].append('DIV_YIELD_SCALE_SUSPECT')
-    elif raw_dy > 1.0:
-        dividend_yield = raw_dy  # Already percentage
-        anomaly['reason_codes'].append('DIV_YIELD_SCALE_SUSPECT')
+            # raw is decimal (e.g. 0.0136 meaning 1.36%)
+            normalized_decimal = raw_dy
+            anomaly['unit_hint'] = 'decimal'
+
+        # Cross-check: flag if normalized still diverges from expected
+        if expected_decimal > 0:
+            rel_error = abs(normalized_decimal - expected_decimal) / expected_decimal
+            if rel_error > 0.20:
+                anomaly['reason_codes'].append('DIV_YIELD_INCONSISTENT_WITH_DIV_RATE')
     elif raw_dy > 0:
-        dividend_yield = raw_dy * 100
+        # No div_rate for cross-check — use heuristic
+        # yfinance typically returns decimal; values > 0.50 are implausible as decimal
+        if raw_dy > 0.50:
+            normalized_decimal = raw_dy / 100
+            anomaly['unit_hint'] = 'percent_points_heuristic'
+        else:
+            normalized_decimal = raw_dy
+            anomaly['unit_hint'] = 'decimal_assumed'
     else:
         if div_rate == 0:
+            anomaly['normalized_decimal'] = 0.0
+            anomaly['normalized_pct'] = 0.0
             return 0, anomaly  # Company doesn't pay dividends
-        dividend_yield = 0
+        normalized_decimal = 0
         anomaly['reason_codes'].append('DIV_YIELD_ZERO_BUT_RATE_EXISTS')
 
-    # Final sanity cap
-    if dividend_yield > 25:
+    anomaly['normalized_decimal'] = round(normalized_decimal, 6)
+    anomaly['normalized_pct'] = round(normalized_decimal * 100, 3)
+
+    # ── Step 3: Out-of-range evaluated AFTER normalization ──
+    if normalized_decimal > 0.25:
         anomaly['reason_codes'].append('DIV_YIELD_OUT_OF_RANGE')
         anomaly['final_value'] = None
-        anomaly['rejected_value'] = round(dividend_yield, 2)
+        anomaly['rejected_value_pct'] = round(normalized_decimal * 100, 2)
         return None, anomaly
 
-    anomaly['final_value'] = round(dividend_yield, 2)
-    return round(dividend_yield, 2), anomaly
+    display_pct = round(normalized_decimal * 100, 2)
+    anomaly['final_value'] = display_pct
+    return display_pct, anomaly
 
 
 def _sanitize_payout(info):
@@ -1345,21 +1390,38 @@ def _build_dcf(info, financials):
         tax_rate = 0.25              # effective corporate tax proxy
         after_tax_cost_of_debt = pre_tax_cost_of_debt * (1 - tax_rate)
 
-        # Capital structure weights from D/E
+        # Capital structure weights from D/E — stored as decimals in [0,1]
         de = financials.get('debt_equity') or 0
+        cap_structure_warning = None
         if de > 0:
-            debt_weight = de / (1 + de)      # D/V
-            equity_weight = 1 - debt_weight  # E/V
+            debt_weight = de / (1 + de)      # D/V decimal
+            equity_weight = 1 - debt_weight  # E/V decimal
             wacc = equity_weight * cost_of_equity + debt_weight * after_tax_cost_of_debt
         else:
             debt_weight = 0.0
             equity_weight = 1.0
             wacc = cost_of_equity
 
+        # Guard: weights must be in [0,1] and sum to ~1.0
+        if equity_weight < 0 or equity_weight > 1.0 or debt_weight < 0 or debt_weight > 1.0:
+            cap_structure_warning = 'WEIGHT_OUT_OF_BOUNDS'
+        if abs(equity_weight + debt_weight - 1.0) > 1e-3:
+            cap_structure_warning = 'CAP_STRUCTURE_NOT_NORMALIZED'
+
         # The model discounts unlevered FCF → discount at WACC
         discount_rate_type = 'WACC'
-        discount_rate = max(0.06, min(0.15, wacc))
-        was_clamped = (wacc < 0.06 or wacc > 0.15)
+        clamp_floor = 0.06
+        clamp_ceiling = 0.15
+        clamp_rule = None
+        if wacc < clamp_floor:
+            discount_rate = clamp_floor
+            clamp_rule = 'FLOOR_ABSOLUTE'
+        elif wacc > clamp_ceiling:
+            discount_rate = clamp_ceiling
+            clamp_rule = 'CEILING_ABSOLUTE'
+        else:
+            discount_rate = wacc
+
         terminal_growth = 0.03
         forecast_years = 5
 
@@ -1427,11 +1489,17 @@ def _build_dcf(info, financials):
                 'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),
                 'tax_rate': round(tax_rate * 100, 1),
                 'after_tax_cost_of_debt': round(after_tax_cost_of_debt * 100, 2),
-                'equity_weight': round(equity_weight * 100, 1),
-                'debt_weight': round(debt_weight * 100, 1),
+                # Capital structure weights — decimals in [0,1]
+                'equity_weight': round(equity_weight, 4),
+                'debt_weight': round(debt_weight, 4),
+                'cap_structure_warning': cap_structure_warning,
+                # WACC
                 'wacc_raw': round(wacc * 100, 2),
                 'discount_rate': round(discount_rate * 100, 2),
-                'discount_rate_clamped': was_clamped,
+                # Clamp details — fully explicit
+                'clamp_rule': clamp_rule,
+                'clamp_floor': round(clamp_floor * 100, 1),
+                'clamp_ceiling': round(clamp_ceiling * 100, 1),
                 # Growth & margin
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),

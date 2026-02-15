@@ -868,14 +868,27 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
       h += '<span style="font-weight:600">Cost of Equity (CAPM):</span> Rf '+f(a.risk_free_rate,2)+'% + \u03B2('+f(a.beta,2)+') \u00D7 ERP '+f(a.equity_risk_premium,2)+'% = <span class="mono hl" style="font-size:11px">'+f(a.cost_of_equity,2)+'%</span>';
       h += '</div>';
       if(a.discount_rate_type==='WACC' && a.debt_weight!=null && a.debt_weight > 0){
+        var _ew = a.equity_weight!=null ? f(a.equity_weight*100,1) : 'N/A';
+        var _dw = a.debt_weight!=null ? f(a.debt_weight*100,1) : 'N/A';
+        if(a.cap_structure_warning){
+          h += '<div style="font-size:10px;color:var(--neg)">Capital structure warning: '+a.cap_structure_warning+'</div>';
+        }
         h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
-        h += '<span style="font-weight:600">WACC:</span> E/V('+f(a.equity_weight*100,0)+'%) \u00D7 Ke('+f(a.cost_of_equity,2)+'%) + D/V('+f(a.debt_weight*100,0)+'%) \u00D7 Kd(1\u2212t)('+f(a.after_tax_cost_of_debt,2)+'%) = <span class="mono hl" style="font-size:11px">'+f(a.wacc_raw!=null?a.wacc_raw:a.discount_rate,2)+'%</span>';
-        if(a.discount_rate_clamped) h += ' <span style="color:var(--warn)">\u2192 clamped to '+f(a.discount_rate,2)+'%</span>';
+        h += '<span style="font-weight:600">WACC:</span> E/V('+_ew+'%) \u00D7 Ke('+f(a.cost_of_equity,2)+'%) + D/V('+_dw+'%) \u00D7 Kd(1\u2212t)('+f(a.after_tax_cost_of_debt,2)+'%) = <span class="mono hl" style="font-size:11px">'+f(a.wacc_raw,2)+'%</span>';
         h += '</div>';
       } else {
         h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
         h += '<span style="font-weight:600">Discount rate:</span> Cost of Equity (no debt weighting) = '+f(a.cost_of_equity,2)+'%';
-        if(a.discount_rate_clamped) h += ' <span style="color:var(--warn)">\u2192 clamped to '+f(a.discount_rate,2)+'%</span>';
+        h += '</div>';
+      }
+      // Explicit clamp rule
+      if(a.clamp_rule){
+        h += '<div style="font-size:10px;color:var(--warn);line-height:1.6">';
+        h += '<span style="font-weight:600">Clamp applied:</span> WACC_raw '+f(a.wacc_raw,2)+'% '+((a.clamp_rule==='FLOOR_ABSOLUTE')?'< floor '+f(a.clamp_floor,1)+'%':'> ceiling '+f(a.clamp_ceiling,1)+'%')+' \u2192 discount_rate_used = <span class="mono hl" style="font-size:11px">'+f(a.discount_rate,2)+'%</span> (rule: '+a.clamp_rule+')';
+        h += '</div>';
+      } else {
+        h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
+        h += '<span style="font-weight:600">Discount rate used:</span> '+f(a.discount_rate,2)+'% (no clamp applied)';
         h += '</div>';
       }
       h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
@@ -887,7 +900,7 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
     if(a.enterprise_value!=null && a.net_debt_subtracted!=null){
       h += '<div style="font-size:10px;color:var(--t3);margin-top:6px;padding:6px 8px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);line-height:1.7">';
       h += '<span style="font-weight:600">EV \u2192 Equity Bridge:</span><br>';
-      h += '&nbsp;&nbsp;PV(FCF\u2081\u2085) = '+fM(a.pv_fcf_sum)+' &nbsp;+&nbsp; PV(Terminal) = '+fM(a.terminal_value_pv)+' &nbsp;\u2192&nbsp; Enterprise Value = <span class="mono hl" style="font-size:11px">'+fM(a.enterprise_value)+'</span><br>';
+      h += '&nbsp;&nbsp;PV(FCF\u2081\u2013\u2085) = '+fM(a.pv_fcf_sum)+' &nbsp;+&nbsp; PV(Terminal) = '+fM(a.terminal_value_pv)+' &nbsp;\u2192&nbsp; Enterprise Value = <span class="mono hl" style="font-size:11px">'+fM(a.enterprise_value)+'</span><br>';
       h += '&nbsp;&nbsp;Enterprise Value '+fM(a.enterprise_value)+' \u2212 Net Debt '+fM(a.net_debt_subtracted)+' = Equity Value <span class="mono hl" style="font-size:11px">'+fM(a.equity_value)+'</span><br>';
       h += '&nbsp;&nbsp;Equity Value / '+fN(a.shares)+' shares = <span class="mono hl" style="font-size:11px">$'+f(DCF.base,2)+'</span> per share';
       h += '</div>';
@@ -1851,15 +1864,21 @@ if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
   }
   h += '</div>';
 
-  // Dividend anomaly reason codes
-  if(FIN._dividend_anomaly && FIN._dividend_anomaly.reason_codes && FIN._dividend_anomaly.reason_codes.length > 0){
+  // Dividend anomaly provenance panel
+  if(FIN._dividend_anomaly){
     var _da = FIN._dividend_anomaly;
-    h += '<div style="margin-top:6px;padding:4px 8px;font-size:10px;color:var(--t3);background:var(--bg1);border:1px solid var(--border);border-radius:var(--r)">';
-    h += '<span style="font-weight:600">Dividend data provenance:</span> ';
-    h += 'Provider: '+(_da.provider||'yfinance')+' &middot; ';
-    if(_da.raw_provider_value!=null) h += 'Raw yield value: '+f(_da.raw_provider_value,4)+' &middot; ';
-    if(_da.dividend_rate!=null && _da.dividend_rate > 0) h += 'Div rate: $'+f(_da.dividend_rate,2)+'/share &middot; ';
-    h += 'Flags: '+_da.reason_codes.map(function(c){return'<span style="color:var(--warn)">'+c.replace(/_/g,' ')+'</span>'}).join(', ');
+    var _hasFlags = _da.reason_codes && _da.reason_codes.length > 0;
+    h += '<div style="margin-top:6px;padding:4px 8px;font-size:10px;color:var(--t3);background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);line-height:1.6">';
+    h += '<span style="font-weight:600">Dividend data provenance:</span><br>';
+    h += '&nbsp;&nbsp;Provider: '+(_da.provider||'yfinance');
+    if(_da.raw_provider_value!=null) h += ' &middot; Raw yield (as received): '+f(_da.raw_provider_value,4);
+    if(_da.unit_hint) h += ' &middot; Unit: '+_da.unit_hint.replace(/_/g,' ');
+    h += '<br>';
+    if(_da.normalized_decimal!=null) h += '&nbsp;&nbsp;Normalized: '+f(_da.normalized_decimal,6)+' (decimal) = '+f(_da.normalized_pct,3)+'%<br>';
+    if(_da.expected_yield_decimal!=null) h += '&nbsp;&nbsp;Expected (div_rate/price): '+f(_da.expected_yield_decimal,6)+' (decimal) = '+f(_da.expected_yield_pct,3)+'%<br>';
+    if(_da.dividend_rate!=null && _da.dividend_rate > 0) h += '&nbsp;&nbsp;Dividend rate: $'+f(_da.dividend_rate,2)+'/share<br>';
+    if(_hasFlags) h += '&nbsp;&nbsp;Flags: '+_da.reason_codes.map(function(c){return'<span style="color:var(--warn)">'+c.replace(/_/g,' ')+'</span>'}).join(', ');
+    else h += '&nbsp;&nbsp;<span style="color:var(--pos)">No anomaly flags</span>';
     h += '</div>';
   }
 

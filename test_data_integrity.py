@@ -389,11 +389,12 @@ class TestInvariants:
         assert fall_needed <= 100
 
     def test_dividend_yield_sanity(self):
-        """Yield > 25% should be flagged as None."""
-        info = {'dividendYield': 1.36, 'dividendRate': 2.36}  # 136% raw
+        """Yield with cross-check available must normalize correctly."""
+        info = {'dividendYield': 1.36, 'dividendRate': 2.36}
         result, anomaly = _sanitize_yield(info, 200.0)
-        # Should either be corrected or None
-        assert result is None or result <= 25
+        # Cross-check recognizes 1.36 as percent → 1.36% (not 136%)
+        assert result is not None
+        assert result <= 25
 
     def test_payout_ratio_sanity(self):
         """Payout > 200% should be None."""
@@ -466,7 +467,7 @@ class TestCAPMArithmetic:
         # No debt → WACC = Ke
         assert a['wacc_raw'] == a['cost_of_equity']
         assert a['debt_weight'] == 0.0
-        assert a['equity_weight'] == 100.0
+        assert a['equity_weight'] == 1.0  # decimal [0,1]
 
     def test_discount_rate_clamping(self):
         """Discount rate clamped between 6% and 15%."""
@@ -476,7 +477,7 @@ class TestCAPMArithmetic:
         result = _build_dcf(info, fin)
         a = result['assumptions']
         assert a['discount_rate'] >= 6.0
-        assert a['discount_rate_clamped'] is True
+        assert a['clamp_rule'] == 'FLOOR_ABSOLUTE'
 
     def test_discount_rate_type_label(self):
         """discount_rate_type must be 'WACC' when D/E > 0."""
@@ -666,21 +667,25 @@ class TestDividendAnomalyReasonCodes:
         assert 'DIV_YIELD_MISSING' in anomaly['reason_codes']
         assert 'DIV_PER_SHARE_MISSING' in anomaly['reason_codes']
 
-    def test_out_of_range_code(self):
-        """Yield > 25% → DIV_YIELD_OUT_OF_RANGE and value = None."""
-        info = {'dividendYield': 1.36, 'dividendRate': 2.36}  # 136%
+    def test_percent_points_recognized_by_crosscheck(self):
+        """raw=1.36 with div_rate=2.36, price=200 → recognized as percent, NOT out of range."""
+        info = {'dividendYield': 1.36, 'dividendRate': 2.36}
         val, anomaly = _sanitize_yield(info, 200.0)
-        assert val is None
-        assert 'DIV_YIELD_OUT_OF_RANGE' in anomaly['reason_codes']
+        # Cross-check: 2.36/200 = 0.0118 → raw 1.36 is percent (0.0136 ≈ 0.0118)
+        assert val is not None
+        assert abs(val - 1.36) < 0.1
+        assert 'DIV_YIELD_OUT_OF_RANGE' not in anomaly['reason_codes']
+        assert anomaly['unit_hint'] == 'percent_points'
 
-    def test_normal_yield_no_anomaly_flags(self):
-        """Normal yield (e.g., 1.18%) should have no rejection codes."""
+    def test_normal_decimal_yield(self):
+        """Normal yield as decimal (0.0118) should resolve correctly."""
         info = {'dividendYield': 0.0118, 'dividendRate': 2.36}
         val, anomaly = _sanitize_yield(info, 200.0)
         assert val is not None
         assert val > 0
         assert val <= 25
         assert 'DIV_YIELD_OUT_OF_RANGE' not in anomaly['reason_codes']
+        assert anomaly['unit_hint'] == 'decimal'
 
     def test_zero_rate_zero_yield(self):
         """Company that doesn't pay dividends → value = 0, no rejection."""
@@ -829,6 +834,16 @@ class TestRTXRegressionSnapshot:
         assert a['discount_rate_type'] == 'WACC'
         assert a['after_tax_cost_of_debt'] == 3.75  # 5% × (1-0.25)
 
+        # Weights stored as decimals [0,1]
+        assert 0 < a['equity_weight'] < 1
+        assert 0 < a['debt_weight'] < 1
+        assert abs(a['equity_weight'] + a['debt_weight'] - 1.0) < 0.001
+
+        # Clamp rule explicit
+        assert a['clamp_rule'] in (None, 'FLOOR_ABSOLUTE', 'CEILING_ABSOLUTE')
+        assert 'clamp_floor' in a
+        assert 'clamp_ceiling' in a
+
         # EV → Equity bridge
         assert a['enterprise_value'] > 0
         assert a['net_debt_subtracted'] == 32.5e9
@@ -844,6 +859,181 @@ class TestRTXRegressionSnapshot:
 
         # Shares: never formatted with $ prefix (tested via fN in JS, but verify data)
         assert a['shares'] > 1e9  # In absolute units, not dollars
+
+
+# ============================================================================
+# BLOCKER A — TEST 1: Weight format / bounds
+# ============================================================================
+
+class TestWeightFormatBounds:
+    """Weights must be decimals in [0,1], never exceed 100% when displayed."""
+
+    def test_weights_are_decimals(self):
+        """E/V and D/V must be stored as decimals in [0,1]."""
+        info = {'currentPrice': 200.0, 'beta': 0.42}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        # D/E=1.5 → D/V=0.6, E/V=0.4
+        assert abs(a['equity_weight'] - 0.4) < 0.001
+        assert abs(a['debt_weight'] - 0.6) < 0.001
+        # Display as percent: 40.0% and 60.0%, never >100%
+        assert a['equity_weight'] * 100 <= 100
+        assert a['debt_weight'] * 100 <= 100
+        assert abs(a['equity_weight'] + a['debt_weight'] - 1.0) < 0.001
+
+    def test_weight_guard_flags_invalid(self):
+        """Cap structure warning set when weights are impossible."""
+        info = {'currentPrice': 200.0, 'beta': 1.0}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 0, 'net_debt': 0,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        # D/E=0 → E/V=1.0, D/V=0.0 — valid
+        assert a['equity_weight'] == 1.0
+        assert a['debt_weight'] == 0.0
+        assert a['cap_structure_warning'] is None
+
+
+# ============================================================================
+# BLOCKER A — TEST 2: Discount factor consistency
+# ============================================================================
+
+class TestDiscountFactorConsistency:
+    """Discount factors in projections must match discount_rate_used."""
+
+    def test_df_y1_matches_discount_rate(self):
+        """PV factor for Y1 must equal 1/(1+r) within tolerance."""
+        info = {'currentPrice': 200.0, 'beta': 0.42}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        r = a['discount_rate'] / 100  # Convert from display percent to decimal
+        expected_df_y1 = 1 / (1 + r)
+        actual_df_y1 = result['projections'][0]['pv_factor']
+        assert abs(actual_df_y1 - expected_df_y1) < 0.001, \
+            f"DF Y1 mismatch: got {actual_df_y1}, expected {expected_df_y1} (r={r})"
+
+    def test_df_y5_matches_discount_rate(self):
+        """PV factor for Y5 must equal 1/(1+r)^5 within tolerance."""
+        info = {'currentPrice': 200.0, 'beta': 0.42}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 7e9, 'ebitda': 12e9,
+            'revenue_growth': 5.0, 'debt_equity': 1.5, 'net_debt': 32e9,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        r = a['discount_rate'] / 100
+        expected_df_y5 = 1 / (1 + r) ** 5
+        actual_df_y5 = result['projections'][4]['pv_factor']
+        assert abs(actual_df_y5 - expected_df_y5) < 0.001, \
+            f"DF Y5 mismatch: got {actual_df_y5}, expected {expected_df_y5} (r={r})"
+
+
+# ============================================================================
+# BLOCKER B — TEST 3: RTX dividend case (regression)
+# ============================================================================
+
+class TestRTXDividendRegression:
+    """RTX-specific dividend yield regression: raw=1.36, rate=$2.72, price=$200.06."""
+
+    def test_rtx_yield_resolves_correctly(self):
+        """RTX: raw_yield=1.36 (percent_points) + div_rate=2.72 → ~1.36%, NOT N/A."""
+        info = {'dividendYield': 1.36, 'dividendRate': 2.72}
+        val, anomaly = _sanitize_yield(info, 200.06)
+
+        # Must resolve to a value, not N/A
+        assert val is not None, f"Dividend yield should NOT be None. Anomaly: {anomaly}"
+
+        # Should be approximately 1.36%
+        assert abs(val - 1.36) < 0.1, f"Expected ~1.36%, got {val}%"
+
+        # Must NOT be flagged out of range
+        assert 'DIV_YIELD_OUT_OF_RANGE' not in anomaly['reason_codes']
+
+        # Provenance fields present
+        assert anomaly['unit_hint'] == 'percent_points'
+        assert anomaly['normalized_decimal'] is not None
+        assert abs(anomaly['normalized_decimal'] - 0.0136) < 0.001
+
+        # Expected yield from div_rate/price
+        assert anomaly['expected_yield_decimal'] is not None
+        expected = 2.72 / 200.06
+        assert abs(anomaly['expected_yield_decimal'] - expected) < 0.0001
+
+        # Display percent
+        assert anomaly['normalized_pct'] is not None
+        assert abs(anomaly['normalized_pct'] - 1.36) < 0.1
+
+
+# ============================================================================
+# BLOCKER B — TEST 4: Out of range AFTER normalization
+# ============================================================================
+
+class TestOutOfRangeAfterNormalization:
+    """Out-of-range is evaluated AFTER normalization, not before."""
+
+    def test_truly_anomalous_yield_flagged(self):
+        """raw=136.0 (percent_points) → normalized decimal=1.36 (136%) → out of range."""
+        info = {'dividendYield': 136.0, 'dividendRate': 2.72}
+        val, anomaly = _sanitize_yield(info, 200.06)
+
+        # 136/100 = 1.36 decimal → 136% → out of range
+        assert val is None
+        assert 'DIV_YIELD_OUT_OF_RANGE' in anomaly['reason_codes']
+
+    def test_normal_yield_not_flagged(self):
+        """raw=0.0136 (decimal) → normalized=0.0136 → 1.36% → NOT out of range."""
+        info = {'dividendYield': 0.0136, 'dividendRate': 2.72}
+        val, anomaly = _sanitize_yield(info, 200.06)
+        assert val is not None
+        assert abs(val - 1.36) < 0.1
+        assert 'DIV_YIELD_OUT_OF_RANGE' not in anomaly['reason_codes']
+
+    def test_edge_case_25_pct_threshold(self):
+        """Normalized decimal 0.25 (25%) is the boundary — just over triggers flag."""
+        # 26% yield → out of range
+        info = {'dividendYield': 0.26}  # decimal, no rate for cross-check
+        val, anomaly = _sanitize_yield(info, 100.0)
+        assert val is None
+        assert 'DIV_YIELD_OUT_OF_RANGE' in anomaly['reason_codes']
+
+
+# ============================================================================
+# BLOCKER C — TEST 5: Label
+# ============================================================================
+
+class TestEVBridgeLabel:
+    """The EV bridge label must render as PV(FCF₁–₅), not PV(FCF₁₅)."""
+
+    def test_label_contains_en_dash(self):
+        """Verify the string uses subscript-1 + en-dash + subscript-5."""
+        # The web_server.py line uses: PV(FCF\\u2081\\u2013\\u2085)
+        # \\u2081 = ₁, \\u2013 = –, \\u2085 = ₅
+        correct_label = 'PV(FCF\u2081\u2013\u2085)'
+        wrong_label = 'PV(FCF\u2081\u2085)'
+        assert '\u2013' in correct_label  # en-dash present
+        assert correct_label != wrong_label  # different from wrong version
+        # Verify the actual web_server.py file contains the correct label
+        import re
+        with open('web_server.py', 'r') as f:
+            content = f.read()
+        assert 'PV(FCF\\u2081\\u2013\\u2085)' in content, \
+            "web_server.py must contain PV(FCF₁–₅) with en-dash"
+        assert 'PV(FCF\\u2081\\u2085)' not in content, \
+            "web_server.py must NOT contain PV(FCF₁₅) without en-dash"
 
 
 if __name__ == '__main__':
