@@ -641,6 +641,7 @@ def engine_volatility(vol_data, price_data):
             iv_rv_ratio = 1.0
 
         details['rv_20d'] = rv_20 if len(returns) >= 20 else np.nan
+        details['iv_rv_ratio'] = iv_rv_ratio  # D20 FIX: store for diagnostics
 
     if put_call > 1.3:
         score += 20
@@ -918,7 +919,7 @@ def engine_correlation(price_data, vol_data, macro_data):
 # ============================================================================
 
 def _compute_engine_variance(engine_name, score, dc_details, score_range,
-                              ensemble_sign=None, regime_label=None):
+                              ensemble_sign=None, regime_label=None, mid=0.0):
     """
     Compute variance estimate for a single engine.
     σ²_i = σ²_base × f_data × f_extremity × f_agreement × f_regime
@@ -926,6 +927,7 @@ def _compute_engine_variance(engine_name, score, dc_details, score_range,
     Phase 2c additions:
       f_agreement: penalizes engines disagreeing with ensemble direction
       f_regime: regime-conditioned variance multiplier
+    D23 FIX: mid parameter allows per-engine midpoint (correlation: 50, others: 0).
     """
     sigma2_base = ENGINE_VARIANCE_BASE.get(engine_name, 50)
 
@@ -940,8 +942,7 @@ def _compute_engine_variance(engine_name, score, dc_details, score_range,
     if dc < 70:
         f_data *= (100.0 / max(dc, 10))
 
-    # f_extremity: higher variance at score extremes
-    mid = 0.0
+    # f_extremity: higher variance at score extremes (measured from engine midpoint)
     half_range = score_range / 2.0 if score_range > 0 else 1.0
     f_extremity = 1.0 + 0.5 * ((score - mid) / half_range) ** 2
 
@@ -967,6 +968,11 @@ def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
         'trend': 200, 'valuation': 80, 'consensus': 100, 'volatility': 80,
         'macro': 80, 'liquidity': 100, 'global': 100, 'correlation': 100,
     }
+    # D23 FIX: per-engine midpoints (correlation is 0-100 centered at 50, others symmetric around 0)
+    score_mids = {
+        'trend': 0, 'valuation': 0, 'consensus': 0, 'volatility': 0,
+        'macro': 0, 'liquidity': 0, 'global': 0, 'correlation': 50,
+    }
 
     # Determine ensemble direction (sign of mean normalized score)
     ensemble_mean = np.mean([s for s in scores_dict.values()])
@@ -977,12 +983,13 @@ def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
         sr = score_ranges.get(engine_name, 100)
         variances[engine_name] = _compute_engine_variance(
             engine_name, score, dc_details, sr,
-            ensemble_sign=ensemble_sign, regime_label=regime_label
+            ensemble_sign=ensemble_sign, regime_label=regime_label,
+            mid=score_mids.get(engine_name, 0.0)
         )
     return variances
 
 
-def transform_engine_variances_to_normalized(engine_variances, scores_dict):
+def transform_engine_variances_to_normalized(engine_variances):
     """
     D1 FIX: Transform engine variances from raw score space to tanh-normalized space.
 
@@ -2458,7 +2465,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     regime_vector, rel, regime_label_hard = compute_regime_vector(data, scores_dict, engine_details)
 
     # [Phase 2a] Soft GMM Regime Classification
-    regime_probs, regime_label_gmm = compute_soft_regime(regime_vector)
+    regime_probs, _ = compute_soft_regime(regime_vector)
 
     # [Phase 2b] EMA Smoothing for regime transitions
     state = load_meta_state(state_dir, symbol=symbol)
@@ -2503,12 +2510,20 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # [Phase 2d] Regime-conditioned correlation matrix
     regime_corr = build_regime_conditioned_correlations(regime_probs)
 
+    # [D19 FIX] Blend regime-conditioned and realized correlations
+    # At cold start (high shrinkage_w), lean on regime theory (regime_corr)
+    # As evidence accumulates (low shrinkage_w), lean on realized data (realized_corr)
+    corr_blended = shrinkage_w * regime_corr + (1.0 - shrinkage_w) * realized_corr
+    # Force unit diagonal after blending
+    d_blend = np.sqrt(np.diag(corr_blended))
+    corr_blended = corr_blended / np.outer(d_blend, d_blend)
+
     # [D1 FIX] Transform variances to normalized space for probabilistic framework
     # σ²_norm = σ²_raw / s²  — ensures σ²_C and μ_C are dimensionally consistent
-    engine_variances_norm = transform_engine_variances_to_normalized(engine_variances, scores_dict)
+    engine_variances_norm = transform_engine_variances_to_normalized(engine_variances)
 
-    # [P2] Covariance Matrix + Composite Variance (using normalized variances + regime correlations)
-    cov_matrix, engine_order = build_covariance_matrix(engine_variances_norm, correlation_matrix=regime_corr)
+    # [P2] Covariance Matrix + Composite Variance (using normalized variances + blended correlations)
+    cov_matrix, engine_order = build_covariance_matrix(engine_variances_norm, correlation_matrix=corr_blended)
     sigma2_C = compute_composite_variance(w_dynamic, cov_matrix, engine_order)
     sigma_C = np.sqrt(sigma2_C)
 
