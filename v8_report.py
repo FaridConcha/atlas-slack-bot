@@ -12,6 +12,11 @@ Design: Dense data in tables, natural language in narratives, everything in cont
 """
 
 from datetime import datetime
+from valuation_config import (
+    CONFIG, MOAT_PROTECTED_INDUSTRIES, THIN_MARGIN_NET_THRESHOLD,
+    THIN_MARGIN_OP_THRESHOLD, FRAGILITY_LOW_WACC, FRAGILITY_HIGH_TERMINAL_DEP,
+    FRAGILITY_LOW_DATA_CONF, FRAGILITY_FLAT_MARGINS,
+)
 
 
 def _n(val, default=0):
@@ -253,6 +258,193 @@ def _v8_verdict_label(score):
 
 
 # ============================================================================
+# STAGE 5: FRAGILITY, DYNAMIC MOS, RECONCILIATION
+# ============================================================================
+
+def _compute_fragility(dcf, financials, summary):
+    """
+    Identify valuation fragility contributors.
+
+    Returns:
+        list[str] of contributor codes (e.g. LOW_WACC, HIGH_TERMINAL_DEP, etc.)
+    """
+    if not CONFIG.flags.fragility_scoring:
+        return []
+
+    contributors = []
+    cfg = CONFIG.fragility
+
+    # LOW_WACC: discount rate too low to be credible
+    assumptions = dcf.get('assumptions', {}) if dcf else {}
+    discount_rate = assumptions.get('discount_rate', 0) or 0
+    if discount_rate > 0 and discount_rate < cfg.low_wacc_threshold:
+        contributors.append(FRAGILITY_LOW_WACC)
+
+    # HIGH_TERMINAL_DEP: terminal value dominates fair value
+    terminal_pct = assumptions.get('terminal_value_pct', 0) or 0
+    if terminal_pct >= cfg.high_terminal_dep_threshold:
+        contributors.append(FRAGILITY_HIGH_TERMINAL_DEP)
+
+    # LOW_DATA_CONF: engine data confidence is low
+    dc = summary.get('data_confidence', 100) or 100
+    if dc < cfg.low_data_confidence_threshold:
+        contributors.append(FRAGILITY_LOW_DATA_CONF)
+
+    # FLAT_MARGINS_ASSUMPTION: if DCF uses constant margin over forecast
+    # (always true in current model — flag if margin is negative or very thin)
+    fcf_margin = assumptions.get('fcf_margin', 0) or 0
+    if 0 < fcf_margin < 5:
+        contributors.append(FRAGILITY_FLAT_MARGINS)
+
+    return contributors
+
+
+def _compute_dynamic_mos(business_type, dcf, financials, data_confidence, fragility_contributors):
+    """
+    Additive MOS model: base + uplift components.
+
+    Returns:
+        (required_mos: float (decimal, e.g. 0.86), mos_build: list[dict])
+    """
+    if not CONFIG.flags.dynamic_mos:
+        # Legacy static MOS
+        if business_type == 'Very Stable':
+            return (0.20, [{'component': 'base', 'adjustment': 20, 'reason': 'Very Stable (legacy)'}])
+        elif business_type == 'Normal':
+            return (0.30, [{'component': 'base', 'adjustment': 30, 'reason': 'Normal (legacy)'}])
+        else:
+            return (0.45, [{'component': 'base', 'adjustment': 45, 'reason': 'Cyclical (legacy)'}])
+
+    cfg = CONFIG.mos
+    build = []
+    total_pp = 0.0
+
+    # 1. Base
+    base_pct = cfg.base_for_type(business_type) * 100
+    build.append({'component': 'base', 'adjustment': base_pct, 'reason': f'{business_type} business'})
+    total_pp += base_pct
+
+    # 2. Data confidence uplift
+    dc = data_confidence if data_confidence is not None else 100
+    if dc < cfg.data_confidence_threshold:
+        build.append({'component': 'data_confidence', 'adjustment': cfg.uplift_low_data_confidence,
+                      'reason': f'Data confidence {dc:.0f}% < {cfg.data_confidence_threshold:.0f}%'})
+        total_pp += cfg.uplift_low_data_confidence
+
+    # 3. Terminal dependence uplift
+    assumptions = dcf.get('assumptions', {}) if dcf else {}
+    terminal_pct = assumptions.get('terminal_value_pct', 0) or 0
+    if terminal_pct >= cfg.terminal_dep_threshold:
+        build.append({'component': 'terminal_dependence', 'adjustment': cfg.uplift_high_terminal_dep,
+                      'reason': f'Terminal dependence {terminal_pct:.0f}% >= {cfg.terminal_dep_threshold:.0f}%'})
+        total_pp += cfg.uplift_high_terminal_dep
+
+    # 4. WACC clamp uplift
+    wacc_clamp_codes = assumptions.get('wacc_clamp_codes', []) or []
+    if wacc_clamp_codes:
+        build.append({'component': 'wacc_clamp', 'adjustment': cfg.uplift_wacc_clamp,
+                      'reason': f'WACC clamp applied: {", ".join(wacc_clamp_codes)}'})
+        total_pp += cfg.uplift_wacc_clamp
+
+    # 5. Leverage uplift
+    de = _n(financials.get('debt_equity'))
+    if de > cfg.leverage_extreme_threshold:
+        build.append({'component': 'leverage', 'adjustment': cfg.uplift_extreme_leverage,
+                      'reason': f'D/E {de:.1f}x > {cfg.leverage_extreme_threshold:.0f}x (extreme)'})
+        total_pp += cfg.uplift_extreme_leverage
+    elif de > cfg.leverage_high_threshold:
+        build.append({'component': 'leverage', 'adjustment': cfg.uplift_high_leverage,
+                      'reason': f'D/E {de:.1f}x > {cfg.leverage_high_threshold:.0f}x (high)'})
+        total_pp += cfg.uplift_high_leverage
+
+    # 6. Value creation shortfall (ROE < WACC proxy)
+    roe = _n(financials.get('roe'))
+    wacc_proxy = assumptions.get('discount_rate', 8) or 8
+    if roe > 0 and roe < wacc_proxy:
+        build.append({'component': 'value_creation', 'adjustment': cfg.uplift_value_destruction,
+                      'reason': f'ROE {roe:.1f}% < WACC {wacc_proxy:.1f}% (value destruction)'})
+        total_pp += cfg.uplift_value_destruction
+
+    # 7. Fragility uplift (per extra contributor beyond 1)
+    n_frag = len(fragility_contributors)
+    if n_frag > 1:
+        extra = n_frag - 1
+        frag_uplift = extra * cfg.uplift_fragility_per
+        build.append({'component': 'fragility', 'adjustment': frag_uplift,
+                      'reason': f'{n_frag} fragility contributors ({", ".join(fragility_contributors)})'})
+        total_pp += frag_uplift
+    elif n_frag == 1:
+        # Single contributor: note it but no extra uplift
+        build.append({'component': 'fragility', 'adjustment': 0,
+                      'reason': f'1 fragility contributor ({fragility_contributors[0]})'})
+
+    required_mos = total_pp / 100.0
+    return (round(required_mos, 4), build)
+
+
+def _reconciliation_checks(summary, v8_data, v9_scores):
+    """
+    Cross-module consistency checks.
+
+    Returns:
+        list[dict] with keys: check, status ('OK'|'WARN'|'ERROR'), detail
+    """
+    if not CONFIG.flags.reconciliation_checks:
+        return []
+
+    errors = []
+
+    # 1. MOS sign invariant: if price > IV, MOS must be negative
+    price = v8_data.get('company', {}).get('price', 0) or 0
+    iv = v9_scores.get('intrinsic_value_base', 0) or 0
+    mos = v9_scores.get('mos_pct', 0) or 0
+    if price > 0 and iv > 0 and price > iv and mos > 0:
+        errors.append({
+            'check': 'MOS_SIGN_INVARIANT',
+            'status': 'ERROR',
+            'detail': f'Price ${price:.2f} > IV ${iv:.2f} but MOS is +{mos:.1f}% (should be negative)'
+        })
+
+    # 2. DCF bridge: PV sum + TV = EV
+    dcf = v8_data.get('dcf', {})
+    assumptions = dcf.get('assumptions', {}) if dcf else {}
+    pv_sum = assumptions.get('pv_fcf_sum', 0) or 0
+    tv_pv = assumptions.get('terminal_value_pv', 0) or 0
+    ev = assumptions.get('enterprise_value', 0) or 0
+    if ev > 0 and abs((pv_sum + tv_pv) - ev) > 2:
+        errors.append({
+            'check': 'DCF_BRIDGE',
+            'status': 'ERROR',
+            'detail': f'PV sum ({pv_sum:.0f}) + TV PV ({tv_pv:.0f}) != EV ({ev:.0f})'
+        })
+
+    # 3. Weight sum (from engine)
+    w_dynamic = summary.get('w_dynamic', {})
+    if w_dynamic:
+        wsum = sum(w_dynamic.values())
+        if abs(wsum - 1.0) > 0.01:
+            errors.append({
+                'check': 'WEIGHT_SUM',
+                'status': 'WARN',
+                'detail': f'Engine weight sum = {wsum:.4f} (expected 1.0)'
+            })
+
+    # 4. Composite sum verification
+    contributions = summary.get('contributions', {})
+    composite_raw = summary.get('composite_raw')
+    if contributions and composite_raw is not None:
+        c_sum = sum(contributions.values())
+        if abs(c_sum - composite_raw) > 0.5:
+            errors.append({
+                'check': 'COMPOSITE_SUM',
+                'status': 'WARN',
+                'detail': f'Contribution sum {c_sum:.2f} != composite_raw {composite_raw:.2f}'
+            })
+
+    return errors
+
+
+# ============================================================================
 # V10 OWNER INTELLIGENCE LAYER
 # ============================================================================
 
@@ -444,13 +636,19 @@ def _compute_v9_owner_scores(summary, v8_data):
     # --- Business Type Classification ---
     if business_quality >= 3.5 and moat_durability >= 3.5:
         business_type = "Very Stable"
-        required_mos = 0.20
     elif business_quality >= 2.0 and moat_durability >= 2.0:
         business_type = "Normal"
-        required_mos = 0.30
     else:
         business_type = "Cyclical"
-        required_mos = 0.45
+
+    # --- Fragility + Dynamic MOS (Stage 5) ---
+    data_confidence = summary.get('data_confidence', 100) or 100
+    fragility_contributors = _compute_fragility(dcf, fin, summary)
+    fragility_score = len(fragility_contributors)
+
+    required_mos, mos_build = _compute_dynamic_mos(
+        business_type, dcf, fin, data_confidence, fragility_contributors
+    )
 
     # --- Margin of Safety ---
     dcf_disabled = dcf.get('_dcf_disabled', False)
@@ -536,17 +734,50 @@ def _compute_v9_owner_scores(summary, v8_data):
 
     # Terminal-dependence penalty: if >70% of IV from terminal year,
     # reduce conviction (model is fragile to r-g assumptions)
+    # Stage 5: Enhanced penalty cap 20 (was 15)
     terminal_pct = dcf.get('assumptions', {}).get('terminal_value_pct', 0) or 0
     terminal_penalty = 0
-    if terminal_pct > 70:
-        # Scale penalty: 70%→-5, 80%→-10, 90%→-15
-        terminal_penalty = min(15, round((terminal_pct - 70) * 0.5))
+    terminal_flags = dcf.get('assumptions', {}).get('terminal_flags', []) or []
+    if terminal_pct > CONFIG.terminal.penalty_threshold:
+        terminal_penalty = min(CONFIG.terminal.penalty_cap,
+                               round((terminal_pct - CONFIG.terminal.penalty_threshold) * CONFIG.terminal.penalty_per_pct))
         conviction -= terminal_penalty
 
     conviction = max(0, min(100, round(conviction)))
 
+    # IV confidence: LOW when terminal_pct >= extreme threshold
+    iv_confidence = 'LOW' if terminal_pct >= CONFIG.terminal.extreme_threshold else 'NORMAL'
+
     # Price-based MOS for display
     mos_price_based = round((base_iv - price) / price * 100, 1) if price > 0 else 0
+
+    # --- Capital Allocation Evidence (Stage 5) ---
+    ca_evidence = {}
+    if CONFIG.flags.ca_evidence:
+        wacc_proxy_used = dcf.get('assumptions', {}).get('discount_rate', 8) or 8
+        roic_proxy = roe * (1 - de / (1 + de)) if de >= 0 and (1 + de) > 0 else roe
+        ca_evidence = {
+            'roic_proxy': round(roic_proxy, 2),
+            'wacc_proxy': round(wacc_proxy_used, 2),
+            'roic_wacc_spread': round(roic_proxy - wacc_proxy_used, 2),
+            'buyback_yield': round(_n(fin.get('buyback_yield')), 2),
+            'buyback_fwd_pe': round(fwd_pe, 1),
+            'buyback_discipline': (
+                'GOOD' if bb > 0 and fwd_pe > 0 and fwd_pe < 20
+                else 'QUESTIONABLE' if bb > 0 and fwd_pe > 30
+                else 'ADEQUATE' if bb > 0
+                else 'NONE'
+            ),
+            'reason_codes': [],
+        }
+        if roic_proxy > wacc_proxy_used:
+            ca_evidence['reason_codes'].append('VALUE_CREATOR')
+        else:
+            ca_evidence['reason_codes'].append('VALUE_DESTROYER')
+        if bb > 0 and fwd_pe > 0 and fwd_pe < 20:
+            ca_evidence['reason_codes'].append('BUYBACK_DISCIPLINED')
+        elif bb > 0 and fwd_pe > 30:
+            ca_evidence['reason_codes'].append('BUYBACK_OVERPRICED')
 
     return {
         'business_quality': business_quality,
@@ -560,12 +791,19 @@ def _compute_v9_owner_scores(summary, v8_data):
         'v9_decision': v9_decision,
         'decision_reason': decision_reason,
         'required_mos': required_mos,
+        'required_mos_used': round(required_mos, 4),
         'required_price': round(base_iv * (1 - required_mos), 2) if base_iv > 0 else 0,
         'business_type': business_type,
         'conviction': conviction,
         'terminal_penalty': terminal_penalty,
         'terminal_pct': terminal_pct,
+        'terminal_flags': terminal_flags,
+        'iv_confidence': iv_confidence,
         'permanent_loss_risks': perm_risks[:5],
+        'mos_build': mos_build,
+        'fragility_score': fragility_score,
+        'fragility_contributors': fragility_contributors,
+        'ca_evidence': ca_evidence,
         '_data_status': data_status,
         '_dcf_disabled': dcf_disabled,
     }
@@ -717,7 +955,7 @@ def _section_owner_assessment(summary, v8_data):
 
     tactical = (
         f"\n_Tactical Overlay (engine): Regime={regime} | Composite={composite:+.1f} | "
-        f"TQ={tq:.3f} | VIX={vix:.1f}_"
+        f"TQ={tq:.4f} | VIX={vix:.1f}_"
     )
 
     # Temperament note
@@ -1592,7 +1830,7 @@ def _section_engine_final(summary, v8_data):
         f"*ATLAS ENGINE SIGNAL — {symbol}*",
         "```",
         f"Composite: {c_raw:+.1f}/100  |  Adjusted: {c_adj:+.1f}/100",
-        f"Trade Quality: {tq:.3f}  |  Gate: {gate:.2f}  |  DC: {dc:.0f}%",
+        f"Trade Quality: {tq:.4f}  |  Gate: {gate:.2f}  |  DC: {dc:.0f}%",
         f"Regime: {regime}  |  Reliability: {rel:.2f}  |  Mode: {exec_mode}",
         "",
         f"{'Engine':<13} {'Score':>6} {'Wt':>6} {'Contrib':>8}",
@@ -1749,6 +1987,10 @@ def format_v8_report(summary, v8_data):
     # Compute and attach V10 scores for downstream consumers (web dashboard, Q&A)
     v9_scores = _compute_v9_owner_scores(summary, v8_data)
     v8_data['v9_scores'] = v9_scores
+
+    # Stage 5: Reconciliation checks
+    recon_errors = _reconciliation_checks(summary, v8_data, v9_scores)
+    v8_data['reconciliation_errors'] = recon_errors
 
     messages = [
         _section_owner_assessment(summary, v8_data),   # V10: Owner's view first
