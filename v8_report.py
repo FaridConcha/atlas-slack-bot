@@ -533,6 +533,16 @@ def _compute_v9_owner_scores(summary, v8_data):
     conviction += min(20, capital_allocation * 4) # 0-20
     conviction += min(20, max(0, mos_pct) * 0.5) # 0-20 (capped)
     conviction += min(15, (5 - len([r for r in perm_risks if r[1] == "High"])) * 5)  # 0-15
+
+    # Terminal-dependence penalty: if >70% of IV from terminal year,
+    # reduce conviction (model is fragile to r-g assumptions)
+    terminal_pct = dcf.get('assumptions', {}).get('terminal_value_pct', 0) or 0
+    terminal_penalty = 0
+    if terminal_pct > 70:
+        # Scale penalty: 70%→-5, 80%→-10, 90%→-15
+        terminal_penalty = min(15, round((terminal_pct - 70) * 0.5))
+        conviction -= terminal_penalty
+
     conviction = max(0, min(100, round(conviction)))
 
     # Price-based MOS for display
@@ -553,6 +563,8 @@ def _compute_v9_owner_scores(summary, v8_data):
         'required_price': round(base_iv * (1 - required_mos), 2) if base_iv > 0 else 0,
         'business_type': business_type,
         'conviction': conviction,
+        'terminal_penalty': terminal_penalty,
+        'terminal_pct': terminal_pct,
         'permanent_loss_risks': perm_risks[:5],
         '_data_status': data_status,
         '_dcf_disabled': dcf_disabled,

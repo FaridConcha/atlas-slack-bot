@@ -1223,8 +1223,9 @@ def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm):
     # Data confidence cap
     dc_cap = min(1.0, dc / 100.0)
 
-    # Adjusted composite
-    c_adjusted = c_raw * g * dc_cap
+    # Adjusted composite with explicit adjustment chain
+    c_after_gate = c_raw * g
+    c_adjusted = c_after_gate * dc_cap
 
     # Risk drivers (list of top risk factors)
     risk_drivers = []
@@ -1841,6 +1842,29 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['vix'] = round(safe_float(data['vol'][-1].get('vix', 20)) if data.get('vol') else 20.0, 1)
     summary['contradictions'] = contradictions
     summary['risk_drivers'] = risk_details.get('risk_drivers', [])
+
+    # Composite adjustment chain — full auditability
+    summary['adjustment_chain'] = [
+        {
+            'name': 'C_raw',
+            'formula': 'Σ(wᵢ × Sᵢ)',
+            'value': round(c_raw, 4),
+        },
+        {
+            'name': 'Gate (risk governor)',
+            'formula': 'sigmoid(SR, τ, s)',
+            'value': round(g, 4),
+            'result': round(c_raw * g, 4),
+        },
+        {
+            'name': 'Data confidence cap',
+            'formula': 'min(1.0, DC/100)',
+            'value': round(dc_cap, 4),
+            'result': round(c_adjusted, 4),
+        },
+    ]
+    summary['c_after_gate'] = round(c_raw * g, 4)
+    summary['dc_cap'] = round(dc_cap, 4)
 
     return report_text, summary
 

@@ -706,7 +706,11 @@ if(V9.v9_decision){
       if(FIN.payout_ratio!=null && FIN.payout_ratio > 80) h += 'The elevated payout ratio limits reinvestment flexibility and may be unsustainable if earnings contract. ';
       else if(FIN.payout_ratio!=null && FIN.payout_ratio < 40) h += 'The low payout ratio suggests management retains the majority of earnings for reinvestment, which is appropriate only if reinvestment returns exceed the cost of capital. ';
     } else if(FIN.dividend_yield==null){
-      h += 'Dividend yield data is unavailable or flagged as anomalous. ';
+      h += 'Dividend yield data is unavailable or flagged as anomalous';
+      if(FIN._dividend_anomaly && FIN._dividend_anomaly.reason_codes && FIN._dividend_anomaly.reason_codes.length > 0){
+        h += ' ('+FIN._dividend_anomaly.reason_codes.join(', ').replace(/_/g,' ')+')';
+      }
+      h += '. ';
     }
     if(FIN.buyback_yield!=null && FIN.buyback_yield > 0) h += 'Share repurchases contribute an additional <span class="mono hl">'+f(FIN.buyback_yield)+'%</span> yield. Buybacks are value-accretive only when executed below intrinsic value \u2014 at current pricing, this discipline warrants scrutiny.';
     h += '</p>';
@@ -856,15 +860,81 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
   h += '<div id="ch-dcf" class="chart-box"></div>';
   if(DCF.assumptions){
     var a=DCF.assumptions;
-    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% &middot; FCF Mgn '+f(a.fcf_margin)+'% &middot; WACC '+f(a.discount_rate)+'% &middot; Terminal '+f(a.terminal_growth)+'%</div>';
-    if(a.wacc_derived){
-      h += '<div style="font-size:10px;color:var(--t3)">WACC derived via CAPM: Rf 4% + \u03B2('+f(a.beta,2)+') \u00D7 ERP 5% = '+f(a.discount_rate,1)+'%</div>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Rev Gr '+f(a.revenue_growth_y1)+'% &middot; FCF Mgn '+f(a.fcf_margin)+'% &middot; Discount '+f(a.discount_rate)+'% &middot; Terminal '+f(a.terminal_growth)+'%</div>';
+
+    // ── CAPM + WACC decomposition ──
+    if(a.cost_of_equity!=null){
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:4px;line-height:1.6">';
+      h += '<span style="font-weight:600">Cost of Equity (CAPM):</span> Rf '+f(a.risk_free_rate,2)+'% + \u03B2('+f(a.beta,2)+') \u00D7 ERP '+f(a.equity_risk_premium,2)+'% = <span class="mono hl" style="font-size:11px">'+f(a.cost_of_equity,2)+'%</span>';
+      h += '</div>';
+      if(a.discount_rate_type==='WACC' && a.debt_weight!=null && a.debt_weight > 0){
+        h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
+        h += '<span style="font-weight:600">WACC:</span> E/V('+f(a.equity_weight*100,0)+'%) \u00D7 Ke('+f(a.cost_of_equity,2)+'%) + D/V('+f(a.debt_weight*100,0)+'%) \u00D7 Kd(1\u2212t)('+f(a.after_tax_cost_of_debt,2)+'%) = <span class="mono hl" style="font-size:11px">'+f(a.wacc_raw!=null?a.wacc_raw:a.discount_rate,2)+'%</span>';
+        if(a.discount_rate_clamped) h += ' <span style="color:var(--warn)">\u2192 clamped to '+f(a.discount_rate,2)+'%</span>';
+        h += '</div>';
+      } else {
+        h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
+        h += '<span style="font-weight:600">Discount rate:</span> Cost of Equity (no debt weighting) = '+f(a.cost_of_equity,2)+'%';
+        if(a.discount_rate_clamped) h += ' <span style="color:var(--warn)">\u2192 clamped to '+f(a.discount_rate,2)+'%</span>';
+        h += '</div>';
+      }
+      h += '<div style="font-size:10px;color:var(--t3);line-height:1.6">';
+      h += '<span style="font-weight:600">Cash flow definition:</span> '+(a.cash_flow_definition||'unlevered_fcf').replace(/_/g,' ')+' &middot; <span style="font-weight:600">Forecast:</span> '+(a.forecast_years||5)+' years';
+      h += '</div>';
     }
-    if(a.net_debt_subtracted!=null){
+
+    // ── EV → Equity bridge ──
+    if(a.enterprise_value!=null && a.net_debt_subtracted!=null){
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:6px;padding:6px 8px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);line-height:1.7">';
+      h += '<span style="font-weight:600">EV \u2192 Equity Bridge:</span><br>';
+      h += '&nbsp;&nbsp;PV(FCF\u2081\u2085) = '+fM(a.pv_fcf_sum)+' &nbsp;+&nbsp; PV(Terminal) = '+fM(a.terminal_value_pv)+' &nbsp;\u2192&nbsp; Enterprise Value = <span class="mono hl" style="font-size:11px">'+fM(a.enterprise_value)+'</span><br>';
+      h += '&nbsp;&nbsp;Enterprise Value '+fM(a.enterprise_value)+' \u2212 Net Debt '+fM(a.net_debt_subtracted)+' = Equity Value <span class="mono hl" style="font-size:11px">'+fM(a.equity_value)+'</span><br>';
+      h += '&nbsp;&nbsp;Equity Value / '+fN(a.shares)+' shares = <span class="mono hl" style="font-size:11px">$'+f(DCF.base,2)+'</span> per share';
+      h += '</div>';
+    } else if(a.net_debt_subtracted!=null){
       h += '<div style="font-size:10px;color:var(--t3)">Enterprise Value \u2192 Equity: Net debt of '+fM(a.net_debt_subtracted)+' subtracted from DCF enterprise value</div>';
     }
+
+    // ── Year-by-year projections table ──
+    if(DCF.projections && DCF.projections.length > 0){
+      h += '<div style="margin-top:8px;overflow-x:auto">';
+      h += '<table style="width:100%;font-size:10px;border-collapse:collapse;color:var(--t2)">';
+      h += '<thead><tr style="border-bottom:1px solid var(--border)">';
+      h += '<th style="text-align:left;padding:3px 6px;font-weight:600;color:var(--t3)">Year</th>';
+      h += '<th style="text-align:right;padding:3px 6px;font-weight:600;color:var(--t3)">Rev Growth</th>';
+      h += '<th style="text-align:right;padding:3px 6px;font-weight:600;color:var(--t3)">Revenue</th>';
+      h += '<th style="text-align:right;padding:3px 6px;font-weight:600;color:var(--t3)">FCF</th>';
+      h += '<th style="text-align:right;padding:3px 6px;font-weight:600;color:var(--t3)">PV Factor</th>';
+      h += '<th style="text-align:right;padding:3px 6px;font-weight:600;color:var(--t3)">PV(FCF)</th>';
+      h += '</tr></thead><tbody>';
+      for(var pi=0;pi<DCF.projections.length;pi++){
+        var pr=DCF.projections[pi];
+        h += '<tr style="border-bottom:1px solid var(--border)">';
+        h += '<td style="padding:3px 6px">Y'+(pr.year||pi+1)+'</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+f(pr.growth_rate,1)+'%</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+fM(pr.revenue)+'</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+fM(pr.fcf)+'</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+f(pr.pv_factor,4)+'</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+fM(pr.pv_fcf)+'</td>';
+        h += '</tr>';
+      }
+      // Terminal row
+      if(a.terminal_fcf!=null){
+        h += '<tr style="border-bottom:1px solid var(--border);font-style:italic;color:var(--t3)">';
+        h += '<td style="padding:3px 6px">Terminal</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+f(a.terminal_growth,1)+'%</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">\u2014</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+fM(a.terminal_fcf)+'</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">\u2014</td>';
+        h += '<td style="text-align:right;padding:3px 6px" class="mono">'+fM(a.terminal_value_pv)+'</td>';
+        h += '</tr>';
+      }
+      h += '</tbody></table></div>';
+    }
+
+    // ── Terminal dependence warning ──
     if(a.terminal_value_pct > 70){
-      h += '<div class="warn-badge" style="margin-top:4px;padding:4px 8px;background:rgba(210,153,34,0.1);border:1px solid var(--warn);border-radius:var(--r);font-size:10px;color:var(--warn)">\u26A0 High terminal dependence: '+f(a.terminal_value_pct,0)+'% of fair value from terminal year</div>';
+      h += '<div style="margin-top:6px;padding:4px 8px;background:rgba(210,153,34,0.1);border:1px solid var(--warn);border-radius:var(--r);font-size:10px;color:var(--warn)">\u26A0 High terminal dependence: '+f(a.terminal_value_pct,0)+'% of fair value derives from terminal year. Model sensitivity to terminal growth and discount rate assumptions is elevated. Conviction penalty of '+f(V9.terminal_penalty||0,0)+' points applied.</div>';
     }
   }
 } else {
@@ -1781,6 +1851,18 @@ if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
   }
   h += '</div>';
 
+  // Dividend anomaly reason codes
+  if(FIN._dividend_anomaly && FIN._dividend_anomaly.reason_codes && FIN._dividend_anomaly.reason_codes.length > 0){
+    var _da = FIN._dividend_anomaly;
+    h += '<div style="margin-top:6px;padding:4px 8px;font-size:10px;color:var(--t3);background:var(--bg1);border:1px solid var(--border);border-radius:var(--r)">';
+    h += '<span style="font-weight:600">Dividend data provenance:</span> ';
+    h += 'Provider: '+(_da.provider||'yfinance')+' &middot; ';
+    if(_da.raw_provider_value!=null) h += 'Raw yield value: '+f(_da.raw_provider_value,4)+' &middot; ';
+    if(_da.dividend_rate!=null && _da.dividend_rate > 0) h += 'Div rate: $'+f(_da.dividend_rate,2)+'/share &middot; ';
+    h += 'Flags: '+_da.reason_codes.map(function(c){return'<span style="color:var(--warn)">'+c.replace(/_/g,' ')+'</span>'}).join(', ');
+    h += '</div>';
+  }
+
   // Capital Structure Stability Gauge
   if(FIN.net_debt_ebitda!=null || FIN.interest_coverage!=null || FIN.debt_equity!=null){
     h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
@@ -2049,34 +2131,51 @@ h += '<div class="mhdr">RISK GOVERNOR \u2014 GATE MECHANISM</div>';
 h += '<div class="mnote">The risk governor dampens signal strength during systemic stress. Gate = 1.0 means no dampening; lower values reduce exposure proportionally. Gate is derived from the regime vector combining VIX level, credit spreads, yield curve inversion, and cross-correlation instability.</div>';
 h += '<div class="mblk">';
 h += '<span class="hl">FORMULA</span>\n';
-h += '  C_adjusted = C_raw \u00D7 Gate\n\n';
+h += '  C_adjusted = C_raw \u00D7 Gate \u00D7 DC_cap\n\n';
+h += '  where DC_cap = min(1.0, DataConfidence / 100)\n\n';
 h += '<span class="hl">SUBSTITUTION</span>\n';
 if(gate!=null){
   var _crU = cRaw!=null?cRaw:_xCR;
-  var _cA = _crU * gate;
-  h += '  C_adjusted = '+fS(_crU,2)+' \u00D7 '+f(gate,2)+'\n';
-  h += '  C_adjusted (computed) = <span class="hl">'+fS(_cA,2)+'</span>\n';
+  var _dcCap = S.dc_cap!=null ? S.dc_cap : (dc!=null ? Math.min(1.0, dc/100) : 1.0);
+  var _cAfterGate = _crU * gate;
+  var _cA = _cAfterGate * _dcCap;
+  h += '  Step 1: C_raw = <span class="hl">'+fS(_crU,2)+'</span>  (\u03A3(w\u1D62 \u00D7 S\u1D62) across 8 engines)\n';
+  h += '  Step 2: C_raw \u00D7 Gate = '+fS(_crU,2)+' \u00D7 '+f(gate,2)+' = <span class="hl">'+fS(_cAfterGate,2)+'</span>\n';
+  h += '  Step 3: \u00D7 DC_cap = '+fS(_cAfterGate,2)+' \u00D7 '+f(_dcCap,4)+' = <span class="hl">'+fS(_cA,2)+'</span>\n\n';
   if(cAdj!=null){
+    h += '  C_adjusted (computed) = <span class="hl">'+fS(_cA,2)+'</span>\n';
     h += '  C_adjusted (reported) = <span class="hl">'+fS(cAdj,1)+'</span>\n';
     var _aD = Math.abs(_cA - cAdj);
-    if(_aD > 0.5) h += '  \u0394 = <span class="warn">'+f(_aD,1)+'</span>\n';
+    if(_aD > 0.5) h += '  \u0394 = <span class="warn">'+f(_aD,1)+'</span> (rounding or additional engine adjustments)\n';
+    else h += '  \u0394 = '+f(_aD,2)+' <span class="pos">\u2714 reconciled</span>\n';
   }
+
+  // Show adjustment_chain if available
+  if(S.adjustment_chain && S.adjustment_chain.length > 0){
+    h += '\n  <span class="hl">ADJUSTMENT CHAIN</span>\n';
+    for(var ci=0;ci<S.adjustment_chain.length;ci++){
+      var step=S.adjustment_chain[ci];
+      h += '  '+(ci+1)+'. '+step.name+': '+step.formula+' = '+f(step.value,4);
+      if(step.result!=null) h += ' \u2192 result = '+fS(step.result,4);
+      h += '\n';
+    }
+  }
+
   h += '\n  <span class="hl">GATE INTERPRETATION</span>\n';
   if(gate >= 0.95) h += '  Gate \u2265 0.95 \u2192 <span class="pos">Minimal dampening. Regime is benign.</span>\n';
   else if(gate >= 0.80) h += '  0.80 \u2264 Gate < 0.95 \u2192 <span class="warn">Moderate dampening. Some systemic stress detected.</span>\n';
   else h += '  Gate < 0.80 \u2192 <span class="neg">Significant dampening. High systemic risk environment.</span>\n';
   h += '\n  Meaning: Gate dampens exposure under systemic risk.\n';
   h += '  A Gate of '+f(gate,2)+' reduces the raw signal by '+f((1-gate)*100,0)+'%.\n';
+
+  h += '\n  <span class="hl">DATA CONFIDENCE CAP</span>\n';
+  h += '  DC = '+f(dc,0)+'% \u2192 DC_cap = min(1.0, '+f(dc,0)+'/100) = '+f(_dcCap,4)+'\n';
+  if(_dcCap < 1.0) h += '  <span class="warn">DC < 100% \u2192 composite further reduced by '+f((1-_dcCap)*100,0)+'%</span>\n';
+  else h += '  <span class="pos">DC \u2265 100% \u2192 no additional reduction</span>\n';
 } else {
   h += '  Gate value not available in payload.\n';
 }
 h += '</div>';
-if(cAdj!=null && gate!=null){
-  var _aD2 = Math.abs((cRaw||_xCR)*gate - cAdj);
-  if(_aD2 > 1.0){
-    h += '<div class="recon">\u26A0 \u0394 of '+f(_aD2,1)+' between computed and reported C_adjusted. \u0394 includes secondary adjustments as reported: confidence scaling, contradiction penalties, and regime smoothing applied downstream of Gate multiplication.</div>';
-  }
-}
 
 // ── D) Trade Quality Deep Dive ──
 h += '<div class="mhdr">TRADE QUALITY \u2014 SIGNAL RELIABILITY</div>';
@@ -2128,23 +2227,31 @@ h += '         t=1 (1 + r)^t      (1 + r)^n\n\n';
 h += '<span class="hl">TERMINAL VALUE</span>\n';
 h += '  TV = FCF_n \u00D7 (1 + g) / (r \u2212 g)\n\n';
 h += '  where:\n';
-h += '    r   = discount rate (WACC)                 \n';
+h += '    r   = discount rate (WACC or Cost of Equity)\n';
 h += '    g   = terminal growth rate (perpetuity)    \n';
 h += '    n   = projection period (5 years in ATLAS) \n';
 h += '    FCF_t = projected free cash flow in year t \n\n';
+h += '<span class="hl">EV \u2192 EQUITY BRIDGE</span>\n';
+h += '  Equity Value = Enterprise Value \u2212 Net Debt\n';
+h += '  IV per share = Equity Value / Shares Outstanding\n\n';
 if(DCF && DCF.assumptions){
   var _a = DCF.assumptions;
   h += '<span class="hl">ATLAS ASSUMPTIONS (THIS REPORT)</span>\n';
-  h += '  Discount rate (WACC)  = '+f(_a.discount_rate)+'%\n';
+  h += '  Discount rate type    = '+(_a.discount_rate_type||'WACC')+'\n';
+  h += '  Discount rate         = '+f(_a.discount_rate)+'%';
+  if(_a.cost_of_equity!=null) h += '  (Ke = '+f(_a.cost_of_equity,2)+'%)';
+  h += '\n';
   h += '  Terminal growth (g)   = '+f(_a.terminal_growth)+'%\n';
   h += '  Revenue growth (Y1)   = '+f(_a.revenue_growth_y1)+'%\n';
-  h += '  FCF margin            = '+f(_a.fcf_margin)+'%\n\n';
+  h += '  FCF margin            = '+f(_a.fcf_margin)+'%\n';
+  h += '  Cash flow definition  = '+(_a.cash_flow_definition||'unlevered_fcf').replace(/_/g,' ')+'\n\n';
   h += '<span class="hl">SCENARIO OUTPUTS</span>\n';
   if(DCF.bear) h += '  Bear case IV = <span class="neg">$'+f(DCF.bear,2)+'</span>\n';
   if(DCF.base) h += '  Base case IV = <span class="warn">$'+f(DCF.base,2)+'</span>\n';
   if(DCF.bull) h += '  Bull case IV = <span class="pos">$'+f(DCF.bull,2)+'</span>\n';
+  if(_a.terminal_value_pct!=null) h += '\n  Terminal value = '+f(_a.terminal_value_pct,0)+'% of total DCF value\n';
   h += '\n  Note: A 1% change in WACC shifts fair value by ~15\u201320%.\n';
-  h += '  Model is a simplified 5-year projection. Treat as directional guidance.\n';
+  h += '  Model discounts '+(_a.cash_flow_definition||'unlevered_fcf').replace(/_/g,' ')+' at '+(_a.discount_rate_type||'WACC')+'.\n';
 } else {
   h += '<span class="warn">DCF assumptions not available in this report snapshot.</span>\n';
 }
@@ -2167,9 +2274,12 @@ if(_iv > 0 && price){
   h += '\n  Required MOS = '+(f((V9.required_mos||0)*100,0))+'% (business type: '+(V9.business_type||'Normal')+')\n\n';
   h += '  <span class="hl">INTERPRETATION</span>\n';
   if(_mosC < 0){
+    var _reqMos2 = (V9.required_mos||0)*100;
+    var _maxBuy = _iv * (1 - _reqMos2/100);
+    var _dropToMaxBuy = price > 0 ? Math.max(0, Math.min(100, (price - _maxBuy) / price * 100)) : 100;
     h += '  <span class="neg">\u26A0 Negative MOS: Stock trades '+f(Math.abs(_mosC),1)+'% ABOVE intrinsic value.</span>\n';
-    h += '  Price would need to fall '+f(Math.abs(_mosC),0)+'% to reach IV, plus an additional\n';
-    h += '  '+(f((V9.required_mos||0)*100,0))+'% to reach the required margin of safety.\n';
+    h += '  Max buy price at '+f(_reqMos2,0)+'% MOS = $'+f(_iv,2)+' \u00D7 (1 \u2212 '+f(_reqMos2,0)+'%) = <span class="hl">$'+f(_maxBuy,2)+'</span>\n';
+    h += '  Current price $'+f(price,2)+' must decline '+f(_dropToMaxBuy,1)+'% to reach max buy price.\n';
   } else if(_mosC < (V9.required_mos||0)*100){
     h += '  <span class="warn">MOS exists ('+fS(_mosC,1)+'%) but below required threshold ('+(f((V9.required_mos||0)*100,0))+'%).</span>\n';
     h += '  Stock is slightly undervalued but not enough to justify purchase with adequate safety.\n';
@@ -2197,6 +2307,10 @@ if(V9.business_quality!=null){
   h += '  MOS component   = '+fS(_mp,1)+' \u00D7 0.5 = <span class="hl">'+f(_mp*0.5,1)+'</span>\n';
   h += '  RiskAdj          = <span class="warn">included upstream (not separately exposed)</span>\n';
   var _cpS = _bq*5 + _mo*4 + _ca*4 + _mp*0.5;
+  if(V9.terminal_penalty!=null && V9.terminal_penalty > 0){
+    h += '  Terminal penalty = <span class="neg">\u2212'+f(V9.terminal_penalty,0)+'</span> (terminal dependence '+f(V9.terminal_pct||0,0)+'% > 70%)\n';
+    _cpS -= V9.terminal_penalty;
+  }
   h += '  ' + '\u2500'.repeat(52) + '\n';
   h += '  Partial sum (excl. RiskAdj) = <span class="hl">'+f(_cpS,1)+'</span>\n';
   if(V9.conviction!=null){

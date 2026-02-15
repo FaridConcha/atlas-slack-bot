@@ -447,26 +447,57 @@ def _check_fundamental_integrity(mc, shares, revenue, price):
 # ============================================================================
 
 def _sanitize_yield(info, price):
-    """Cross-validate dividend yield against dividendRate/price."""
-    raw_dy = info.get('dividendYield', 0) or 0
-    div_rate = info.get('dividendRate', 0) or 0
+    """
+    Cross-validate dividend yield against dividendRate/price.
+    Returns (yield_value, anomaly_info_dict).
+    anomaly_info is always returned for provenance.
+    """
+    raw_dy = info.get('dividendYield')
+    div_rate = info.get('dividendRate')
+    anomaly = {
+        'raw_provider_value': raw_dy,
+        'dividend_rate': div_rate,
+        'provider': 'yfinance',
+        'reason_codes': [],
+    }
+
+    if raw_dy is None and div_rate is None:
+        anomaly['reason_codes'].append('DIV_YIELD_MISSING')
+        anomaly['reason_codes'].append('DIV_PER_SHARE_MISSING')
+        return None, anomaly
+
+    raw_dy = raw_dy or 0
+    div_rate = div_rate or 0
 
     if price > 0 and div_rate > 0:
         computed_dy = div_rate / price  # Always a decimal
+        anomaly['computed_from_rate'] = round(computed_dy * 100, 3)
         # Pick whichever raw interpretation is closer to computed
         if abs(raw_dy - computed_dy) <= abs(raw_dy * 100 - computed_dy * 100):
             dividend_yield = raw_dy * 100  # raw was decimal, convert
         else:
             dividend_yield = raw_dy  # raw was already percentage
+            anomaly['reason_codes'].append('DIV_YIELD_SCALE_SUSPECT')
     elif raw_dy > 1.0:
-        dividend_yield = raw_dy  # Already percentage (>100% yield impossible)
-    else:
+        dividend_yield = raw_dy  # Already percentage
+        anomaly['reason_codes'].append('DIV_YIELD_SCALE_SUSPECT')
+    elif raw_dy > 0:
         dividend_yield = raw_dy * 100
+    else:
+        if div_rate == 0:
+            return 0, anomaly  # Company doesn't pay dividends
+        dividend_yield = 0
+        anomaly['reason_codes'].append('DIV_YIELD_ZERO_BUT_RATE_EXISTS')
 
     # Final sanity cap
     if dividend_yield > 25:
-        dividend_yield = None  # Flag as anomalous, display N/A
-    return dividend_yield
+        anomaly['reason_codes'].append('DIV_YIELD_OUT_OF_RANGE')
+        anomaly['final_value'] = None
+        anomaly['rejected_value'] = round(dividend_yield, 2)
+        return None, anomaly
+
+    anomaly['final_value'] = round(dividend_yield, 2)
+    return round(dividend_yield, 2), anomaly
 
 
 def _sanitize_payout(info):
@@ -588,6 +619,9 @@ def _build_financials(ticker, info, hist=None):
     de_raw = _safe_num(info.get('debtToEquity'), min_val=0)
     debt_equity = round(de_raw / 100, 2) if de_raw is not None else None
 
+    # Dividend yield with anomaly provenance
+    div_yield_val, div_anomaly = _sanitize_yield(info, price)
+
     result = {
         'revenue_ttm': revenue,
         'revenue_growth': _safe_pct(info.get('revenueGrowth')),
@@ -609,7 +643,8 @@ def _build_financials(ticker, info, hist=None):
         'debt_equity': debt_equity,
         'current_ratio': _safe_num(info.get('currentRatio'), min_val=0),
         'interest_coverage': interest_coverage,
-        'dividend_yield': _sanitize_yield(info, price),
+        'dividend_yield': div_yield_val,
+        '_dividend_anomaly': div_anomaly,
         'payout_ratio': _sanitize_payout(info),
         'buyback_yield': buyback_yield,
         'trailing_pe': _safe_num(info.get('trailingPE'), min_val=0),
@@ -1257,7 +1292,12 @@ def _build_institutional(info):
 # ============================================================================
 
 def _build_dcf(info, financials):
-    """Simplified DCF fair value estimate with fallback cash flow proxies."""
+    """
+    DCF fair value estimate with full audit trail.
+
+    Discounts UNLEVERED free cash flow at WACC.
+    Produces EV, then subtracts net debt to arrive at equity value per share.
+    """
     _disabled = {'bear': 0, 'base': 0, 'bull': 0, '_dcf_disabled': True}
     try:
         # Gate: refuse to run DCF on INVALID fundamentals
@@ -1278,13 +1318,14 @@ def _build_dcf(info, financials):
             return _disabled
 
         # Cash flow proxy: FCF → Net Income (75% haircut) → EBITDA (50% haircut)
+        # NOTE: All proxies approximate UNLEVERED FCF (FCFF)
         cash_flow_source = 'fcf'
         cash_proxy = fcf
         if cash_proxy <= 0 and net_income > 0:
-            cash_proxy = net_income * 0.75  # Approximate FCF from earnings
+            cash_proxy = net_income * 0.75
             cash_flow_source = 'net_income'
         if cash_proxy <= 0 and ebitda > 0:
-            cash_proxy = ebitda * 0.50  # Conservative EBITDA-to-FCF conversion
+            cash_proxy = ebitda * 0.50
             cash_flow_source = 'ebitda'
         if cash_proxy <= 0:
             _disabled['_dcf_reason'] = 'no_positive_cash_flow'
@@ -1292,25 +1333,37 @@ def _build_dcf(info, financials):
 
         fcf_margin = cash_proxy / revenue
 
-        # WACC via CAPM (beta-aware)
+        # ── DISCOUNT RATE DECOMPOSITION ──
+        # Inputs stored at full precision for audit
         beta = info.get('beta', 1.0) or 1.0
-        risk_free = 0.04   # 10Y treasury proxy
-        erp = 0.05         # equity risk premium
-        cost_of_equity = risk_free + beta * erp
+        risk_free = 0.04       # 10Y treasury proxy
+        erp = 0.05             # equity risk premium
+        cost_of_equity = risk_free + beta * erp  # CAPM: Ke = Rf + β×ERP
 
+        # Cost of debt
+        pre_tax_cost_of_debt = 0.05  # ~5% proxy
+        tax_rate = 0.25              # effective corporate tax proxy
+        after_tax_cost_of_debt = pre_tax_cost_of_debt * (1 - tax_rate)
+
+        # Capital structure weights from D/E
         de = financials.get('debt_equity') or 0
         if de > 0:
-            debt_weight = de / (1 + de)
-            equity_weight = 1 - debt_weight
-            cost_of_debt = 0.05 * 0.75  # ~5% pre-tax, 25% tax shield
-            wacc = equity_weight * cost_of_equity + debt_weight * cost_of_debt
+            debt_weight = de / (1 + de)      # D/V
+            equity_weight = 1 - debt_weight  # E/V
+            wacc = equity_weight * cost_of_equity + debt_weight * after_tax_cost_of_debt
         else:
+            debt_weight = 0.0
+            equity_weight = 1.0
             wacc = cost_of_equity
 
-        discount_rate = max(0.06, min(0.15, wacc))  # Floor 6%, cap 15%
+        # The model discounts unlevered FCF → discount at WACC
+        discount_rate_type = 'WACC'
+        discount_rate = max(0.06, min(0.15, wacc))
+        was_clamped = (wacc < 0.06 or wacc > 0.15)
         terminal_growth = 0.03
+        forecast_years = 5
 
-        # 5-year FCF projections
+        # ── YEAR-BY-YEAR PROJECTIONS ──
         growth_rates = [
             max(0.02, rev_growth),
             max(0.02, rev_growth * 0.85),
@@ -1319,26 +1372,37 @@ def _build_dcf(info, financials):
             0.05,
         ]
 
+        projections = []  # Audit trail: year-by-year
         projected_fcf = []
         r = revenue
-        for g in growth_rates:
+        for i, g in enumerate(growth_rates):
             r *= (1 + g)
-            projected_fcf.append(r * fcf_margin)
+            yr_fcf = r * fcf_margin
+            projected_fcf.append(yr_fcf)
+            projections.append({
+                'year': i + 1,
+                'revenue': round(r, 0),
+                'growth_rate': round(g * 100, 2),
+                'fcf': round(yr_fcf, 0),
+                'pv_factor': round(1 / (1 + discount_rate) ** (i + 1), 4),
+                'pv_fcf': round(yr_fcf / (1 + discount_rate) ** (i + 1), 0),
+            })
 
         # Terminal value
-        terminal_value = projected_fcf[-1] * (1 + terminal_growth) / (discount_rate - terminal_growth)
+        terminal_fcf = projected_fcf[-1] * (1 + terminal_growth)
+        terminal_value = terminal_fcf / (discount_rate - terminal_growth)
 
         # Present value
-        pv = sum(f / (1 + discount_rate) ** (i + 1) for i, f in enumerate(projected_fcf))
-        tv_pv = terminal_value / (1 + discount_rate) ** 5
-        pv += tv_pv
+        pv_fcf_sum = sum(f / (1 + discount_rate) ** (i + 1) for i, f in enumerate(projected_fcf))
+        tv_pv = terminal_value / (1 + discount_rate) ** forecast_years
+        enterprise_value = pv_fcf_sum + tv_pv
 
         # Terminal value as % of total DCF
-        terminal_pct = tv_pv / pv * 100 if pv > 0 else 0
+        terminal_pct = tv_pv / enterprise_value * 100 if enterprise_value > 0 else 0
 
-        # EV-to-Equity bridge: subtract net debt from enterprise value
+        # ── EV → EQUITY BRIDGE ──
         net_debt = financials.get('net_debt') or 0
-        equity_value = max(0, pv - net_debt)
+        equity_value = max(0, enterprise_value - net_debt)
         base_fv = equity_value / shares
 
         # Widen bear/bull range when using proxy cash flows
@@ -1350,15 +1414,39 @@ def _build_dcf(info, financials):
             'base': round(base_fv, 2),
             'bull': round(base_fv * bull_mult, 2),
             'cash_flow_source': cash_flow_source,
+            'cash_flow_definition': 'unlevered_fcf',
+            'forecast_years': forecast_years,
+            'projections': projections,
             'assumptions': {
+                # Discount rate decomposition
+                'discount_rate_type': discount_rate_type,
+                'risk_free_rate': round(risk_free * 100, 2),
+                'equity_risk_premium': round(erp * 100, 2),
+                'beta': round(beta, 2),
+                'cost_of_equity': round(cost_of_equity * 100, 2),
+                'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),
+                'tax_rate': round(tax_rate * 100, 1),
+                'after_tax_cost_of_debt': round(after_tax_cost_of_debt * 100, 2),
+                'equity_weight': round(equity_weight * 100, 1),
+                'debt_weight': round(debt_weight * 100, 1),
+                'wacc_raw': round(wacc * 100, 2),
+                'discount_rate': round(discount_rate * 100, 2),
+                'discount_rate_clamped': was_clamped,
+                # Growth & margin
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),
-                'discount_rate': round(discount_rate * 100, 1),
                 'terminal_growth': round(terminal_growth * 100, 1),
-                'wacc_derived': True,
-                'beta': round(beta, 2),
+                # Terminal
+                'terminal_fcf': round(terminal_fcf, 0),
+                'terminal_value': round(terminal_value, 0),
+                'terminal_value_pv': round(tv_pv, 0),
                 'terminal_value_pct': round(terminal_pct, 1),
+                # EV → Equity bridge
+                'enterprise_value': round(enterprise_value, 0),
+                'pv_fcf_sum': round(pv_fcf_sum, 0),
                 'net_debt_subtracted': round(net_debt, 0),
+                'equity_value': round(equity_value, 0),
+                'shares': round(shares, 0),
             },
         }
     except Exception as e:
