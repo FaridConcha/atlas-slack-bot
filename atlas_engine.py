@@ -1465,7 +1465,7 @@ def generate_pyramid_report(symbol, all_layers_data):
     report.append("── SIGNAL ──────────────────────────────────────────────────────────────────────────")
     report.append(f"Composite Raw:      {all_layers_data.get('c_raw', 0):+.1f}/100")
     report.append(f"Composite Adjusted: {all_layers_data.get('c_adjusted', 0):+.1f}/100")
-    report.append(f"Trade Quality:      {all_layers_data.get('tq', 0):.3f} [{all_layers_data.get('tq_category', 'N/A')}]")
+    report.append(f"Trade Quality:      {all_layers_data.get('tq', 0):.4f} [{all_layers_data.get('tq_category', 'N/A')}]")
     report.append(f"Data Confidence:    {all_layers_data.get('dc', 0):.1f}%")
     report.append("")
 
@@ -1801,7 +1801,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         'composite_adjusted': round(c_adjusted, 1),
         'verdict': verdict,
         'verdict_detail': f"{direction} with TQ={tq:.2f}",
-        'trade_quality': round(tq, 3),
+        'trade_quality': round(tq, 4),
         'tq_category': tq_category,
         'gate_value': round(g, 2),
         'regime_label': regime_label,

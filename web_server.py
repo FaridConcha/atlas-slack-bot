@@ -324,7 +324,7 @@ h += '<div class="metrics-row">';
 var ms = [
   ['Composite',comp!=null?f(comp,1):'N/A',pill(norm(comp))],
   ['Raw Score',cRaw!=null?fS(cRaw,1):'N/A','pill-muted'],
-  ['Trade Quality',tq!=null?f(tq,3):'N/A','pill-muted'],
+  ['Trade Quality',tq!=null?f(tq,4):'N/A','pill-muted'],
   ['Gate',gate!=null?f(gate,2):'N/A','pill-muted'],
   ['Regime',regime,'pill-muted'],
   ['Data Conf.',dc!=null?f(dc,0)+'%':'N/A',dc!=null?(dc>=70?'pill-pos':dc>=40?'pill-warn':'pill-neg'):'pill-muted'],
@@ -335,6 +335,18 @@ for(var i=0;i<ms.length;i++){
   h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'">'+ms[i][1]+'</span></div></div>';
 }
 h += '</div>';
+
+// Stage 5: Reconciliation warning banner
+var _reconErrs = V8.reconciliation_errors||[];
+if(_reconErrs.length > 0){
+  h += '<div style="margin:8px 0;padding:8px 12px;background:rgba(248,81,73,0.08);border:1px solid var(--neg);border-radius:var(--r);font-size:11px">';
+  h += '<span style="color:var(--neg);font-weight:700">\u26A0 RECONCILIATION</span> ';
+  for(var ri=0;ri<_reconErrs.length;ri++){
+    var _re = _reconErrs[ri];
+    h += '<span class="pill pill-neg" style="font-size:9px;padding:1px 6px;margin:0 2px">'+_re.check+': '+_re.status+'</span> ';
+  }
+  h += '</div>';
+}
 
 // ════════════════════════════════════════════════════
 // SECTION: OWNER ASSESSMENT
@@ -441,25 +453,35 @@ if(V9.v9_decision){
     }
   }
 
-  // Intrinsic value vs price
+  // Intrinsic value vs price — Range-first when iv_confidence is LOW
+  var _ivConf = V9.iv_confidence||'NORMAL';
   if(iv>0 && price){
-    h += '<div style="margin-top:12px;font-size:12px">';
-    h += '<div class="g2" style="gap:4px">';
-    h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
-    h += '<div style="font-size:10px;color:var(--t3)">INTRINSIC VALUE</div>';
-    h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--pos)">$'+f(iv,2)+'</div>';
-    h += '</div>';
-    h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
-    h += '<div style="font-size:10px;color:var(--t3)">CURRENT PRICE</div>';
-    h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--t1)">$'+f(price,2)+'</div>';
-    h += '</div>';
-    h += '</div>';
     var ivBear2 = V9.intrinsic_value_bear||0;
     var ivBull2 = V9.intrinsic_value_bull||0;
-    if(ivBear2>0){
-      h += '<div style="margin-top:8px;font-size:10px;color:var(--t3);text-align:center">';
-      h += 'IV Range: <span class="mono neg">$'+f(ivBear2,2)+'</span> &mdash; <span class="mono pos">$'+f(ivBull2,2)+'</span>';
+    h += '<div style="margin-top:12px;font-size:12px">';
+    if(_ivConf === 'LOW' && ivBear2 > 0 && ivBull2 > 0){
+      // Range-first display for low-confidence valuations
+      h += '<div style="text-align:center;padding:8px;background:rgba(210,153,34,0.08);border:1px solid var(--warn);border-radius:var(--r);margin-bottom:6px">';
+      h += '<div style="font-size:10px;color:var(--warn);text-transform:uppercase;letter-spacing:.06em">IV Range (Low Confidence)</div>';
+      h += '<div class="mono" style="font-size:18px;font-weight:700;color:var(--warn)"><span class="neg">$'+f(ivBear2,2)+'</span> &mdash; <span class="pos">$'+f(ivBull2,2)+'</span></div>';
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:2px">Base: $'+f(iv,2)+' &middot; Price: $'+f(price,2)+'</div>';
       h += '</div>';
+    } else {
+      h += '<div class="g2" style="gap:4px">';
+      h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
+      h += '<div style="font-size:10px;color:var(--t3)">INTRINSIC VALUE</div>';
+      h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--pos)">$'+f(iv,2)+'</div>';
+      h += '</div>';
+      h += '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:var(--r)">';
+      h += '<div style="font-size:10px;color:var(--t3)">CURRENT PRICE</div>';
+      h += '<div class="mono" style="font-size:16px;font-weight:600;color:var(--t1)">$'+f(price,2)+'</div>';
+      h += '</div>';
+      h += '</div>';
+      if(ivBear2>0){
+        h += '<div style="margin-top:8px;font-size:10px;color:var(--t3);text-align:center">';
+        h += 'IV Range: <span class="mono neg">$'+f(ivBear2,2)+'</span> &mdash; <span class="mono pos">$'+f(ivBull2,2)+'</span>';
+        h += '</div>';
+      }
     }
     h += '</div>';
   }
@@ -539,7 +561,13 @@ if(V9.v9_decision){
   if(_gm!=null && _om!=null){
     if(_gm > 50 && _om > 20) h += 'The margin structure suggests a business with meaningful pricing power and operating leverage. High gross margins indicate that the company retains substantial value above variable costs, which is characteristic of businesses with durable competitive advantages. ';
     else if(_gm > 35 && _om > 10) h += 'Margins are respectable but not exceptional. The business appears to operate in a moderately competitive environment where some pricing power exists, though it may face periodic margin pressure from competitive dynamics or input cost fluctuations. ';
-    else h += 'The margin profile reflects a business operating in a competitive or capital-intensive environment. Thin margins amplify the impact of revenue fluctuations on earnings, which demands greater caution in valuation assumptions. ';
+    else {
+      // Stage 5 I3: "Thin margins" gated on NM < 5% or OM < 8%
+      var _nmVal = FIN.net_margin;
+      var _isThinMargin = (_nmVal != null && _nmVal < 5) || (_om != null && _om < 8);
+      if(_isThinMargin) h += 'The margin profile reflects a business operating in a competitive or capital-intensive environment. Thin margins amplify the impact of revenue fluctuations on earnings, which demands greater caution in valuation assumptions. ';
+      else h += 'Margins are moderate and reflect the competitive dynamics of the industry. While not best-in-class, the margin structure is adequate for the business model and does not independently signal fragility. ';
+    }
   }
   if(_fcf!=null && _rev){
     var _fcfMgn = (_fcf/_rev)*100;
@@ -585,7 +613,16 @@ if(V9.v9_decision){
   if(_moS >= 4.0) h += 'The competitive position appears well-entrenched. Durable moats \u2014 whether from brand strength, switching costs, network effects, or cost advantages \u2014 are the single most important determinant of long-term owner returns. A business that can sustain pricing power and repel competitive entry protects the owner\'s capital through economic cycles.';
   else if(_moS >= 3.0) h += 'The competitive position shows identifiable advantages, though these may face erosion over time. Moderate moats require ongoing reinvestment to maintain, and the owner must monitor whether returns on capital are being sustained or gradually declining.';
   else if(_moS >= 2.0) h += 'Competitive durability is limited. The business may generate adequate returns currently, but the absence of strong structural advantages means that competitors can replicate its economics. Returns above the cost of capital are unlikely to persist without continuous reinvestment and execution.';
-  else h += 'The absence of meaningful competitive protection exposes the business to margin compression and market share erosion. Without a moat, above-average returns attract competition that ultimately drives returns toward the cost of capital.';
+  else {
+    // Stage 5 I2: Sector-aware moat narrative for protected industries
+    var _coIndustry = CO.industry||'';
+    var _moatProtected = ['Aerospace & Defense','Defense','Aerospace'];
+    if(_moatProtected.indexOf(_coIndustry) >= 0){
+      h += 'The quantitative moat score is modest, but this must be interpreted in the context of '+_coIndustry+'. Government contracts, security clearances, regulatory certifications, and multi-decade program lock-in create structural barriers to entry that are poorly captured by standard financial metrics. Competitive dynamics in this sector are shaped by procurement cycles and national security priorities rather than open-market competition.';
+    } else {
+      h += 'The absence of meaningful competitive protection exposes the business to margin compression and market share erosion. Without a moat, above-average returns attract competition that ultimately drives returns toward the cost of capital.';
+    }
+  }
   h += '</p>';
 
   h += '<p>Capital Allocation scores <span class="mono hl">'+f(_caS,1)+'/5</span>. ';
@@ -658,7 +695,12 @@ if(V9.v9_decision){
       if(_nde > 3) h += 'Net debt-to-EBITDA of <span class="mono neg">'+f(_nde,1)+'x</span> is elevated. High leverage amplifies both returns and losses, and at this level, a sustained earnings decline could impair the company\'s ability to service its obligations. This introduces meaningful permanent loss risk. ';
       else if(_nde > 1.5) h += 'Net debt-to-EBITDA of <span class="mono warn">'+f(_nde,1)+'x</span> is moderate. The balance sheet can absorb some adversity, but sustained earnings declines would begin to stress the capital structure. ';
       else if(_nde > 0) h += 'Net debt-to-EBITDA of <span class="mono pos">'+f(_nde,1)+'x</span> is conservative. The business operates with manageable leverage that provides a buffer against cyclical or competitive shocks. ';
-      else h += 'The company carries net cash on its balance sheet, which substantially reduces permanent loss risk from leverage. ';
+      else {
+        // Stage 5 I4: "Net cash" gated on FIN.net_debt < 0
+        var _netDebt = FIN.net_debt;
+        if(_netDebt != null && _netDebt < 0) h += 'The company carries net cash on its balance sheet, which substantially reduces permanent loss risk from leverage. ';
+        else h += 'Net debt-to-EBITDA is near zero, indicating a balance sheet with minimal leverage. ';
+      }
     }
     if(_ic!=null){
       if(_ic < 3) h += 'Interest coverage of <span class="mono neg">'+f(_ic,1)+'x</span> is thin \u2014 a modest earnings decline could challenge debt service, which is a direct path to permanent value destruction.';
@@ -728,7 +770,7 @@ if(V9.v9_decision){
   if(rel!=null) h += ' with <span class="mono hl">'+f(rel,2)+'</span> classification reliability';
   h += '.</p>';
 
-  h += '<p>Trade Quality of <span class="mono hl">'+f(tq,3)+'</span> reflects the combined signal strength and data reliability. ';
+  h += '<p>Trade Quality of <span class="mono hl">'+f(tq,4)+'</span> reflects the combined signal strength and data reliability. ';
   if(tq!=null){
     if(tq >= 0.10) h += 'This indicates a high-quality signal environment where the quantitative framework has sufficient confidence and data backing to provide actionable guidance on timing.';
     else if(tq >= 0.03) h += 'Signal quality is moderate. The engine has directional conviction but data limitations or regime uncertainty reduce confidence. Position sizing should reflect this ambiguity.';
@@ -867,6 +909,12 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
     if(a.cost_of_equity!=null){
       h += '<div style="font-size:10px;color:var(--t3);margin-top:4px;line-height:1.6">';
       h += '<span style="font-weight:600">Cost of Equity (CAPM):</span> Rf '+f(a.risk_free_rate,2)+'% + \u03B2('+f(a.beta,2)+') \u00D7 ERP '+f(a.equity_risk_premium,2)+'% = <span class="mono hl" style="font-size:11px">'+f(a.cost_of_equity,2)+'%</span>';
+      if(a.beta_raw != null && a.beta_raw !== a.beta){
+        h += '<br><span style="font-size:9px;color:var(--warn)">\u03B2 raw: '+f(a.beta_raw,2)+' \u2192 governed: '+f(a.beta,2);
+        if(a.beta_flags && a.beta_flags.length > 0) h += ' ('+a.beta_flags.join(', ')+')';
+        if(a.sector) h += ' ['+a.sector+']';
+        h += '</span>';
+      }
       h += '</div>';
       if(a.discount_rate_type==='WACC' && a.debt_weight!=null && a.debt_weight > 0){
         var _ew = a.equity_weight!=null ? f(a.equity_weight*100,1) : 'N/A';
@@ -882,8 +930,16 @@ if(DCF && (DCF.bear||DCF.base||DCF.bull)){
         h += '<span style="font-weight:600">Discount rate:</span> Cost of Equity (no debt weighting) = '+f(a.cost_of_equity,2)+'%';
         h += '</div>';
       }
-      // Explicit clamp rule
-      if(a.clamp_rule){
+      // Explicit clamp rule — Stage 5: multi-layer governance
+      if(a.wacc_clamp_codes && a.wacc_clamp_codes.length > 0){
+        h += '<div style="font-size:10px;color:var(--warn);line-height:1.6">';
+        h += '<span style="font-weight:600">Governance applied:</span> WACC_raw '+f(a.wacc_raw,2)+'%';
+        if(a.wacc_general_floor != null) h += ' &middot; General floor: '+f(a.wacc_general_floor,2)+'%';
+        if(a.wacc_sector_floor != null) h += ' &middot; Sector floor: '+f(a.wacc_sector_floor,2)+'%';
+        h += ' \u2192 discount_rate_used = <span class="mono hl" style="font-size:11px">'+f(a.discount_rate,2)+'%</span>';
+        h += ' ('+a.wacc_clamp_codes.join(', ')+')';
+        h += '</div>';
+      } else if(a.clamp_rule){
         h += '<div style="font-size:10px;color:var(--warn);line-height:1.6">';
         h += '<span style="font-weight:600">Clamp applied:</span> WACC_raw '+f(a.wacc_raw,2)+'% '+((a.clamp_rule==='FLOOR_ABSOLUTE')?'< floor '+f(a.clamp_floor,1)+'%':'> ceiling '+f(a.clamp_ceiling,1)+'%')+' \u2192 discount_rate_used = <span class="mono hl" style="font-size:11px">'+f(a.discount_rate,2)+'%</span> (rule: '+a.clamp_rule+')';
         h += '</div>';
@@ -975,6 +1031,141 @@ if(DCF && DCF.base && DCF.assumptions && DCF.assumptions.discount_rate && DCF.as
 }
 h += '</div>';
 h += '</div>';
+
+// ════════════════════════════════════════════════════
+// STAGE 5: VALUATION GOVERNANCE PANELS
+// ════════════════════════════════════════════════════
+
+// -- Valuation Governance Summary --
+if(DCF && DCF.assumptions){
+  var _ga = DCF.assumptions;
+  h += '<div class="g2">';
+  h += '<div class="card"><h2>Valuation Governance Summary</h2>';
+  h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
+
+  // Beta governance
+  if(_ga.beta_raw != null){
+    var _betaChanged = _ga.beta_raw !== _ga.beta;
+    h += '<div><span style="font-weight:600;color:var(--t3)">Beta:</span> ';
+    h += '<span class="mono">'+f(_ga.beta_raw,2)+'</span> (raw)';
+    if(_betaChanged){
+      h += ' &rarr; <span class="mono hl" style="font-size:12px">'+f(_ga.beta,2)+'</span> (governed)';
+    }
+    if(_ga.beta_flags && _ga.beta_flags.length > 0){
+      for(var bi=0;bi<_ga.beta_flags.length;bi++){
+        h += ' <span class="pill pill-warn" style="font-size:9px;padding:1px 6px">'+_ga.beta_flags[bi]+'</span>';
+      }
+    }
+    h += '</div>';
+  }
+
+  // WACC governance
+  h += '<div><span style="font-weight:600;color:var(--t3)">WACC:</span> ';
+  h += '<span class="mono">'+f(_ga.wacc_raw,2)+'%</span> (raw)';
+  h += ' &rarr; <span class="mono hl" style="font-size:12px">'+f(_ga.discount_rate,2)+'%</span> (used)';
+  if(_ga.wacc_clamp_codes && _ga.wacc_clamp_codes.length > 0){
+    for(var wi=0;wi<_ga.wacc_clamp_codes.length;wi++){
+      h += ' <span class="pill pill-warn" style="font-size:9px;padding:1px 6px">'+_ga.wacc_clamp_codes[wi]+'</span>';
+    }
+  }
+  h += '</div>';
+
+  // Floors
+  if(_ga.wacc_general_floor != null){
+    h += '<div style="font-size:10px;color:var(--t3)">';
+    h += 'General floor: '+f(_ga.wacc_general_floor,2)+'%';
+    if(_ga.wacc_sector_floor != null) h += ' &middot; Sector floor: '+f(_ga.wacc_sector_floor,2)+'%';
+    if(_ga.sector) h += ' &middot; Sector: '+_ga.sector;
+    h += '</div>';
+  }
+
+  // Terminal flags
+  if(_ga.terminal_flags && _ga.terminal_flags.length > 0){
+    h += '<div style="margin-top:4px">';
+    for(var ti=0;ti<_ga.terminal_flags.length;ti++){
+      h += '<span class="pill pill-neg" style="font-size:9px;padding:1px 6px">'+_ga.terminal_flags[ti]+'</span> ';
+    }
+    h += '</div>';
+  }
+
+  h += '</div></div>';
+
+  // -- MOS Build Table --
+  h += '<div class="card"><h2>MOS Build</h2>';
+  if(V9.mos_build && V9.mos_build.length > 0){
+    h += '<table style="width:100%;font-size:10px;border-collapse:collapse;color:var(--t2)">';
+    h += '<thead><tr style="border-bottom:1px solid var(--border)">';
+    h += '<th style="text-align:left;padding:3px 6px;color:var(--t3)">Component</th>';
+    h += '<th style="text-align:right;padding:3px 6px;color:var(--t3)">Adjustment (pp)</th>';
+    h += '<th style="text-align:left;padding:3px 6px;color:var(--t3)">Reason</th>';
+    h += '</tr></thead><tbody>';
+    var _mosTotal = 0;
+    for(var mi=0;mi<V9.mos_build.length;mi++){
+      var mb = V9.mos_build[mi];
+      _mosTotal += mb.adjustment||0;
+      h += '<tr style="border-bottom:1px solid var(--border)">';
+      h += '<td style="padding:3px 6px;font-weight:500">'+mb.component+'</td>';
+      h += '<td style="text-align:right;padding:3px 6px" class="mono">'+(mb.adjustment>0?'+':'')+f(mb.adjustment,0)+'</td>';
+      h += '<td style="padding:3px 6px;font-size:9px;color:var(--t3)">'+(mb.reason||'')+'</td>';
+      h += '</tr>';
+    }
+    h += '<tr style="border-top:2px solid var(--border);font-weight:700">';
+    h += '<td style="padding:3px 6px">Required MOS</td>';
+    h += '<td style="text-align:right;padding:3px 6px" class="mono hl">'+f(_mosTotal,0)+'%</td>';
+    h += '<td style="padding:3px 6px"></td></tr>';
+    h += '</tbody></table>';
+    if(V9.required_price > 0){
+      h += '<div style="font-size:10px;color:var(--t3);margin-top:6px">Max buy price: <span class="mono hl">$'+f(V9.required_price,2)+'</span></div>';
+    }
+  } else {
+    h += '<div class="empty">MOS build not available</div>';
+  }
+  h += '</div>';
+  h += '</div>'; // end g2
+
+  // -- Fragility + CA Evidence row --
+  h += '<div class="g2">';
+
+  // Fragility Panel
+  h += '<div class="card"><h2>Fragility Assessment</h2>';
+  if(V9.fragility_contributors && V9.fragility_contributors.length > 0){
+    h += '<div style="font-size:12px;color:var(--t2);margin-bottom:8px">Fragility score: <span class="mono" style="font-weight:700;color:var(--warn)">'+V9.fragility_score+'</span></div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+    for(var fi=0;fi<V9.fragility_contributors.length;fi++){
+      h += '<span class="pill pill-neg" style="font-size:10px;padding:2px 8px">'+V9.fragility_contributors[fi]+'</span>';
+    }
+    h += '</div>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:8px">Each additional fragility contributor adds +'+f(3,0)+'pp to required MOS. High fragility indicates the valuation rests on assumptions that are individually reasonable but collectively optimistic.</div>';
+  } else {
+    h += '<div style="font-size:11px;color:var(--pos)">No fragility contributors detected. Valuation assumptions are within normal bounds.</div>';
+  }
+  h += '</div>';
+
+  // CA Evidence Block
+  h += '<div class="card"><h2>Capital Allocation Evidence</h2>';
+  var _cae = V9.ca_evidence;
+  if(_cae && _cae.roic_proxy != null){
+    var _spreadCls = _cae.roic_wacc_spread >= 0 ? 'pos' : 'neg';
+    h += '<div class="g4" style="font-size:11px;margin-bottom:8px">';
+    h += '<div><div style="font-size:9px;color:var(--t3);text-transform:uppercase">ROIC Proxy</div><div class="mono '+_spreadCls+'">'+f(_cae.roic_proxy,1)+'%</div></div>';
+    h += '<div><div style="font-size:9px;color:var(--t3);text-transform:uppercase">WACC</div><div class="mono">'+f(_cae.wacc_proxy,1)+'%</div></div>';
+    h += '<div><div style="font-size:9px;color:var(--t3);text-transform:uppercase">Spread</div><div class="mono '+_spreadCls+'">'+((_cae.roic_wacc_spread>=0)?'+':'')+f(_cae.roic_wacc_spread,1)+'%</div></div>';
+    h += '<div><div style="font-size:9px;color:var(--t3);text-transform:uppercase">Buyback</div><div class="mono">'+(_cae.buyback_discipline||'N/A')+'</div></div>';
+    h += '</div>';
+    if(_cae.reason_codes && _cae.reason_codes.length > 0){
+      h += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+      for(var ci=0;ci<_cae.reason_codes.length;ci++){
+        var _rcCls = _cae.reason_codes[ci].indexOf('DESTROY')>=0||_cae.reason_codes[ci].indexOf('OVERPRICED')>=0?'pill-neg':'pill-pos';
+        h += '<span class="pill '+_rcCls+'" style="font-size:9px;padding:1px 6px">'+_cae.reason_codes[ci]+'</span>';
+      }
+      h += '</div>';
+    }
+  } else {
+    h += '<div class="empty">Capital allocation evidence not available</div>';
+  }
+  h += '</div>';
+  h += '</div>'; // end g2
+}
 
 // ════════════════════════════════════════════════════
 // SECTION: TECHNICALS
@@ -1144,7 +1335,7 @@ h += '</div>';
 // Engine Detail
 h += '<div class="card"><h2>Engine Detail</h2>';
 h += '<div style="overflow-x:auto"><table id="tbl-eng"><thead><tr>';
-var ec = ['Engine','Raw Score','Norm.','Weight','Contribution'];
+var ec = ['Engine','Raw Score','Norm.','Weight','Contribution (pts \u00D7100)'];
 for(var i=0;i<ec.length;i++){
   var align=i===0?'':'text-r';
   h+='<th class="'+align+'" onclick="sortTbl(\'tbl-eng\','+i+')">'+ec[i]+' \u21C5</th>';
@@ -1164,7 +1355,9 @@ for(var i=0;i<ENGINES.length;i++){
 }
 h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td></td><td></td><td></td>';
 h += '<td class="text-r mono '+cls(totalCt)+'">'+fS(totalCt,2)+'</td></tr>';
-h += '</tbody></table></div></div>';
+h += '</tbody></table>';
+h += '<div style="font-size:9px;color:var(--t3);margin-top:4px;font-style:italic">Contribution = weight \u00D7 normalized_score \u00D7 100. Example: trend 0.147 \u00D7 0.762 \u00D7 100 = 11.18</div>';
+h += '</div></div>';
 
 // ════════════════════════════════════════════════════
 // SECTION: SENTIMENT & NEWS
@@ -2040,7 +2233,7 @@ if(cAdj!=null && dc!=null && rel!=null){
   h += '  TQ (approx) = <span class="hl">'+f(computedTQ,4)+'</span>\n';
   if(tq!=null){
     var tqDelta = Math.abs(computedTQ - tq);
-    h += '  TQ (reported) = '+f(tq,3);
+    h += '  TQ (reported) = '+f(tq,4);
     if(tqDelta > 0.01) h += '  <span class="warn">\u0394 '+f(tqDelta,4)+'</span> (engine uses additional factors)';
     h += '\n';
   }
@@ -2223,7 +2416,7 @@ if(cAdj!=null && dc!=null && rel!=null){
   h += '     = '+f(Math.abs(cAdj)/100,4)+' \u00D7 '+f(dc/100,2)+' \u00D7 '+f(rel,2)+'\n';
   h += '  TQ (computed) = <span class="hl">'+f(_tqC,4)+'</span>\n';
   if(tq!=null){
-    h += '  TQ (reported) = <span class="hl">'+f(tq,3)+'</span>\n';
+    h += '  TQ (reported) = <span class="hl">'+f(tq,4)+'</span>\n';
     var _tqD = Math.abs(_tqC - tq);
     if(_tqD > 0.001) h += '  \u0394 = <span class="warn">'+f(_tqD,4)+'</span>\n';
   }
