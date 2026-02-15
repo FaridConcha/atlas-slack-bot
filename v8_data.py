@@ -261,12 +261,65 @@ def _find_swing_levels(highs, lows, closes, window=5, lookback=60):
 # HELPER: SAFE DATA ACCESS
 # ============================================================================
 
-def _safe_info(ticker):
-    """Get ticker.info with error handling."""
+def _safe_fast_info(ticker):
+    """Get ticker.fast_info as dict with error handling.
+
+    fast_info is more reliable than info — it uses a lighter API endpoint
+    and returns market_cap, shares, yearHigh, yearLow, lastPrice, etc.
+    """
     try:
-        return ticker.info or {}
+        fi = ticker.fast_info
+        if fi is None:
+            return {}
+        # Convert fast_info to a dict with info-compatible keys
+        return {
+            'marketCap': getattr(fi, 'market_cap', None),
+            'sharesOutstanding': getattr(fi, 'shares', None),
+            'currentPrice': getattr(fi, 'last_price', None),
+            'previousClose': getattr(fi, 'previous_close', None),
+            'fiftyTwoWeekHigh': getattr(fi, 'year_high', None),
+            'fiftyTwoWeekLow': getattr(fi, 'year_low', None),
+            'fiftyDayAverage': getattr(fi, 'fifty_day_average', None),
+            'twoHundredDayAverage': getattr(fi, 'two_hundred_day_average', None),
+            '_source': 'fast_info',
+        }
     except Exception:
         return {}
+
+
+def _safe_info(ticker):
+    """Get ticker.info with fast_info fallback for critical fields.
+
+    When ticker.info fails (transient API error, rate limiting), critical
+    fundamentals like market_cap, shares, 52W range are lost, cascading into
+    full analysis suppression. fast_info is a lighter, more reliable endpoint
+    that provides these core fields.
+    """
+    try:
+        info = ticker.info or {}
+    except Exception:
+        info = {}
+
+    # If info is empty or missing critical fields, enrich from fast_info
+    critical_keys = ('marketCap', 'sharesOutstanding', 'fiftyTwoWeekHigh', 'fiftyTwoWeekLow')
+    missing_critical = not info or any(info.get(k) is None for k in critical_keys)
+
+    if missing_critical:
+        fast = _safe_fast_info(ticker)
+        if fast:
+            enriched = 0
+            for key, val in fast.items():
+                if key.startswith('_'):
+                    continue
+                if val is not None and (info.get(key) is None or info.get(key) == 0):
+                    info[key] = val
+                    enriched += 1
+            if enriched > 0:
+                info['_fast_info_enriched'] = True
+                info['_fast_info_fields'] = enriched
+                print(f"[V8]   fast_info enriched {enriched} missing fields")
+
+    return info
 
 
 def _score_sentiment(title):
@@ -410,6 +463,16 @@ def _build_company_info(info, symbol, hist=None):
     raw_52l = _safe_num(info.get('fiftyTwoWeekLow'), min_val=0)
     if raw_52l is not None and raw_52l <= 0:
         raw_52l = None
+
+    # Fallback: derive 52W range from price history if info doesn't have it
+    if (raw_52h is None or raw_52l is None) and hist is not None and not getattr(hist, 'empty', True):
+        try:
+            if raw_52h is None:
+                raw_52h = float(hist['High'].max())
+            if raw_52l is None:
+                raw_52l = float(hist['Low'].min())
+        except Exception:
+            pass
 
     # Sector: treat empty string or 'Unknown' from yfinance as missing
     sector_available = bool(raw_sector and raw_sector not in ('', 'Unknown', 'N/A'))
@@ -677,6 +740,30 @@ def _build_financials(ticker, info, hist=None):
     total_debt = _safe_num(info.get('totalDebt'), min_val=0)
     total_cash = _safe_num(info.get('totalCash'), min_val=0)
     ebitda = _safe_num(info.get('ebitda'))
+
+    # --- Secondary fallbacks from financial statements when info is sparse ---
+    if revenue is None or net_income is None or fcf is None:
+        try:
+            inc = ticker.income_stmt
+            if inc is not None and not inc.empty and inc.shape[1] > 0:
+                latest = inc.iloc[:, 0]
+                if revenue is None:
+                    revenue = _safe_num(latest.get('Total Revenue'))
+                if net_income is None:
+                    net_income = _safe_num(latest.get('Net Income'))
+        except Exception:
+            pass
+    if fcf is None:
+        try:
+            cf = ticker.cash_flow
+            if cf is not None and not cf.empty and cf.shape[1] > 0:
+                latest_cf = cf.iloc[:, 0]
+                op_cf = _safe_num(latest_cf.get('Operating Cash Flow'))
+                capex = _safe_num(latest_cf.get('Capital Expenditure'))
+                if op_cf is not None:
+                    fcf = op_cf + (capex or 0)  # capex is negative
+        except Exception:
+            pass
 
     # Fallback: derive shares from mc/price if sharesOutstanding missing
     if shares is None and mc is not None and price > 0:

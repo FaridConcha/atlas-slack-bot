@@ -1569,6 +1569,46 @@ class TestFundamentalsIntegrity:
         fq = co['_fundamentals_quality']
         assert fq.beta_defaulted is True
 
+    def test_52w_fallback_from_history(self):
+        """52W range derived from price history when info is empty."""
+        import pandas as pd
+        import numpy as np
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'currentPrice': 150.0}
+        # Simulate 1Y of price history
+        dates = pd.date_range('2025-02-14', periods=252, freq='B')
+        hist = pd.DataFrame({
+            'Open': np.linspace(100, 160, 252),
+            'High': np.linspace(105, 165, 252),
+            'Low': np.linspace(95, 145, 252),
+            'Close': np.linspace(100, 160, 252),
+            'Volume': [1000000] * 252,
+        }, index=dates)
+        co = _build_company_info(info, 'TEST', hist=hist)
+        assert co['fifty_two_week_high'] == round(165.0, 2) or co['fifty_two_week_high'] > 160
+        assert co['fifty_two_week_low'] == round(95.0, 2) or co['fifty_two_week_low'] < 100
+
+    def test_safe_info_fast_info_fallback(self):
+        """_safe_fast_info returns dict with expected keys."""
+        from v8_data import _safe_fast_info
+        from unittest.mock import MagicMock
+        ticker = MagicMock()
+        fi = MagicMock()
+        fi.market_cap = 150e9
+        fi.shares = 1.3e9
+        fi.last_price = 115.0
+        fi.previous_close = 114.5
+        fi.year_high = 130.0
+        fi.year_low = 90.0
+        fi.fifty_day_average = 112.0
+        fi.two_hundred_day_average = 105.0
+        ticker.fast_info = fi
+        result = _safe_fast_info(ticker)
+        assert result['marketCap'] == 150e9
+        assert result['sharesOutstanding'] == 1.3e9
+        assert result['fiftyTwoWeekHigh'] == 130.0
+        assert result['fiftyTwoWeekLow'] == 90.0
+
 
 # ============================================================================
 # STAGE 5.1: Canonical Suppression Mode Tests (Problem B)
