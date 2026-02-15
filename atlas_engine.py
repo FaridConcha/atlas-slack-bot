@@ -1844,6 +1844,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['risk_drivers'] = risk_details.get('risk_drivers', [])
 
     # Composite adjustment chain — full auditability
+    dc_cap = min(1.0, dc / 100.0)
     summary['adjustment_chain'] = [
         {
             'name': 'C_raw',
