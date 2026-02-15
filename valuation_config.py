@@ -99,6 +99,16 @@ class FeatureFlags:
     ca_evidence: bool = True                 # Capital allocation evidence block
     industry_priors: bool = True             # Stage 6: Industry prior system for missing data
     monte_carlo_dcf: bool = True             # V12+: Monte Carlo DCF simulations
+    # ATLAS Redesign Phase 2/3 feature flags
+    native_engine_uncertainty: bool = True   # Step 2: Native engine variance estimates
+    anisotropic_gmm: bool = True             # Step 3: 10D diagonal GMM bandwidths
+    regime_transitions: bool = True          # Step 4: HMM-style regime transition matrix
+    online_garch: bool = True                # Step 5: GARCH(1,1) variance tracking
+    distributional_engines: bool = True      # Step 6: Skewness/kurtosis per engine
+    coskewness_tensor: bool = True           # Step 7: 3rd-order coskewness tensor
+    copula_tail_dep: bool = True             # Step 8: Student-t copula tail dependence
+    mc_feedback: bool = True                 # Step 9: MC DCF → composite feedback
+    dpmm_regime: bool = False                # Step 10: DPMM regime model (opt-in)
 
 
 # ============================================================================

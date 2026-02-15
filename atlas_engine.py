@@ -27,9 +27,40 @@ Usage:
 import json
 import csv
 import numpy as np
-from math import erf
+from math import erf, log
 from datetime import datetime
 from pathlib import Path
+try:
+    from scipy.stats import t as student_t
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+    # Lightweight fallback: approximate Student-t CDF for small ν using normal CDF
+    class _StudentTFallback:
+        @staticmethod
+        def cdf(x, df):
+            """Approximate Student-t CDF via normal CDF with df correction."""
+            # Cornish-Fisher-style correction for small df
+            z = x * (1 - 1 / (4 * max(df, 1)))
+            return 0.5 * (1.0 + erf(z / np.sqrt(2)))
+    student_t = _StudentTFallback()
+
+try:
+    from valuation_config import CONFIG as VAL_CONFIG
+    _FF = VAL_CONFIG.flags
+except ImportError:
+    # Standalone mode: create default flags
+    class _DefaultFlags:
+        native_engine_uncertainty = True
+        anisotropic_gmm = True
+        regime_transitions = True
+        online_garch = True
+        distributional_engines = True
+        coskewness_tensor = True
+        copula_tail_dep = True
+        mc_feedback = True
+        dpmm_regime = False
+    _FF = _DefaultFlags()
 
 # ============================================================================
 # SECTION 1: IMPORTS + ATLAS_CONFIG
@@ -79,17 +110,18 @@ VARIANCE_DATA_PENALTIES = {
     'fundamentals_missing': 1.3,
     'consensus_missing': 1.2,
     'global_overnight_missing': 1.2,
+    'data_stale': 1.6,
 }
 
 ENGINE_DATA_DEPS = {
-    'trend': ['price_insufficient'],
-    'valuation': ['fundamentals_missing'],
-    'consensus': ['consensus_missing'],
-    'volatility': ['vol_insufficient', 'price_insufficient'],
-    'macro': ['macro_insufficient'],
-    'liquidity': ['price_insufficient'],
-    'global': ['global_overnight_missing'],
-    'correlation': ['price_insufficient', 'vol_insufficient', 'macro_insufficient'],
+    'trend': ['price_insufficient', 'data_stale'],
+    'valuation': ['fundamentals_missing', 'data_stale'],
+    'consensus': ['consensus_missing', 'data_stale'],
+    'volatility': ['vol_insufficient', 'price_insufficient', 'data_stale'],
+    'macro': ['macro_insufficient', 'data_stale'],
+    'liquidity': ['price_insufficient', 'data_stale'],
+    'global': ['global_overnight_missing', 'data_stale'],
+    'correlation': ['price_insufficient', 'vol_insufficient', 'macro_insufficient', 'data_stale'],
 }
 
 # 8×8 structural correlation matrix (engine order: trend, valuation, consensus,
@@ -202,11 +234,31 @@ GMM_REGIME_CENTROIDS = np.array([
 # Prior probabilities: reflects typical market state distribution
 GMM_REGIME_PRIORS = np.array([0.45, 0.20, 0.15, 0.10, 0.10])
 
-# Isotropic bandwidth per regime (diagonal covariance approximation)
+# Isotropic bandwidth per regime (legacy — used when anisotropic_gmm=False)
 GMM_REGIME_BANDWIDTHS = np.array([0.20, 0.25, 0.25, 0.30, 0.25])
+
+# Anisotropic 10D diagonal bandwidths per regime (Step 3)
+# Rows: [Calm, Chop, Tightening, Crisis, Credit], Cols: [TS,CH,VL,VS,CI,RS,CS,GR,BM_f,BEI]
+GMM_REGIME_BANDWIDTHS_DIAG = np.array([
+    [0.20, 0.25, 0.15, 0.15, 0.20, 0.20, 0.15, 0.20, 0.20, 0.20],  # Calm
+    [0.20, 0.20, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25],  # Chop
+    [0.25, 0.25, 0.25, 0.25, 0.25, 0.15, 0.20, 0.25, 0.25, 0.25],  # Tight
+    [0.15, 0.25, 0.20, 0.20, 0.25, 0.30, 0.30, 0.25, 0.30, 0.25],  # Crisis
+    [0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.15, 0.25, 0.25, 0.25],  # Credit
+])
 
 # EMA smoothing factor for regime transitions (Phase 2b)
 REGIME_EMA_ALPHA = 0.3
+
+# 5×5 regime transition matrix (Step 4): rows = from, cols = to
+# Encodes regime persistence (high diagonal) and transition probabilities
+REGIME_TRANSITION_MATRIX = np.array([
+    [0.85, 0.08, 0.04, 0.02, 0.01],  # Calm →
+    [0.10, 0.70, 0.10, 0.05, 0.05],  # Chop →
+    [0.05, 0.10, 0.70, 0.08, 0.07],  # Tightening →
+    [0.03, 0.07, 0.05, 0.75, 0.10],  # Crisis →
+    [0.02, 0.08, 0.10, 0.10, 0.70],  # Credit →
+])
 
 # Regime-conditioned engine variance multiplier (Phase 2c)
 ENGINE_VARIANCE_REGIME_MULT = {
@@ -455,6 +507,34 @@ def engine_trend(price_data, breadth_data):
         'vol_vs_avg': vol / vol_20ma if vol_20ma > 0 else 1.0
     }
 
+    # Native variance: bootstrap variance from 5 overlapping 20-day return windows
+    if _FF.native_engine_uncertainty and len(closes) >= 40:
+        window_returns = []
+        for start in range(0, min(100, len(closes) - 20), 20):
+            w = closes[-(start + 20):len(closes) - start] if start > 0 else closes[-20:]
+            if len(w) >= 2:
+                r = (w[-1] - w[0]) / w[0] * 100 if w[0] > 0 else 0
+                window_returns.append(r)
+        details['native_var'] = float(np.var(window_returns)) if len(window_returns) >= 2 else 0.0
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: skewness/kurtosis from return distribution
+    if _FF.distributional_engines and len(closes) >= 21:
+        daily_r = np.diff(np.log(np.maximum(np.array(closes[-21:]), 1e-10)))
+        mu_r = np.mean(daily_r)
+        std_r = np.std(daily_r)
+        if std_r > 1e-10:
+            z = (daily_r - mu_r) / std_r
+            details['skewness'] = float(np.mean(z ** 3))
+            details['kurtosis'] = float(np.mean(z ** 4) - 3.0)  # excess kurtosis
+        else:
+            details['skewness'] = 0.0
+            details['kurtosis'] = 0.0
+    else:
+        details['skewness'] = 0.0
+        details['kurtosis'] = 0.0
+
     return score, details
 
 def engine_valuation(fundamentals, macro_data):
@@ -519,12 +599,42 @@ def engine_valuation(fundamentals, macro_data):
 
     score = np.clip(score, -40, 40)
 
+    # Compute per-component contributions for native variance
+    pe_component = -pe_z * 8 if abs(pe_z) <= 1.5 else (-20 if pe_z > 1.5 else 20)
+    ev_component = -ev_z * 5 if abs(ev_z) <= 1.5 else (-12 if ev_z > 1.5 else 12)
+    fcf_component = 8 if current_fcf > fcf_mean else -8
+
     details = {
         'pe_z_score': pe_z,
         'ev_z_score': ev_z,
         'pe_current': current_pe,
         'pe_mean': pe_mean
     }
+
+    # Native variance: cross-metric disagreement
+    if _FF.native_engine_uncertainty:
+        details['native_var'] = float(np.var([pe_component, ev_component, fcf_component]))
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: skewness from PE z-score (value trap asymmetry), kurtosis from PE distribution
+    if _FF.distributional_engines:
+        details['skewness'] = float(np.sign(pe_z) * abs(pe_z) / 3.0)
+        pe_vals = [safe_float(x) for x in pe_hist]
+        if len(pe_vals) >= 4:
+            pe_arr = np.array(pe_vals)
+            pe_mu = np.mean(pe_arr)
+            pe_sd = np.std(pe_arr)
+            if pe_sd > 1e-10:
+                z = (pe_arr - pe_mu) / pe_sd
+                details['kurtosis'] = float(np.mean(z ** 4) - 3.0)
+            else:
+                details['kurtosis'] = 0.0
+        else:
+            details['kurtosis'] = 0.0
+    else:
+        details['skewness'] = 0.0
+        details['kurtosis'] = 0.0
 
     return score, details
 
@@ -588,6 +698,16 @@ def engine_consensus(consensus_data):
         'buy_pct': buy_pct if total > 0 else 0
     }
 
+    # Native variance: revision ratio uncertainty (Bernoulli variance × 100)
+    if _FF.native_engine_uncertainty:
+        details['native_var'] = float(revision_ratio * (1 - revision_ratio) * 100)
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: default (insufficient data for reliable higher moments)
+    details['skewness'] = 0.0
+    details['kurtosis'] = 0.0
+
     return score, details
 
 def engine_volatility(vol_data, price_data):
@@ -650,6 +770,30 @@ def engine_volatility(vol_data, price_data):
 
     score = np.clip(score, -50, 30)
 
+    # Native variance: IV-RV spread variance
+    if _FF.native_engine_uncertainty:
+        iv_rv = details.get('iv_rv_ratio', 1.0)
+        details['native_var'] = float((iv_rv - 1.0) ** 2 * 50)
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: vol has positive skew (spikes up), kurtosis from VIX history
+    if _FF.distributional_engines and vol_data and len(vol_data) >= 20:
+        vix_hist = [safe_float(row.get('vix', 20)) for row in vol_data[-20:]]
+        vix_arr = np.array(vix_hist)
+        vix_mu = np.mean(vix_arr)
+        vix_sd = np.std(vix_arr)
+        if vix_sd > 1e-10:
+            z = (vix_arr - vix_mu) / vix_sd
+            details['skewness'] = float(np.mean(z ** 3))
+            details['kurtosis'] = float(np.mean(z ** 4) - 3.0)
+        else:
+            details['skewness'] = 0.0
+            details['kurtosis'] = 0.0
+    else:
+        details['skewness'] = 0.0
+        details['kurtosis'] = 0.0
+
     return score, details
 
 def engine_macro(macro_data):
@@ -704,6 +848,31 @@ def engine_macro(macro_data):
         score += 10
 
     score = np.clip(score, -50, 30)
+
+    # Native variance: rate change variance from 20d rolling std of yield changes
+    if _FF.native_engine_uncertainty and len(macro_data) >= 21:
+        yield_vals = [safe_float(row.get('us_10y', 2.5)) for row in macro_data[-21:]]
+        yield_changes = [yield_vals[i] - yield_vals[i-1] for i in range(1, len(yield_vals))]
+        details['native_var'] = float(np.var(yield_changes) * 1000) if yield_changes else 0.0
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: skewness/kurtosis from yield change distribution
+    if _FF.distributional_engines and len(macro_data) >= 21:
+        yield_vals = [safe_float(row.get('us_10y', 2.5)) for row in macro_data[-21:]]
+        yc = np.diff(yield_vals)
+        yc_mu = np.mean(yc)
+        yc_sd = np.std(yc)
+        if yc_sd > 1e-10:
+            z = (yc - yc_mu) / yc_sd
+            details['skewness'] = float(np.mean(z ** 3))
+            details['kurtosis'] = float(np.mean(z ** 4) - 3.0)
+        else:
+            details['skewness'] = 0.0
+            details['kurtosis'] = 0.0
+    else:
+        details['skewness'] = 0.0
+        details['kurtosis'] = 0.0
 
     return score, details
 
@@ -770,6 +939,16 @@ def engine_liquidity(price_data, breadth_data):
         details['breadth_advancing_pct'] = adv_pct if total > 0 else 0.5
 
     score = np.clip(score, -50, 50)
+
+    # Native variance: volume ratio variance
+    if _FF.native_engine_uncertainty and len(volumes) >= 20 and vol_20ma > 0:
+        details['native_var'] = float(np.var(volumes[-20:]) / vol_20ma ** 2 * 50)
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: default (insufficient data for reliable higher moments)
+    details['skewness'] = 0.0
+    details['kurtosis'] = 0.0
 
     return score, details
 
@@ -843,6 +1022,16 @@ def engine_global_overnight(global_overnight, vol_data):
     score = (asia_score + europe_score + us_score) * multiplier
     score = np.clip(score, -50, 50)
 
+    # Native variance: cross-region disagreement
+    if _FF.native_engine_uncertainty:
+        details['native_var'] = float(np.var([asia_score, europe_score, us_score]))
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: default (insufficient data for reliable higher moments)
+    details['skewness'] = 0.0
+    details['kurtosis'] = 0.0
+
     return score, details
 
 def engine_correlation(price_data, vol_data, macro_data):
@@ -912,6 +1101,20 @@ def engine_correlation(price_data, vol_data, macro_data):
 
     risk_score = np.clip(risk_score, 0, 100)
 
+    # Native variance: rolling correlation std × 100
+    if _FF.native_engine_uncertainty and 'corr_spx_yield_20d' in details:
+        if len(returns) >= 60:
+            corr_std = np.std(corr_20_spx_yield) if corr_20_spx_yield else 0.0
+            details['native_var'] = float(corr_std * 100)
+        else:
+            details['native_var'] = 0.0
+    else:
+        details['native_var'] = 0.0
+
+    # Distributional: default (insufficient data for reliable higher moments)
+    details['skewness'] = 0.0
+    details['kurtosis'] = 0.0
+
     return risk_score, details
 
 # ============================================================================
@@ -919,7 +1122,8 @@ def engine_correlation(price_data, vol_data, macro_data):
 # ============================================================================
 
 def _compute_engine_variance(engine_name, score, dc_details, score_range,
-                              ensemble_sign=None, regime_label=None, mid=0.0):
+                              ensemble_sign=None, regime_label=None, mid=0.0,
+                              native_var=None, run_count=0):
     """
     Compute variance estimate for a single engine.
     σ²_i = σ²_base × f_data × f_extremity × f_agreement × f_regime
@@ -928,6 +1132,7 @@ def _compute_engine_variance(engine_name, score, dc_details, score_range,
       f_agreement: penalizes engines disagreeing with ensemble direction
       f_regime: regime-conditioned variance multiplier
     D23 FIX: mid parameter allows per-engine midpoint (correlation: 50, others: 0).
+    Redesign G1: blend native_var with heuristic when available.
     """
     sigma2_base = ENGINE_VARIANCE_BASE.get(engine_name, 50)
 
@@ -956,13 +1161,21 @@ def _compute_engine_variance(engine_name, score, dc_details, score_range,
     # f_regime (Phase 2c): regime-conditioned variance scaling
     f_regime = ENGINE_VARIANCE_REGIME_MULT.get(regime_label, 1.0) if regime_label else 1.0
 
-    return sigma2_base * f_data * f_extremity * f_agreement * f_regime
+    sigma2_heuristic = sigma2_base * f_data * f_extremity * f_agreement * f_regime
+
+    # Redesign G1: blend native variance with heuristic
+    if _FF.native_engine_uncertainty and native_var is not None and native_var > 0:
+        blend_w = min(0.7, run_count / 50.0)
+        return (1 - blend_w) * sigma2_heuristic + blend_w * native_var
+    return sigma2_heuristic
 
 
-def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
+def compute_all_engine_variances(scores_dict, dc_details, regime_label=None,
+                                  engine_details=None, run_count=0):
     """
     Compute variance estimates for all 8 engines.
     Phase 2c: includes f_agreement (ensemble disagreement) and f_regime.
+    Redesign G1: passes native_var from engine details for blending.
     """
     score_ranges = {
         'trend': 200, 'valuation': 80, 'consensus': 100, 'volatility': 80,
@@ -981,10 +1194,14 @@ def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
     variances = {}
     for engine_name, score in scores_dict.items():
         sr = score_ranges.get(engine_name, 100)
+        native_var = None
+        if engine_details is not None:
+            native_var = engine_details.get(engine_name, {}).get('native_var', None)
         variances[engine_name] = _compute_engine_variance(
             engine_name, score, dc_details, sr,
             ensemble_sign=ensemble_sign, regime_label=regime_label,
-            mid=score_mids.get(engine_name, 0.0)
+            mid=score_mids.get(engine_name, 0.0),
+            native_var=native_var, run_count=run_count
         )
     return variances
 
@@ -1244,6 +1461,27 @@ def compute_data_confidence(data):
         dc -= 5
         details['global_overnight_missing'] = True
 
+    # Data staleness detection (G7): parse last OHLCV date, penalize if stale
+    details['data_stale'] = False
+    details['stale_days'] = 0
+    if data.get('price') and len(data['price']) > 0:
+        last_row = data['price'][-1]
+        date_str = last_row.get('date', '') or last_row.get('Date', '')
+        if date_str:
+            try:
+                last_date = datetime.strptime(str(date_str).strip()[:10], '%Y-%m-%d')
+                today = datetime.now()
+                calendar_days = (today - last_date).days
+                # Business-day adjustment: subtract weekends (~2 per 7 calendar days)
+                stale_bdays = max(0, calendar_days - 2 * (calendar_days // 7))
+                if stale_bdays > 3:
+                    penalty = min(20, stale_bdays * 4)
+                    dc -= penalty
+                    details['data_stale'] = True
+                    details['stale_days'] = stale_bdays
+            except (ValueError, TypeError):
+                pass
+
     dc = np.clip(dc, 0, 100)
     details['final_dc'] = dc
 
@@ -1258,7 +1496,8 @@ def compute_soft_regime(regime_vector):
     Soft GMM regime classification (Phase 2a).
 
     Computes posterior probabilities π_k for each of 5 regimes using
-    isotropic Gaussian kernels with expert-calibrated centroids.
+    Gaussian kernels with expert-calibrated centroids.
+    Step 3: Uses anisotropic (10D diagonal) bandwidths when enabled.
 
     Input: regime_vector dict with keys [TS,CH,VL,VS,CI,RS,CS,GR,BM_f,BEI]
     Returns: (regime_probs: dict, regime_label: str)
@@ -1270,12 +1509,18 @@ def compute_soft_regime(regime_vector):
 
     n_regimes = len(REGIME_NAMES)
     log_probs = np.zeros(n_regimes)
+    use_anisotropic = _FF.anisotropic_gmm
 
     for k in range(n_regimes):
         diff = x - GMM_REGIME_CENTROIDS[k]
-        sigma = GMM_REGIME_BANDWIDTHS[k]
-        # Log of isotropic Gaussian: -0.5 * ||diff||² / σ² + log(prior)
-        log_probs[k] = -0.5 * np.sum(diff ** 2) / (sigma ** 2) + np.log(GMM_REGIME_PRIORS[k])
+        if use_anisotropic:
+            # Anisotropic: -0.5 * Σ_d (diff_d / σ_kd)² + log(prior)
+            sigma_diag = GMM_REGIME_BANDWIDTHS_DIAG[k]
+            log_probs[k] = -0.5 * np.sum(diff ** 2 / sigma_diag ** 2) + np.log(GMM_REGIME_PRIORS[k])
+        else:
+            # Legacy isotropic: -0.5 * ||diff||² / σ² + log(prior)
+            sigma = GMM_REGIME_BANDWIDTHS[k]
+            log_probs[k] = -0.5 * np.sum(diff ** 2) / (sigma ** 2) + np.log(GMM_REGIME_PRIORS[k])
 
     # Numerically stable softmax
     log_probs -= np.max(log_probs)
@@ -1291,7 +1536,9 @@ def compute_soft_regime(regime_vector):
 def smooth_regime_probs(regime_probs_new, regime_probs_prev, alpha=None):
     """
     EMA-smooth regime probabilities to prevent whipsawing (Phase 2b).
-    π_smooth = α × π_new + (1-α) × π_prev
+    Step 4: When regime_transitions enabled, applies HMM-style prediction
+    via transition matrix before EMA blend.
+    π_smooth = α × π_combined + (1-α) × π_prev
     """
     if alpha is None:
         alpha = REGIME_EMA_ALPHA
@@ -1299,17 +1546,32 @@ def smooth_regime_probs(regime_probs_new, regime_probs_prev, alpha=None):
     if regime_probs_prev is None:
         return regime_probs_new
 
-    smoothed = {}
-    for regime in REGIME_NAMES:
-        p_new = regime_probs_new.get(regime, 0.0)
-        p_prev = regime_probs_prev.get(regime, 1.0 / len(REGIME_NAMES))
-        smoothed[regime] = alpha * p_new + (1.0 - alpha) * p_prev
+    pi_prev = np.array([regime_probs_prev.get(r, 0.2) for r in REGIME_NAMES])
+    pi_new = np.array([regime_probs_new.get(r, 0.2) for r in REGIME_NAMES])
+
+    if _FF.regime_transitions:
+        # HMM-style: π_predict = T^T × π_prev, then update with observation
+        pi_predict = REGIME_TRANSITION_MATRIX.T @ pi_prev
+        pi_predict = np.maximum(pi_predict, 1e-10)
+        # Combine prediction with new observation (Bayesian update)
+        pi_combined = pi_new * pi_predict
+        total_combined = pi_combined.sum()
+        if total_combined > 0:
+            pi_combined /= total_combined
+        else:
+            pi_combined = pi_new
+    else:
+        pi_combined = pi_new
+
+    # EMA smooth
+    smoothed_arr = alpha * pi_combined + (1.0 - alpha) * pi_prev
 
     # Re-normalize after smoothing
-    total = sum(smoothed.values())
+    total = smoothed_arr.sum()
     if total > 0:
-        smoothed = {k: v / total for k, v in smoothed.items()}
+        smoothed_arr /= total
 
+    smoothed = {REGIME_NAMES[k]: float(smoothed_arr[k]) for k in range(len(REGIME_NAMES))}
     return smoothed
 
 
@@ -1605,7 +1867,7 @@ def load_meta_state(state_dir, symbol=None):
         except (ValueError, TypeError):
             pass
 
-    # Cold start defaults (includes Phase 2b/3a/3b state fields)
+    # Cold start defaults (includes Phase 2b/3a/3b state fields + Redesign state)
     engines = ['trend', 'valuation', 'consensus', 'volatility',
                'macro', 'liquidity', 'global', 'correlation']
     return {
@@ -1617,6 +1879,13 @@ def load_meta_state(state_dir, symbol=None):
         'ewma_mean': {e: 0.0 for e in engines},  # Phase 3a
         'ewma_cross': None,              # Phase 3b: cross-product matrix
         'ewma_enorm_mean': None,         # Phase 3b: EWMA of e_norm means
+        # Redesign state additions
+        'garch_params': {e: {'omega': 1.0, 'alpha': 0.06, 'beta': 0.94} for e in engines},  # Step 5
+        'garch_innovations': {e: [] for e in engines},  # Step 5
+        'ewma_cube': None,              # Step 7: 8×8×8 coskewness EWMA
+        'dpmm_centroids': None,         # Step 10: DPMM cluster centers (opt-in)
+        'dpmm_counts': None,            # Step 10: DPMM assignment counts
+        'dpmm_stick_weights': None,     # Step 10: DPMM stick-breaking weights
     }
 
 def save_meta_state(state, state_dir, symbol=None):
@@ -1704,23 +1973,73 @@ def update_meta_learning(state, e_norm, regime_vector):
 def update_ewma_engine_variances(state, scores_dict, decay=0.94):
     """
     Phase 3a: EWMA volatility tracking per engine.
-    Tracks exponentially weighted moving average of engine score squared
-    deviations across runs. Stored in state['ewma_var'].
+    Step 5: Online GARCH(1,1) upgrade when enabled and run_count >= 20.
+    σ²_t = ω + α × ε²_{t-1} + β × σ²_{t-1}  where ε_t = s_t - μ_t
+    Falls back to EWMA (IGARCH) when run_count < 20 or feature disabled.
     """
     engines = ['trend', 'valuation', 'consensus', 'volatility',
                'macro', 'liquidity', 'global', 'correlation']
 
     ewma_var = state.get('ewma_var', {e: 0.0 for e in engines})
     ewma_mean = state.get('ewma_mean', {e: 0.0 for e in engines})
+    run_count = state.get('run_count', 0)
+
+    use_garch = _FF.online_garch and run_count >= 20
+    garch_params = state.get('garch_params', {e: {'omega': 1.0, 'alpha': 0.06, 'beta': 0.94} for e in engines})
+    garch_innovations = state.get('garch_innovations', {e: [] for e in engines})
 
     for eng in engines:
         score = scores_dict.get(eng, 0.0)
         prev_mean = ewma_mean.get(eng, 0.0)
         prev_var = ewma_var.get(eng, 0.0)
 
-        # Update EWMA variance using prev_mean (unbiased estimator)
-        new_var = decay * prev_var + (1 - decay) * (score - prev_mean) ** 2
-        # Update EWMA mean (after variance to use prev_mean)
+        # Innovation (surprise)
+        innovation = score - prev_mean
+
+        if use_garch:
+            # GARCH(1,1): σ²_t = ω + α × ε²_{t-1} + β × σ²_{t-1}
+            params = garch_params.get(eng, {'omega': 1.0, 'alpha': 0.06, 'beta': 0.94})
+            omega = params.get('omega', 1.0)
+            alpha_g = params.get('alpha', 0.06)
+            beta_g = params.get('beta', 0.94)
+
+            new_var = omega + alpha_g * (innovation ** 2) + beta_g * prev_var
+            new_var = max(new_var, 1e-6)  # floor for numerical stability
+
+            # Store innovation for periodic MLE refit
+            innov_list = garch_innovations.get(eng, [])
+            innov_list.append(float(innovation))
+            if len(innov_list) > 50:
+                innov_list = innov_list[-50:]
+            garch_innovations[eng] = innov_list
+
+            # Online MLE refit every 20 runs (approximate moment-matching)
+            if len(innov_list) >= 20 and run_count % 20 == 0:
+                innov_arr = np.array(innov_list)
+                innov2 = innov_arr ** 2
+                # Moment matching: E[ε²] = ω/(1-α-β), autocorr of ε² gives α+β
+                mean_innov2 = np.mean(innov2)
+                if len(innov2) > 1:
+                    autocorr = np.corrcoef(innov2[:-1], innov2[1:])[0, 1]
+                    if np.isnan(autocorr):
+                        autocorr = 0.9
+                else:
+                    autocorr = 0.9
+                # Constrain α+β < 1 for stationarity
+                persistence = np.clip(autocorr, 0.5, 0.98)
+                alpha_new = np.clip(persistence * 0.06 / 0.94, 0.01, 0.15)
+                beta_new = np.clip(persistence - alpha_new, 0.5, 0.97)
+                omega_new = max(0.01, mean_innov2 * (1 - alpha_new - beta_new))
+                garch_params[eng] = {
+                    'omega': float(omega_new),
+                    'alpha': float(alpha_new),
+                    'beta': float(beta_new),
+                }
+        else:
+            # Legacy EWMA (IGARCH): σ²_t = λ σ²_{t-1} + (1-λ) ε²_t
+            new_var = decay * prev_var + (1 - decay) * (innovation ** 2)
+
+        # Update EWMA mean
         new_mean = decay * prev_mean + (1 - decay) * score
 
         ewma_mean[eng] = float(new_mean)
@@ -1728,6 +2047,8 @@ def update_ewma_engine_variances(state, scores_dict, decay=0.94):
 
     state['ewma_var'] = ewma_var
     state['ewma_mean'] = ewma_mean
+    state['garch_params'] = garch_params
+    state['garch_innovations'] = garch_innovations
     return state
 
 
@@ -2397,6 +2718,188 @@ def detect_contradictions(layers_data):
     return contradictions
 
 # ============================================================================
+# SECTION 16b: COSKEWNESS TENSOR (Step 7)
+# ============================================================================
+
+def compute_coskewness_tensor(state, e_norm, w_dynamic, sigma_C, decay=0.94):
+    """
+    Step 7: Compute 3rd-order coskewness tensor for composite skewness.
+    S[i,j,k] = E[e_i × e_j × e_k] tracked via EWMA of triple outer products.
+    Composite skewness: γ_C = Σ_ijk w_i w_j w_k S_ijk / σ_C^3
+    Adjusts P(C>0) via Cornish-Fisher expansion.
+    Memory: 8×8×8 = 512 floats ≈ 4KB.
+    """
+    engines = ['trend', 'valuation', 'consensus', 'volatility',
+               'macro', 'liquidity', 'global', 'correlation']
+    n = len(engines)
+
+    e_vec = np.array([e_norm.get(f'{eng}_norm', 0.0) for eng in engines])
+    w_vec = np.array([w_dynamic.get(eng, 1.0/n) for eng in engines])
+
+    # Load or initialize EWMA cube
+    ewma_cube = state.get('ewma_cube', None)
+    if ewma_cube is not None:
+        cube = np.array(ewma_cube)
+        if cube.shape != (n, n, n):
+            cube = np.zeros((n, n, n))
+    else:
+        cube = np.zeros((n, n, n))
+
+    # Update EWMA of triple outer product
+    triple = np.einsum('i,j,k->ijk', e_vec, e_vec, e_vec)
+    cube = decay * cube + (1 - decay) * triple
+
+    state['ewma_cube'] = cube.tolist()
+
+    # Composite skewness: γ_C = Σ_ijk w_i w_j w_k S_ijk / σ_C^3
+    if sigma_C > 1e-10:
+        gamma_C = float(np.einsum('i,j,k,ijk->', w_vec, w_vec, w_vec, cube) / (sigma_C ** 3))
+    else:
+        gamma_C = 0.0
+
+    # Cornish-Fisher adjusted P(C>0)
+    mu_C_norm = float(np.dot(w_vec, e_vec))
+    if sigma_C > 1e-10:
+        z = mu_C_norm / sigma_C
+        z_cf = z + (z ** 2 - 1) * gamma_C / 6.0
+        # Φ(z_cf) via erf
+        p_positive_cf = 0.5 * (1.0 + erf(z_cf / np.sqrt(2)))
+    else:
+        p_positive_cf = 0.5 if mu_C_norm == 0 else (1.0 if mu_C_norm > 0 else 0.0)
+
+    return state, float(gamma_C), float(p_positive_cf)
+
+
+# ============================================================================
+# SECTION 16c: STUDENT-T COPULA (Step 8)
+# ============================================================================
+
+def compute_copula_tail_dependence(cov_matrix, engine_order, nu=5):
+    """
+    Step 8: Student-t copula tail dependence coefficient.
+    λ_L = 2 × t_{ν+1}(-√((ν+1)(1-ρ)/(1+ρ)))
+    where ρ is pairwise correlation and ν is degrees of freedom.
+    Returns (tail_dep_max, tail_dep_matrix).
+    """
+    n = len(engine_order)
+
+    # Extract correlation matrix from covariance
+    diag = np.sqrt(np.maximum(np.diag(cov_matrix), 1e-10))
+    corr = cov_matrix / np.outer(diag, diag)
+    np.fill_diagonal(corr, 1.0)
+
+    tail_dep = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            rho = np.clip(corr[i, j], -0.999, 0.999)
+            arg = -np.sqrt((nu + 1) * (1 - rho) / (1 + rho))
+            # Student-t CDF: use scipy if available
+            lambda_L = 2.0 * student_t.cdf(arg, df=nu + 1)
+            tail_dep[i, j] = lambda_L
+            tail_dep[j, i] = lambda_L
+
+    tail_dep_max = float(np.max(tail_dep))
+
+    return tail_dep_max, tail_dep
+
+
+# ============================================================================
+# SECTION 16d: DPMM REGIME MODEL (Step 10)
+# ============================================================================
+
+def compute_dpmm_regime(regime_vector, state, alpha_dp=1.0, max_components=10):
+    """
+    Step 10: Dirichlet Process Mixture Model with truncated stick-breaking.
+    Online DPMM: V_k ~ Beta(1, α), π_k = V_k × Π_{j<k}(1-V_j)
+    Warm-starts from GMM centroids. New clusters form when observation
+    is far from all existing centroids (Mahalanobis distance > threshold).
+    Feature flag: dpmm_regime (opt-in, default False).
+    """
+    feature_order = ['TS', 'CH', 'VL', 'VS', 'CI', 'RS', 'CS', 'GR', 'BM_f', 'BEI']
+    x = np.array([regime_vector.get(f, 0.0) for f in feature_order])
+    n_features = len(feature_order)
+
+    # Load or warm-start state
+    centroids = state.get('dpmm_centroids', None)
+    counts = state.get('dpmm_counts', None)
+    stick_weights = state.get('dpmm_stick_weights', None)
+
+    if centroids is None:
+        # Warm start from GMM centroids
+        centroids = GMM_REGIME_CENTROIDS.tolist()
+        counts = [10.0] * len(REGIME_NAMES)  # pseudo-counts for warm start
+        stick_weights = [0.3, 0.2, 0.2, 0.15, 0.15]
+
+    centroids = [np.array(c) for c in centroids]
+    n_clusters = len(centroids)
+
+    # Compute distances to all existing centroids
+    distances = np.array([np.sqrt(np.sum((x - c) ** 2)) for c in centroids])
+
+    # Threshold for creating new cluster (adaptive based on mean inter-centroid distance)
+    if n_clusters >= 2:
+        inter_dists = []
+        for i in range(n_clusters):
+            for j in range(i + 1, n_clusters):
+                inter_dists.append(np.sqrt(np.sum((centroids[i] - centroids[j]) ** 2)))
+        threshold = np.mean(inter_dists) * 1.5
+    else:
+        threshold = 2.0
+
+    min_dist_idx = int(np.argmin(distances))
+    min_dist = distances[min_dist_idx]
+
+    # Assignment or new cluster creation
+    if min_dist > threshold and n_clusters < max_components:
+        # Create new cluster
+        centroids.append(x.copy())
+        counts.append(1.0)
+        assigned = n_clusters
+        n_clusters += 1
+        # Stick-breaking: add new weight from remaining mass
+        remaining = 1.0 - sum(stick_weights)
+        new_w = remaining * alpha_dp / (1.0 + alpha_dp)
+        stick_weights.append(max(new_w, 0.01))
+    else:
+        assigned = min_dist_idx
+        counts[assigned] += 1.0
+
+    # Online centroid update (learning rate decays with count)
+    lr = 1.0 / (counts[assigned] + 1.0)
+    centroids[assigned] = (1 - lr) * centroids[assigned] + lr * x
+
+    # Update stick-breaking weights based on counts
+    total_counts = sum(counts)
+    if total_counts > 0:
+        stick_weights = [c / total_counts for c in counts]
+
+    # Normalize to get regime probabilities
+    total_sw = sum(stick_weights)
+    if total_sw > 0:
+        probs = [w / total_sw for w in stick_weights]
+    else:
+        probs = [1.0 / n_clusters] * n_clusters
+
+    # Build regime_probs dict
+    regime_probs = {}
+    for k in range(n_clusters):
+        if k < len(REGIME_NAMES):
+            regime_probs[REGIME_NAMES[k]] = probs[k]
+        else:
+            regime_probs[f'DPMM_Cluster_{k}'] = probs[k]
+
+    # Store state
+    state['dpmm_centroids'] = [c.tolist() for c in centroids]
+    state['dpmm_counts'] = counts
+    state['dpmm_stick_weights'] = stick_weights
+
+    # Regime label: argmax
+    regime_label = max(regime_probs, key=regime_probs.get)
+
+    return regime_probs, regime_label, n_clusters
+
+
+# ============================================================================
 # SECTION 17: ORCHESTRATOR
 # ============================================================================
 
@@ -2467,21 +2970,40 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # [Phase 2a] Soft GMM Regime Classification
     regime_probs, _ = compute_soft_regime(regime_vector)
 
-    # [Phase 2b] EMA Smoothing for regime transitions
+    # [Phase 2b] EMA Smoothing for regime transitions (Step 4: HMM-style if enabled)
     state = load_meta_state(state_dir, symbol=symbol)
     regime_probs_prev = state.get('regime_probs_prev', None)
     regime_probs = smooth_regime_probs(regime_probs, regime_probs_prev)
     regime_label = max(regime_probs, key=regime_probs.get)  # argmax of smoothed π
     state['regime_probs_prev'] = regime_probs
 
+    # [Step 10] DPMM Regime (opt-in alternative)
+    dpmm_active = False
+    dpmm_n_clusters = len(REGIME_NAMES)
+    if _FF.dpmm_regime:
+        dpmm_probs, dpmm_label, dpmm_n_clusters = compute_dpmm_regime(regime_vector, state)
+        regime_probs = dpmm_probs
+        regime_label = dpmm_label
+        dpmm_active = True
+
     # [Phase 3c] Regime entropy for dynamic threshold
     regime_entropy = compute_regime_entropy(regime_probs)
 
-    # [P1 + Phase 2c] Engine Variance Estimates (with f_agreement, f_regime)
-    engine_variances = compute_all_engine_variances(scores_dict, dc_details, regime_label=regime_label)
+    # [P1 + Phase 2c + G1] Engine Variance Estimates (with native_var blending)
+    run_count = state.get('run_count', 0)
+    engine_variances = compute_all_engine_variances(
+        scores_dict, dc_details, regime_label=regime_label,
+        engine_details=engine_details, run_count=run_count
+    )
+
+    # [Step 9: MC-to-Composite Feedback (G3)] — widen valuation variance from MC spread
+    if _FF.mc_feedback and data.get('fundamentals'):
+        mc_spread = safe_float(data['fundamentals'].get('mc_iv_spread', 0))
+        if mc_spread > 0:
+            mc_uncertainty_mult = 1.0 + mc_spread / 100.0
+            engine_variances['valuation'] *= mc_uncertainty_mult
 
     # [Phase 3d] Cold-start σ inflation
-    run_count = state.get('run_count', 0)
     cold_start_mult = compute_cold_start_sigma_mult(run_count)
     if cold_start_mult > 1.0:
         engine_variances = {e: v * cold_start_mult for e, v in engine_variances.items()}
@@ -2499,7 +3021,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     shrinkage_w = compute_shrinkage_weight(run_count)
     state, realized_corr = update_realized_correlations(state, e_norm, shrinkage_weight=shrinkage_w)
 
-    save_meta_state(state, state_dir, symbol=symbol)
+    # NOTE: save_meta_state deferred to after coskewness/DPMM updates below
 
     # Layer 4: Dynamic Weights
     w_dynamic = compute_dynamic_weights(state['w0'], regime_vector)
@@ -2526,6 +3048,26 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     cov_matrix, engine_order = build_covariance_matrix(engine_variances_norm, correlation_matrix=corr_blended)
     sigma2_C = compute_composite_variance(w_dynamic, cov_matrix, engine_order)
     sigma_C = np.sqrt(sigma2_C)
+
+    # [Step 8: Student-t Copula] — inflate variance for tail dependence
+    tail_dep_max = 0.0
+    copula_nu = 5
+    if _FF.copula_tail_dep:
+        tail_dep_max, _tail_dep_matrix = compute_copula_tail_dependence(cov_matrix, engine_order, nu=copula_nu)
+        if tail_dep_max > 0.3:
+            sigma2_C *= (1 + 0.2 * tail_dep_max)
+            sigma_C = np.sqrt(sigma2_C)
+
+    # [Step 7: Coskewness Tensor] — compute composite skewness
+    composite_skewness = 0.0
+    p_positive_cf = 0.5
+    if _FF.coskewness_tensor:
+        state, composite_skewness, p_positive_cf = compute_coskewness_tensor(
+            state, e_norm, w_dynamic, sigma_C
+        )
+
+    # Save meta state (deferred from earlier to include coskewness/DPMM updates)
+    save_meta_state(state, state_dir, symbol=symbol)
 
     # [P3] Confidence-Adjusted Composite
     c_conf, p_positive, confidence_ratio = compute_confidence_adjusted_composite(c_raw, sigma2_C)
@@ -2666,6 +3208,31 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['risk_blend_alpha'] = round(float(risk_blend_alpha), 4)
     summary['cold_start_mult'] = round(float(cold_start_mult), 4)
     summary['shrinkage_weight'] = round(float(shrinkage_w), 4)
+
+    # Redesign summary fields
+    engines_list = ['trend', 'valuation', 'consensus', 'volatility',
+                    'macro', 'liquidity', 'global', 'correlation']
+    summary['data_stale'] = dc_details.get('data_stale', False)
+    summary['stale_days'] = dc_details.get('stale_days', 0)
+    summary['engine_native_var'] = {
+        eng: round(float(engine_details.get(eng, {}).get('native_var', 0.0)), 4)
+        for eng in engines_list
+    }
+    summary['engine_skewness'] = {
+        eng: round(float(engine_details.get(eng, {}).get('skewness', 0.0)), 4)
+        for eng in engines_list
+    }
+    summary['engine_kurtosis'] = {
+        eng: round(float(engine_details.get(eng, {}).get('kurtosis', 0.0)), 4)
+        for eng in engines_list
+    }
+    summary['composite_skewness'] = round(float(composite_skewness), 4)
+    summary['tail_dependence_max'] = round(float(tail_dep_max), 4)
+    summary['copula_nu'] = copula_nu
+    summary['garch_params'] = state.get('garch_params', {})
+    summary['regime_transition_used'] = bool(_FF.regime_transitions)
+    summary['dpmm_active'] = dpmm_active
+    summary['dpmm_n_clusters'] = dpmm_n_clusters
 
     # Composite adjustment chain — full auditability
     dc_cap = min(1.0, dc / 100.0)
