@@ -1549,8 +1549,9 @@ def smooth_regime_probs(regime_probs_new, regime_probs_prev, alpha=None):
     pi_prev = np.array([regime_probs_prev.get(r, 0.2) for r in REGIME_NAMES])
     pi_new = np.array([regime_probs_new.get(r, 0.2) for r in REGIME_NAMES])
 
-    if _FF.regime_transitions:
+    if _FF.regime_transitions and alpha < 1.0:
         # HMM-style: π_predict = T^T × π_prev, then update with observation
+        # Skipped when alpha=1.0 (pure observation passthrough)
         pi_predict = REGIME_TRANSITION_MATRIX.T @ pi_prev
         pi_predict = np.maximum(pi_predict, 1e-10)
         # Combine prediction with new observation (Bayesian update)
