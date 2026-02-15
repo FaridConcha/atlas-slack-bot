@@ -96,6 +96,7 @@ class FeatureFlags:
     tq_precision: bool = True                # E: 4dp TQ display
     engine_table_x100: bool = True           # F: Contribution column clarity
     ca_evidence: bool = True                 # Capital allocation evidence block
+    industry_priors: bool = True             # Stage 6: Industry prior system for missing data
     fundamentals_integrity: bool = True      # Stage 5.1: Null propagation for missing fundamentals
     canonical_suppression: bool = True       # Stage 5.1: ReportMode-based output suppression
     tq_canonical: bool = True                # Stage 5.1: Single canonical TQ formula
@@ -247,6 +248,44 @@ MOAT_PROTECTED_INDUSTRIES = {
 # Margin thresholds for "thin margins" narrative
 THIN_MARGIN_NET_THRESHOLD = 5.0    # NM < 5% → thin
 THIN_MARGIN_OP_THRESHOLD = 8.0     # OM < 8% → thin
+
+
+# ============================================================================
+# INDUSTRY PRIOR SYSTEM (Stage 6: G1)
+# ============================================================================
+
+@dataclass(frozen=True)
+class IndustryPrior:
+    """Structural prior for an industry when metric data is missing."""
+    bq_prior: float = 0.0       # Business quality baseline adjustment
+    moat_prior: float = 0.0     # Moat durability baseline adjustment
+    ca_prior: float = 0.0       # Capital allocation baseline adjustment
+    rationale: str = ''         # Human-readable justification
+
+
+INDUSTRY_PRIORS: Dict[str, IndustryPrior] = {
+    'Aerospace & Defense': IndustryPrior(
+        bq_prior=0.5, moat_prior=0.6, ca_prior=0.3,
+        rationale='Government contracts, program lock-in, high switching costs, certification barriers'),
+    'Utilities—Regulated': IndustryPrior(
+        bq_prior=0.4, moat_prior=0.5, ca_prior=0.2,
+        rationale='Regulated monopoly, guaranteed returns, high capital barriers'),
+    'Railroads': IndustryPrior(
+        bq_prior=0.5, moat_prior=0.7, ca_prior=0.3,
+        rationale='Duopoly structure, irreplaceable infrastructure, regulatory moat'),
+    'Drug Manufacturers—General': IndustryPrior(
+        bq_prior=0.4, moat_prior=0.5, ca_prior=0.2,
+        rationale='Patent protection, high R&D barriers, regulatory approval moat'),
+    'Banks—Diversified': IndustryPrior(
+        bq_prior=0.3, moat_prior=0.3, ca_prior=0.2,
+        rationale='Regulatory barriers, deposit base, network effects'),
+    'Semiconductors': IndustryPrior(
+        bq_prior=0.3, moat_prior=0.4, ca_prior=0.2,
+        rationale='High capital barriers, design IP, ecosystem lock-in'),
+}
+
+# Max absolute impact on 0-5 scale from industry prior
+PRIOR_CAP = 0.7
 
 
 # ============================================================================

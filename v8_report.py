@@ -17,6 +17,7 @@ from valuation_config import (
     THIN_MARGIN_OP_THRESHOLD, FRAGILITY_LOW_WACC, FRAGILITY_HIGH_TERMINAL_DEP,
     FRAGILITY_LOW_DATA_CONF, FRAGILITY_FLAT_MARGINS,
     BetaPath, SectorProvenance,
+    INDUSTRY_PRIORS, PRIOR_CAP,
 )
 
 
@@ -463,6 +464,18 @@ def _reconciliation_checks(summary, v8_data, v9_scores):
                 'detail': f'Contribution sum {c_sum:.2f} != composite_raw {composite_raw:.2f}'
             })
 
+    # G9: MOS build sum reconciliation
+    mos_build = v9_scores.get('mos_build', [])
+    required_mos = v9_scores.get('required_mos')
+    if mos_build and required_mos is not None:
+        build_sum = sum(item.get('adjustment', 0) for item in mos_build) / 100.0
+        if abs(build_sum - required_mos) > 0.01:
+            errors.append({
+                'check': 'MOS_BUILD_SUM',
+                'status': 'ERROR',
+                'detail': f'MOS build sum {build_sum:.4f} != required_mos {required_mos:.4f}'
+            })
+
     return errors
 
 
@@ -618,24 +631,76 @@ def _compute_v9_owner_scores(summary, v8_data):
 
     moat_durability = max(0, min(5, round(moat, 1)))
 
+    # --- G1: Industry Prior Application ---
+    industry = co.get('industry', '')
+    prior = INDUSTRY_PRIORS.get(industry) if CONFIG.flags.industry_priors else None
+    prior_audit = {'prior_applied': False, 'prior_value': 0, 'data_missing_fields': [], 'cap_applied': False}
+
+    # Count missing metric fields to determine prior weight
+    missing_fields = []
+    if fin.get('roe') is None: missing_fields.append('roe')
+    if fin.get('net_margin') is None: missing_fields.append('net_margin')
+    if fin.get('revenue_growth') is None: missing_fields.append('revenue_growth')
+    if fin.get('gross_margin') is None: missing_fields.append('gross_margin')
+    if fin.get('operating_margin') is None: missing_fields.append('operating_margin')
+    if fin.get('free_cash_flow') is None: missing_fields.append('free_cash_flow')
+
+    if prior and len(missing_fields) >= 2:
+        # Scale prior by missing data proportion (more missing = more prior weight)
+        prior_weight = min(1.0, len(missing_fields) / 6)
+
+        bq_adj = min(PRIOR_CAP, prior.bq_prior * prior_weight)
+        business_quality = max(0, min(5, round(bq + bq_adj, 1)))
+
+        moat_adj = min(PRIOR_CAP, prior.moat_prior * prior_weight)
+        moat_durability = max(0, min(5, round(moat + moat_adj, 1)))
+
+        ca_adj = min(PRIOR_CAP, prior.ca_prior * prior_weight)
+        # ca_adj applied after CA score computed below
+
+        prior_audit = {
+            'prior_applied': True,
+            'industry': industry,
+            'prior_value': {'bq': round(bq_adj, 2), 'moat': round(moat_adj, 2), 'ca': round(ca_adj, 2)},
+            'data_missing_fields': missing_fields,
+            'cap_applied': bq_adj >= PRIOR_CAP or moat_adj >= PRIOR_CAP,
+            'rationale': prior.rationale,
+        }
+    else:
+        ca_adj = 0
+
     # --- Capital Allocation Score (0-5) ---
     ca = 0.0
 
-    # ROIC proxy vs WACC proxy
-    roic_proxy = roe * (1 - de / (1 + de)) if de >= 0 and (1 + de) > 0 else roe
+    # G2: ROIC proxy vs WACC — handle missing ROE as "uncertain"
+    roe_available = fin.get('roe') is not None
+    roic_proxy = roe * (1 - de / (1 + de)) if roe_available and de >= 0 and (1 + de) > 0 else (roe if roe_available else None)
     wacc_proxy = 8.0  # Rough estimate
-    if roic_proxy > wacc_proxy * 2:
-        ca += 1.5
-    elif roic_proxy > wacc_proxy:
-        ca += 1.0
-    elif roic_proxy > 0:
-        ca += 0.3
 
-    # Buyback discipline
+    if roic_proxy is not None:
+        if roic_proxy > wacc_proxy * 2:
+            ca += 1.5
+        elif roic_proxy > wacc_proxy:
+            ca += 1.0
+        elif roic_proxy > 0:
+            ca += 0.3
+        # else: roic_proxy <= 0 — no credit, no penalty
+    else:
+        ca += 0.0  # Uncertain — no penalty for missing data
+        # roic_proxy remains None → "value creation uncertain"
+
+    # G3: Buyback discipline — includes IV-price check
     bb = _n(fin.get('buyback_yield'))
     fwd_pe = _n(fin.get('forward_pe'))
+    dcf_disabled = dcf.get('_dcf_disabled', False)
+    base_iv = dcf.get('base', 0) if not dcf_disabled else 0
+    is_value_creator = roic_proxy is not None and roic_proxy > wacc_proxy
     if bb > 0:
-        if fwd_pe > 0 and fwd_pe < 20:
+        if not is_value_creator:
+            pass  # buyback credit handled via ca_evidence, not raw score
+        elif base_iv > 0 and price > base_iv:
+            ca += 0.3  # POTENTIALLY_DESTRUCTIVE: buying back above IV
+        elif fwd_pe > 0 and fwd_pe < 20:
             ca += 1.0  # Buying back at reasonable valuation
         elif fwd_pe > 30:
             ca += 0.2  # Buying back at high valuation — questionable
@@ -665,6 +730,9 @@ def _compute_v9_owner_scores(summary, v8_data):
     if total_cash > total_debt:
         ca += 0.5
 
+    # Apply industry prior CA adjustment (G1)
+    if ca_adj > 0:
+        ca += ca_adj
     capital_allocation = max(0, min(5, round(ca, 1)))
 
     # --- Business Type Classification ---
@@ -717,6 +785,16 @@ def _compute_v9_owner_scores(summary, v8_data):
     if base_iv > 0 and price > base_iv * 1.5:
         perm_risks.append(("Severe overvaluation", "Medium",
             f"Price {price/base_iv:.1f}x intrinsic value — overpayment risk material"))
+    # G6: Missing data → "Uncertain" risk entries (not high risk, not absent)
+    if fin.get('debt_equity') is None:
+        perm_risks.append(("Leverage position", "Uncertain", "Debt/equity data unavailable — cannot assess leverage risk"))
+    if fin.get('interest_coverage') is None and fin.get('debt_equity') is not None and de > 1:
+        perm_risks.append(("Debt service capacity", "Uncertain", "Interest coverage unavailable — debt service risk unknown"))
+    if fin.get('revenue_growth') is None:
+        perm_risks.append(("Revenue trajectory", "Uncertain", "Revenue growth data unavailable — secular trends unknown"))
+    if fin.get('free_cash_flow') is None:
+        perm_risks.append(("Cash flow generation", "Uncertain", "FCF data unavailable — cash generation uncertain"))
+
     if not perm_risks:
         perm_risks.append(("General market risk", "Low", "Systemic drawdown exposure"))
 
@@ -780,7 +858,8 @@ def _compute_v9_owner_scores(summary, v8_data):
     conviction = max(0, min(100, round(conviction)))
 
     # IV confidence: LOW when terminal_pct >= extreme threshold
-    iv_confidence = 'LOW' if terminal_pct >= CONFIG.terminal.extreme_threshold else 'NORMAL'
+    # G10: Use severe_threshold (80%) not extreme_threshold (90%) — matches spec Section IV.3
+    iv_confidence = 'LOW' if terminal_pct >= CONFIG.terminal.severe_threshold else 'NORMAL'
 
     # P0: MOS semantics — explicit IV-basis and premium-to-IV fields
     # mos_iv_basis: (IV - Price) / IV — "discount from IV" (positive = undervalued)
@@ -791,46 +870,64 @@ def _compute_v9_owner_scores(summary, v8_data):
     # Price-based MOS for display (legacy: relative to price)
     mos_price_based = round((base_iv - price) / price * 100, 1) if price > 0 else 0
 
-    # --- Capital Allocation Evidence (Stage 5 + P5 fix) ---
+    # --- Capital Allocation Evidence (Stage 5 + P5 fix + G3 IV check + G4 completeness) ---
     ca_evidence = {}
     if CONFIG.flags.ca_evidence:
         wacc_proxy_used = dcf.get('assumptions', {}).get('discount_rate', 8) or 8
-        roic_proxy = roe * (1 - de / (1 + de)) if de >= 0 and (1 + de) > 0 else roe
-        is_value_creator = roic_proxy > wacc_proxy_used
+        # G2: Use the already-computed roic_proxy (handles None for missing ROE)
+        ca_roic = roic_proxy  # May be None if ROE missing
+        ca_is_value_creator = ca_roic is not None and ca_roic > wacc_proxy_used
 
-        # P5: Buyback discipline must account for value creation.
-        # If ROIC < WACC, buybacks destroy value regardless of PE level.
+        # G3: Buyback discipline must account for value creation AND IV-price check
         if bb > 0:
-            if not is_value_creator:
+            if ca_roic is None or not ca_is_value_creator:
                 buyback_discipline = 'DESTROYS_VALUE'  # P5: buybacks at any PE destroy value
+            elif base_iv > 0 and price > base_iv:
+                buyback_discipline = 'POTENTIALLY_DESTRUCTIVE'  # G3: IV < price → overpaying
             elif fwd_pe > 0 and fwd_pe < 20:
                 buyback_discipline = 'GOOD'
             elif fwd_pe > 30:
                 buyback_discipline = 'QUESTIONABLE'
             else:
                 buyback_discipline = 'ADEQUATE'
-        else:
+        elif bb == 0 and fin.get('buyback_yield') is not None:
             buyback_discipline = 'NONE'
+        else:
+            buyback_discipline = 'INSUFFICIENT_EVIDENCE'
 
         ca_evidence = {
-            'roic_proxy': round(roic_proxy, 2),
+            'roic_proxy': round(ca_roic, 2) if ca_roic is not None else None,
             'wacc_proxy': round(wacc_proxy_used, 2),
-            'roic_wacc_spread': round(roic_proxy - wacc_proxy_used, 2),
+            'roic_wacc_spread': round(ca_roic - wacc_proxy_used, 2) if ca_roic is not None else None,
             'buyback_yield': round(_n(fin.get('buyback_yield')), 2),
             'buyback_fwd_pe': round(fwd_pe, 1),
             'buyback_discipline': buyback_discipline,
             'reason_codes': [],
         }
-        if is_value_creator:
-            ca_evidence['reason_codes'].append('VALUE_CREATOR')
+        if ca_roic is not None:
+            if ca_is_value_creator:
+                ca_evidence['reason_codes'].append('VALUE_CREATOR')
+            else:
+                ca_evidence['reason_codes'].append('VALUE_DESTROYER')
         else:
-            ca_evidence['reason_codes'].append('VALUE_DESTROYER')
-        if bb > 0 and is_value_creator and fwd_pe > 0 and fwd_pe < 20:
+            ca_evidence['reason_codes'].append('ROIC_UNAVAILABLE')
+        if bb > 0 and ca_is_value_creator and fwd_pe > 0 and fwd_pe < 20:
             ca_evidence['reason_codes'].append('BUYBACK_DISCIPLINED')
-        elif bb > 0 and is_value_creator and fwd_pe > 30:
+        elif bb > 0 and ca_is_value_creator and fwd_pe > 30:
             ca_evidence['reason_codes'].append('BUYBACK_OVERPRICED')
-        elif bb > 0 and not is_value_creator:
+        elif bb > 0 and ca_is_value_creator and base_iv > 0 and price > base_iv:
+            ca_evidence['reason_codes'].append('BUYBACK_ABOVE_IV')
+        elif bb > 0 and not ca_is_value_creator:
             ca_evidence['reason_codes'].append('BUYBACK_VALUE_DESTRUCTIVE')
+
+        # G4: Data completeness field
+        ca_evidence['data_completeness'] = {
+            'roe_available': fin.get('roe') is not None,
+            'roic_method': 'proxy_from_roe' if roe_available else 'unavailable',
+            'buyback_available': fin.get('buyback_yield') is not None,
+            'fwd_pe_available': fin.get('forward_pe') is not None,
+            'debt_equity_available': fin.get('debt_equity') is not None,
+        }
 
     return {
         'business_quality': business_quality,
@@ -859,6 +956,7 @@ def _compute_v9_owner_scores(summary, v8_data):
         'fragility_score': fragility_score,
         'fragility_contributors': fragility_contributors,
         'ca_evidence': ca_evidence,
+        'prior_audit': prior_audit,
         '_data_status': data_status,
         '_dcf_disabled': dcf_disabled,
     }
@@ -992,7 +1090,22 @@ def _section_owner_assessment(summary, v8_data):
     else:
         why_bullets.append("Capital allocation: data insufficient to assess")
 
-    why_text = "\n".join(f"- {b}" for b in why_bullets[:3])
+    # G7: Moat narrative — evidence-gated
+    _prior_audit = v9.get('prior_audit', {})
+    if moat is not None:
+        if moat >= 3.5:
+            why_bullets.append(f"Moat durability {moat:.1f}/5 — structural competitive advantages present")
+        elif moat >= 2.0:
+            why_bullets.append(f"Moat durability {moat:.1f}/5 — moderate competitive position")
+        else:
+            if _prior_audit.get('prior_applied'):
+                why_bullets.append(f"Moat durability {moat:.1f}/5 — moat strength uncertain due to limited data (industry prior applied)")
+            else:
+                why_bullets.append(f"Moat durability {moat:.1f}/5 — limited evidence of durable competitive advantage")
+    else:
+        why_bullets.append("Moat durability: data insufficient to assess")
+
+    why_text = "\n".join(f"- {b}" for b in why_bullets[:4])
 
     # RISKS (3 bullets)
     risk_bullets = []

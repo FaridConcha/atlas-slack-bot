@@ -1795,6 +1795,7 @@ def _build_dcf(info, financials, sector=None):
                 'beta_raw': round(beta_raw, 2),
                 'beta_defaulted': beta_defaulted,
                 'beta_path': _beta_path.value,
+                'beta_source': 'yfinance_5y_monthly',  # G5: Document provider source
                 'beta_flags': beta_flags,
                 'cost_of_equity': round(cost_of_equity * 100, 2),
                 'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),
@@ -1819,6 +1820,9 @@ def _build_dcf(info, financials, sector=None):
                 # Growth & margin
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),
+                'margin_assumption': 'constant',  # G8: constant | mean_reverting | scenario_adjusted
+                'cash_flow_source': cash_flow_source,  # G8: fcf | net_income | ebitda
+                'cash_flow_haircut': 0.0 if cash_flow_source == 'fcf' else (0.25 if cash_flow_source == 'net_income' else 0.50),  # G8
                 'terminal_growth': round(terminal_growth * 100, 1),
                 # Terminal
                 'terminal_fcf': round(terminal_fcf, 0),

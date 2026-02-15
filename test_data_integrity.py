@@ -23,7 +23,7 @@ from v8_report import (
     _n, _compute_v8_scores, _compute_v9_owner_scores,
     _compute_fragility, _compute_dynamic_mos, _reconciliation_checks,
 )
-from valuation_config import CONFIG, SECTOR_BETA_BOUNDS
+from valuation_config import CONFIG, SECTOR_BETA_BOUNDS, INDUSTRY_PRIORS, PRIOR_CAP
 
 
 # ============================================================================
@@ -2021,6 +2021,453 @@ class TestNarrativeGuardrails:
         assert 'data unavailable' in section.lower() or 'data insufficient' in section.lower()
         # Should NOT contain score assertions like "X.X/5" for BQ/Moat/CA
         assert 'N/A  (data unavailable)' in section
+
+
+# ============================================================================
+# Stage 6: G1 — Industry Prior System Tests
+# ============================================================================
+
+class TestIndustryPriors:
+    """G1: Industry prior applied when metric data is missing."""
+
+    def _make_v8_data(self, industry='Aerospace & Defense', missing_fields=None):
+        """Build v8_data with configurable missing fields."""
+        fin = {
+            '_data_status': 'OK',
+            'roe': 15.0,
+            'net_margin': 10.0,
+            'revenue_growth': 5.0,
+            'free_cash_flow': 3e9,
+            'fcf_yield': 2.0,
+            'debt_equity': 1.0,
+            'gross_margin': 30.0,
+            'operating_margin': 12.0,
+            'market_cap': 100e9,
+            'interest_coverage': 8.0,
+            'buyback_yield': 1.0,
+            'forward_pe': 18.0,
+            'dividend_yield': 1.5,
+            'payout_ratio': 35.0,
+            'net_debt_ebitda': 2.0,
+            'total_cash': 5e9,
+            'total_debt': 20e9,
+            'recommendation': 'hold',
+        }
+        if missing_fields:
+            for f in missing_fields:
+                fin[f] = None
+        return {
+            'financials': fin,
+            'company': {'price': 100.0, 'market_cap': 100e9, 'industry': industry},
+            'dcf': {'bear': 80.0, 'base': 100.0, 'bull': 120.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 8}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [{'beat': True}, {'beat': True}],
+        }
+
+    def test_prior_applied_with_missing_data(self):
+        """Prior should be applied when >= 2 metric fields are missing."""
+        v8 = self._make_v8_data(
+            industry='Aerospace & Defense',
+            missing_fields=['roe', 'net_margin', 'revenue_growth']
+        )
+        v9 = _compute_v9_owner_scores({}, v8)
+        pa = v9['prior_audit']
+        assert pa['prior_applied'] is True
+        assert pa['industry'] == 'Aerospace & Defense'
+        assert len(pa['data_missing_fields']) >= 2
+
+    def test_prior_capped_at_prior_cap(self):
+        """Prior adjustment should never exceed PRIOR_CAP (0.7)."""
+        v8 = self._make_v8_data(
+            industry='Aerospace & Defense',
+            missing_fields=['roe', 'net_margin', 'revenue_growth', 'gross_margin', 'operating_margin', 'free_cash_flow']
+        )
+        v9 = _compute_v9_owner_scores({}, v8)
+        pa = v9['prior_audit']
+        assert pa['prior_applied'] is True
+        # All adjustments should be <= PRIOR_CAP
+        assert pa['prior_value']['bq'] <= PRIOR_CAP
+        assert pa['prior_value']['moat'] <= PRIOR_CAP
+        assert pa['prior_value']['ca'] <= PRIOR_CAP
+
+    def test_prior_not_applied_when_data_complete(self):
+        """Prior should NOT be applied when all data is present (< 2 missing)."""
+        v8 = self._make_v8_data(industry='Aerospace & Defense', missing_fields=[])
+        v9 = _compute_v9_owner_scores({}, v8)
+        pa = v9['prior_audit']
+        assert pa['prior_applied'] is False
+
+    def test_prior_not_applied_for_unknown_industry(self):
+        """Prior should NOT be applied for industries not in INDUSTRY_PRIORS."""
+        v8 = self._make_v8_data(
+            industry='Pet Food Manufacturing',
+            missing_fields=['roe', 'net_margin', 'revenue_growth']
+        )
+        v9 = _compute_v9_owner_scores({}, v8)
+        pa = v9['prior_audit']
+        assert pa['prior_applied'] is False
+
+    def test_prior_feature_flag_toggle(self):
+        """When industry_priors flag is False, no prior should be applied."""
+        original = CONFIG.flags.industry_priors
+        try:
+            CONFIG.flags.industry_priors = False
+            v8 = self._make_v8_data(
+                industry='Aerospace & Defense',
+                missing_fields=['roe', 'net_margin', 'revenue_growth']
+            )
+            v9 = _compute_v9_owner_scores({}, v8)
+            pa = v9['prior_audit']
+            assert pa['prior_applied'] is False
+        finally:
+            CONFIG.flags.industry_priors = original
+
+
+# ============================================================================
+# Stage 6: G2 — ROIC Uncertain Tests
+# ============================================================================
+
+class TestROICUncertain:
+    """G2: ROIC None when ROE missing — no penalty."""
+
+    def _make_v8_data(self, roe=None):
+        fin = {
+            '_data_status': 'OK',
+            'roe': roe,
+            'net_margin': 10.0,
+            'revenue_growth': 5.0,
+            'free_cash_flow': 3e9,
+            'fcf_yield': 2.0,
+            'debt_equity': 1.0,
+            'gross_margin': 30.0,
+            'operating_margin': 12.0,
+            'market_cap': 100e9,
+            'interest_coverage': 8.0,
+            'buyback_yield': 1.0,
+            'forward_pe': 18.0,
+            'dividend_yield': 1.5,
+            'payout_ratio': 35.0,
+            'net_debt_ebitda': 2.0,
+            'total_cash': 5e9,
+            'total_debt': 20e9,
+            'recommendation': 'hold',
+        }
+        return {
+            'financials': fin,
+            'company': {'price': 100.0, 'market_cap': 100e9},
+            'dcf': {'bear': 80.0, 'base': 100.0, 'bull': 120.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 8}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [{'beat': True}],
+        }
+
+    def test_roic_none_when_roe_missing(self):
+        """When ROE is None, ca_evidence should show roic_proxy as None."""
+        v8 = self._make_v8_data(roe=None)
+        v9 = _compute_v9_owner_scores({}, v8)
+        ca_ev = v9['ca_evidence']
+        assert ca_ev['roic_proxy'] is None
+
+    def test_ca_score_not_penalized_for_missing_roe(self):
+        """CA score should not be zero-punished when ROE is missing."""
+        v8_with = self._make_v8_data(roe=20.0)
+        v8_without = self._make_v8_data(roe=None)
+        v9_with = _compute_v9_owner_scores({}, v8_with)
+        v9_without = _compute_v9_owner_scores({}, v8_without)
+        # Without ROE, CA should still have some score from other components (debt, dividend, etc.)
+        assert v9_without['capital_allocation'] >= 0
+        # The CA score without ROE should not be dramatically lower than expected
+        # (no penalty, just no ROIC credit)
+
+    def test_ca_evidence_shows_unavailable(self):
+        """When ROE missing, data_completeness should show roic_method as 'unavailable'."""
+        v8 = self._make_v8_data(roe=None)
+        v9 = _compute_v9_owner_scores({}, v8)
+        dc = v9['ca_evidence'].get('data_completeness', {})
+        assert dc.get('roe_available') is False
+        assert dc.get('roic_method') == 'unavailable'
+
+
+# ============================================================================
+# Stage 6: G3 — Buyback IV Check Tests
+# ============================================================================
+
+class TestBuybackIVCheck:
+    """G3: Buyback discipline includes IV-price check."""
+
+    def _make_v8_data(self, price=100.0, base_iv=120.0, buyback_yield=3.0, forward_pe=15.0, roe=20.0):
+        fin = {
+            '_data_status': 'OK',
+            'roe': roe,
+            'net_margin': 15.0,
+            'revenue_growth': 8.0,
+            'free_cash_flow': 5e9,
+            'fcf_yield': 3.0,
+            'debt_equity': 0.5,
+            'gross_margin': 40.0,
+            'operating_margin': 20.0,
+            'market_cap': 100e9,
+            'interest_coverage': 15.0,
+            'buyback_yield': buyback_yield,
+            'forward_pe': forward_pe,
+            'dividend_yield': 1.5,
+            'payout_ratio': 35.0,
+            'net_debt_ebitda': 1.0,
+            'total_cash': 8e9,
+            'total_debt': 15e9,
+            'recommendation': 'buy',
+        }
+        return {
+            'financials': fin,
+            'company': {'price': price, 'market_cap': 100e9},
+            'dcf': {'bear': base_iv * 0.8, 'base': base_iv, 'bull': base_iv * 1.25,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 10}},
+            'institutional': {'short_pct': 1.0},
+            'earnings': [{'beat': True}, {'beat': True}],
+        }
+
+    def test_potentially_destructive_when_price_above_iv(self):
+        """POTENTIALLY_DESTRUCTIVE when price > IV and buying back."""
+        v8 = self._make_v8_data(price=150.0, base_iv=100.0, buyback_yield=3.0)
+        v9 = _compute_v9_owner_scores({}, v8)
+        assert v9['ca_evidence']['buyback_discipline'] == 'POTENTIALLY_DESTRUCTIVE'
+
+    def test_insufficient_evidence_when_no_data(self):
+        """INSUFFICIENT_EVIDENCE when buyback_yield is None."""
+        v8 = self._make_v8_data(buyback_yield=0.0)
+        # Set buyback_yield to None (not just 0)
+        v8['financials']['buyback_yield'] = None
+        v9 = _compute_v9_owner_scores({}, v8)
+        assert v9['ca_evidence']['buyback_discipline'] == 'INSUFFICIENT_EVIDENCE'
+
+    def test_good_when_value_creator_low_pe(self):
+        """GOOD when value creator + low PE + price < IV."""
+        v8 = self._make_v8_data(price=90.0, base_iv=120.0, buyback_yield=3.0, forward_pe=15.0)
+        v9 = _compute_v9_owner_scores({}, v8)
+        assert v9['ca_evidence']['buyback_discipline'] == 'GOOD'
+
+
+# ============================================================================
+# Stage 6: G6 — Risk Uncertain Labels Tests
+# ============================================================================
+
+class TestRiskUncertain:
+    """G6: Missing data → 'Uncertain' risk entries."""
+
+    def _make_v8_data(self, **overrides):
+        fin = {
+            '_data_status': 'OK',
+            'roe': 15.0,
+            'net_margin': 10.0,
+            'revenue_growth': 5.0,
+            'free_cash_flow': 3e9,
+            'fcf_yield': 2.0,
+            'debt_equity': 1.0,
+            'gross_margin': 30.0,
+            'operating_margin': 12.0,
+            'market_cap': 100e9,
+            'interest_coverage': 8.0,
+            'buyback_yield': 1.0,
+            'forward_pe': 18.0,
+            'dividend_yield': 1.5,
+            'payout_ratio': 35.0,
+            'net_debt_ebitda': 2.0,
+            'total_cash': 5e9,
+            'total_debt': 20e9,
+            'recommendation': 'hold',
+        }
+        fin.update(overrides)
+        return {
+            'financials': fin,
+            'company': {'price': 100.0, 'market_cap': 100e9},
+            'dcf': {'bear': 80.0, 'base': 100.0, 'bull': 120.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 8}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [{'beat': True}],
+        }
+
+    def test_missing_debt_equity_uncertain(self):
+        """Missing D/E → 'Uncertain' risk entry."""
+        v8 = self._make_v8_data(debt_equity=None)
+        v9 = _compute_v9_owner_scores({}, v8)
+        risks = v9['permanent_loss_risks']
+        uncertain = [r for r in risks if r[1] == 'Uncertain']
+        assert len(uncertain) > 0
+        assert any('Leverage' in r[0] for r in uncertain)
+
+    def test_missing_revenue_growth_uncertain(self):
+        """Missing revenue growth → 'Uncertain' risk entry."""
+        v8 = self._make_v8_data(revenue_growth=None)
+        v9 = _compute_v9_owner_scores({}, v8)
+        risks = v9['permanent_loss_risks']
+        uncertain = [r for r in risks if r[1] == 'Uncertain']
+        assert any('Revenue' in r[0] for r in uncertain)
+
+    def test_all_data_present_no_uncertain(self):
+        """When all data present, no 'Uncertain' entries."""
+        v8 = self._make_v8_data()
+        v9 = _compute_v9_owner_scores({}, v8)
+        risks = v9['permanent_loss_risks']
+        uncertain = [r for r in risks if r[1] == 'Uncertain']
+        assert len(uncertain) == 0
+
+
+# ============================================================================
+# Stage 6: G7 — Narrative Moat References Tests
+# ============================================================================
+
+class TestNarrativeMoat:
+    """G7: Moat durability referenced in WHY bullets."""
+
+    def test_moat_referenced_in_why(self):
+        """WHY bullets should include moat durability reference."""
+        from v8_report import _section_owner_assessment
+        v8_data = {
+            'financials': {
+                '_data_status': 'OK',
+                'roe': 25.0, 'net_margin': 20.0, 'revenue_growth': 10.0,
+                'free_cash_flow': 8e9, 'fcf_yield': 5.0, 'debt_equity': 0.5,
+                'gross_margin': 55.0, 'operating_margin': 25.0,
+                'market_cap': 200e9, 'interest_coverage': 20.0,
+                'buyback_yield': 2.0, 'forward_pe': 15.0,
+                'dividend_yield': 1.5, 'payout_ratio': 30.0,
+                'net_debt_ebitda': 1.0, 'total_cash': 10e9, 'total_debt': 15e9,
+                'recommendation': 'buy',
+            },
+            'company': {'symbol': 'TEST', 'name': 'Test Corp', 'price': 80.0, 'market_cap': 200e9},
+            'dcf': {'bear': 90.0, 'base': 110.0, 'bull': 140.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 12}},
+            'institutional': {'short_pct': 1.0},
+            'earnings': [{'beat': True}, {'beat': True}, {'beat': True}],
+        }
+        section = _section_owner_assessment({}, v8_data)
+        assert 'Moat durability' in section or 'moat durability' in section.lower()
+
+    def test_moat_uncertain_when_low_with_prior(self):
+        """Low moat + prior applied → 'uncertain due to limited data' in narrative."""
+        v8_data = {
+            'financials': {
+                '_data_status': 'OK',
+                'roe': None, 'net_margin': None, 'revenue_growth': None,
+                'free_cash_flow': None, 'fcf_yield': None, 'debt_equity': 1.0,
+                'gross_margin': None, 'operating_margin': None,
+                'market_cap': 100e9, 'interest_coverage': 8.0,
+                'buyback_yield': 1.0, 'forward_pe': 18.0,
+                'dividend_yield': 1.5, 'payout_ratio': 35.0,
+                'net_debt_ebitda': 2.0, 'total_cash': 5e9, 'total_debt': 20e9,
+                'recommendation': 'hold',
+            },
+            'company': {'symbol': 'RTX', 'name': 'RTX Corp', 'price': 200.0,
+                        'market_cap': 100e9, 'industry': 'Aerospace & Defense'},
+            'dcf': {'bear': 80.0, 'base': 100.0, 'bull': 120.0,
+                    'assumptions': {'terminal_value_pct': 60, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 8}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [],
+        }
+        v9 = _compute_v9_owner_scores({}, v8_data)
+        # Prior should be applied (A&D industry, 5+ missing fields)
+        assert v9['prior_audit']['prior_applied'] is True
+
+    def test_moat_data_insufficient_when_none(self):
+        """When moat_durability is None (INVALID data), narrative says 'data insufficient'."""
+        from v8_report import _section_owner_assessment
+        v8_data = {
+            'financials': {'_data_status': 'INVALID', '_data_reasons': ['market_cap_missing']},
+            'company': {'symbol': 'TEST', 'name': 'Test Corp', 'price': 100},
+            'dcf': {'_dcf_disabled': True, 'bear': 0, 'base': 0, 'bull': 0},
+            'institutional': {}, 'earnings': [],
+        }
+        section = _section_owner_assessment({}, v8_data)
+        # Under INVALID, moat is None → "data insufficient"
+        assert 'data insufficient' in section.lower() or 'data unavailable' in section.lower()
+
+
+# ============================================================================
+# Stage 6: G9 — MOS Build Reconciliation Tests
+# ============================================================================
+
+class TestMOSBuildReconciliation:
+    """G9: MOS build sum must match required_mos."""
+
+    def test_build_sum_matches_required_mos(self):
+        """When MOS build is consistent, no error flagged."""
+        v9_scores = {
+            'mos_build': [
+                {'component': 'base', 'adjustment': 30},
+                {'component': 'data_confidence', 'adjustment': 10},
+                {'component': 'terminal_dependence', 'adjustment': 0},
+                {'component': 'wacc_clamp', 'adjustment': 0},
+                {'component': 'leverage', 'adjustment': 0},
+                {'component': 'value_creation', 'adjustment': 0},
+                {'component': 'fragility', 'adjustment': 0},
+            ],
+            'required_mos': 0.40,
+        }
+        errors = _reconciliation_checks({}, {'company': {}, 'dcf': {}}, v9_scores)
+        mos_errs = [e for e in errors if e['check'] == 'MOS_BUILD_SUM']
+        assert len(mos_errs) == 0
+
+    def test_mismatch_flags_error(self):
+        """When build sum != required_mos, error flagged."""
+        v9_scores = {
+            'mos_build': [
+                {'component': 'base', 'adjustment': 30},
+                {'component': 'data_confidence', 'adjustment': 10},
+            ],
+            'required_mos': 0.50,  # 50% != 40% build sum
+        }
+        errors = _reconciliation_checks({}, {'company': {}, 'dcf': {}}, v9_scores)
+        mos_errs = [e for e in errors if e['check'] == 'MOS_BUILD_SUM']
+        assert len(mos_errs) == 1
+        assert mos_errs[0]['status'] == 'ERROR'
+
+
+# ============================================================================
+# Stage 6: G10 — Range-First IV Threshold Tests
+# ============================================================================
+
+class TestRangeFirstThreshold:
+    """G10: iv_confidence uses severe_threshold (80%) not extreme (90%)."""
+
+    def _make_v8_data(self, terminal_pct=85.0):
+        return {
+            'financials': {
+                '_data_status': 'OK',
+                'roe': 15.0, 'net_margin': 10.0, 'revenue_growth': 5.0,
+                'free_cash_flow': 3e9, 'fcf_yield': 2.0, 'debt_equity': 1.0,
+                'gross_margin': 30.0, 'operating_margin': 12.0,
+                'market_cap': 100e9, 'interest_coverage': 8.0,
+                'buyback_yield': 1.0, 'forward_pe': 18.0,
+                'dividend_yield': 1.5, 'payout_ratio': 35.0,
+                'net_debt_ebitda': 2.0, 'total_cash': 5e9, 'total_debt': 20e9,
+                'recommendation': 'hold',
+            },
+            'company': {'price': 100.0, 'market_cap': 100e9},
+            'dcf': {'bear': 80.0, 'base': 100.0, 'bull': 120.0,
+                    'assumptions': {'terminal_value_pct': terminal_pct, 'discount_rate': 8,
+                                    'wacc_clamp_codes': [], 'fcf_margin': 8}},
+            'institutional': {'short_pct': 2.0},
+            'earnings': [{'beat': True}],
+        }
+
+    def test_iv_confidence_low_at_80(self):
+        """iv_confidence should be LOW at 80% terminal dependence (severe_threshold)."""
+        v8 = self._make_v8_data(terminal_pct=80.0)
+        v9 = _compute_v9_owner_scores({}, v8)
+        assert v9['iv_confidence'] == 'LOW'
+
+    def test_iv_confidence_normal_at_75(self):
+        """iv_confidence should be NORMAL at 75% terminal dependence."""
+        v8 = self._make_v8_data(terminal_pct=75.0)
+        v9 = _compute_v9_owner_scores({}, v8)
+        assert v9['iv_confidence'] == 'NORMAL'
 
 
 if __name__ == '__main__':

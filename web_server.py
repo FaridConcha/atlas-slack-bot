@@ -129,6 +129,7 @@ a{color:var(--acc);text-decoration:none}
 .pill-neg{background:rgba(248,81,73,.15);color:var(--neg)}
 .pill-warn{background:rgba(210,153,34,.15);color:var(--warn)}
 .pill-muted{background:var(--bg2);color:var(--t2)}
+.pill-uncertain{background:rgba(150,150,150,0.15);color:#999}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t3);padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap}
 th:hover{color:var(--t2)}
@@ -509,7 +510,7 @@ if(V9.v9_decision){
     h += '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">';
     h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Permanent Loss Risks</div>';
     for(var i=0;i<plr.length&&i<4;i++){
-      var rC = plr[i][1]==='High'?'neg':plr[i][1]==='Medium'?'warn':'muted';
+      var rC = plr[i][1]==='High'?'neg':plr[i][1]==='Medium'?'warn':plr[i][1]==='Uncertain'?'uncertain':'muted';
       h += '<div style="font-size:12px;padding:3px 0"><span class="pill pill-'+rC+'" style="font-size:10px;min-width:50px;text-align:center">'+plr[i][1]+'</span> <span style="font-weight:500">'+plr[i][0]+'</span> <span class="muted"> &mdash; '+plr[i][2]+'</span></div>';
     }
     h += '</div>';
@@ -1185,6 +1186,23 @@ if(DCF && DCF.assumptions){
   }
   h += '</div>';
   h += '</div>'; // end g2
+
+  // Industry Prior Audit (G1)
+  var pa = V9.prior_audit || {};
+  if(pa.prior_applied){
+    h += '<div class="card" style="margin-top:12px">';
+    h += '<h2>Industry Prior Applied</h2>';
+    h += '<div class="g4" style="font-size:11px">';
+    h += '<div><div class="lbl" style="font-size:9px;color:var(--t3);text-transform:uppercase">Industry</div><div>'+pa.industry+'</div></div>';
+    h += '<div><div class="lbl" style="font-size:9px;color:var(--t3);text-transform:uppercase">BQ Adj</div><div class="mono pos">+'+f(pa.prior_value.bq,2)+'</div></div>';
+    h += '<div><div class="lbl" style="font-size:9px;color:var(--t3);text-transform:uppercase">Moat Adj</div><div class="mono pos">+'+f(pa.prior_value.moat,2)+'</div></div>';
+    h += '<div><div class="lbl" style="font-size:9px;color:var(--t3);text-transform:uppercase">CA Adj</div><div class="mono pos">+'+f(pa.prior_value.ca,2)+'</div></div>';
+    h += '</div>';
+    h += '<div style="font-size:11px;margin-top:8px">Missing fields: <span class="mono">'+pa.data_missing_fields.join(', ')+'</span></div>';
+    h += '<div style="font-size:11px">Cap applied: '+(pa.cap_applied?'<span class="warn">Yes</span>':'No')+'</div>';
+    h += '<div style="font-size:10px;color:var(--t3);margin-top:4px;font-style:italic">Rationale: '+pa.rationale+'</div>';
+    h += '</div>';
+  }
 }
 
 // ════════════════════════════════════════════════════
