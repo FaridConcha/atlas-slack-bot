@@ -271,7 +271,7 @@ After Slack report formatting, the full analysis payload is persisted to SQLite 
    - **Sortable tables**: peer comparison (6 peers with forward PE, margins, growth, ROE) and engine detail (8 engines with scores, weights, contributions)
    - **News & sentiment** section with publisher and sentiment badges
    - **"Show Your Work"** collapsible section: V12 decision hierarchy derivation (5-step gate logic), composite derivation formula, risk governor gate calculation, trade quality computation, and computed-vs-reported delta warnings
-   - **Provenance footer**: engine version (ATLAS V12), data confidence, timestamp, data mode
+   - **Provenance footer**: engine version (ATLAS V12+), data confidence, timestamp, data mode
    - **Design system**: GitHub-dark palette (`#06090f` background), Inter + JetBrains Mono typography, CSS custom properties for theming
 
 4. **Web server hardening** (Stage 1, v3.1) — `web_server.py` includes:
@@ -363,7 +363,7 @@ This function is used throughout `data_fetcher.py` and `v8_data.py`, replacing t
 
 ### 2.8 V9 Owner Intelligence Layer
 
-ATLAS V12 adds a Buffett-aligned owner intelligence layer on top of the existing V8 quantitative engine. The V8 engine (11 layers, 8 scoring engines, regime classification, meta-learning) remains unchanged. V9 operates entirely in the report layer (`v8_report.py`) and prompt layer (`gemini_qa.py`), computing owner-oriented scores from the same data the quant engine already produces.
+ATLAS V12+ adds a Buffett-aligned owner intelligence layer on top of the existing V8 quantitative engine. The V8 engine (11 layers, 8 scoring engines, regime classification, meta-learning) remains unchanged. V9 operates entirely in the report layer (`v8_report.py`) and prompt layer (`gemini_qa.py`), computing owner-oriented scores from the same data the quant engine already produces.
 
 **Philosophy:** V9 treats every equity as a partial business ownership stake. The primary question is not "Will the price go up?" but "Would a rational business owner buy this entire business at this price?" This reframes the analysis from trading signals to capital allocation decisions.
 
@@ -576,7 +576,7 @@ Atlas Engine uses prompting exclusively. No fine-tuned models are deployed.
 **System prompt design (gemini_qa.py):**
 
 V12 replaces the generic financial analyst prompt with a Buffett-aligned philosophy prompt:
-- Role anchoring: "ATLAS V12 — Capital Allocation Intelligence. Think like Warren Buffett's research analyst."
+- Role anchoring: "ATLAS V12+ — Capital Allocation Intelligence. Think like Warren Buffett's research analyst."
 - Reasoning order enforcement: "Always reason in this order: (1) Is this a good business? (2) Does it have a durable moat? (3) Is management allocating capital wisely? (4) What is the intrinsic value? (5) What are the permanent loss risks? (6) Only then consider price and timing."
 - Decision framework: "Use V12 decisions: PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT"
 - Owner mindset: "Treat every stock as a partial business ownership stake"
@@ -853,7 +853,7 @@ Atlas wakes up and posts a progress sequence (updated in-place):
 Phase 1: Analysis Request
 ──────────────────────────
 (If already warm, user sees standard acknowledgment):
-    ⚙️ Running ATLAS V12 on *AAPL*... pulling live data & building owner assessment + full report
+    ⚙️ Running ATLAS V12+ on *AAPL*... pulling live data & building owner assessment + full report
 
 15-20 seconds later, Atlas posts a summary message + 11 threaded sections.
 First message includes a hyperlink to the full web dashboard.
@@ -861,13 +861,13 @@ First message includes a hyperlink to the full web dashboard.
 Phase 2: Report Consumption
 ──────────────────────────
 User reads the Owner Assessment first:
-    🏛️ ATLAS V12 — OWNER ASSESSMENT — AAPL (Apple Inc.)
+    🏛️ ATLAS V12+ — OWNER ASSESSMENT — AAPL (Apple Inc.)
     Decision: BUY — Meets all quality gates with adequate margin of safety
     Business Quality: ★★★★☆ | Moat: ★★★☆☆ | Capital Allocation: ★★★★☆
     MOS: +2.9% | Conviction: 72/100
 
 Then the engine verdict section:
-    📊 ATLAS V12 — AAPL (Apple Inc.)
+    📊 ATLAS V12+ — AAPL (Apple Inc.)
     Signal: BUY | Composite: +42.3 | TQ: 0.456 (NORMAL)
     Regime: Calm | Reliability: 87%
 
@@ -1787,10 +1787,10 @@ Atlas Engine in its current form does not process EU personal data. However, if 
 
 **System prompt (Q&A module — V9 Buffett-aligned):**
 ```
-You are ATLAS V12 — Capital Allocation Intelligence.
+You are ATLAS V12+ — Capital Allocation Intelligence.
 Think like Warren Buffett's research analyst.
 
-You have access to the ATLAS V12 analysis. The V12 OWNER ASSESSMENT is your primary
+You have access to the ATLAS V12+ analysis. The V12+ OWNER ASSESSMENT is your primary
 framework. The ENGINE VERDICT is a secondary tactical overlay.
 
 Reasoning order (always follow this):
@@ -1813,7 +1813,7 @@ Rules:
 
 **Context injection template:**
 ```
-📊 ATLAS V12 Analysis for {SYMBOL} ({COMPANY_NAME})
+📊 ATLAS V12+ Analysis for {SYMBOL} ({COMPANY_NAME})
 
 --- V9 OWNER ASSESSMENT ---
 Decision: {V9_DECISION} — {DECISION_REASON}
@@ -1861,12 +1861,12 @@ Remember: Only use data from the analysis. Be specific and cite numbers.
 
 **Analysis acknowledgment:**
 ```
-⚙️ Running ATLAS V12 on *{TICKER}*... pulling live data & building owner assessment + full report
+⚙️ Running ATLAS V12+ on *{TICKER}*... pulling live data & building owner assessment + full report
 ```
 
 **Analysis completion:**
 ```
-✅ ATLAS V12 complete for *{TICKER}*
+✅ ATLAS V12+ complete for *{TICKER}*
 💬 Reply in this thread to ask follow-up questions.
 ```
 
@@ -2075,7 +2075,7 @@ type `@atlas {REQUESTED_TICKER}` in any channel.
 
 ```
 ═══════════════════════════════════════════════════════════════════
-  ATLAS V12 QUERY LIFECYCLE TRACE — @atlas AAPL
+  ATLAS V12+ QUERY LIFECYCLE TRACE — @atlas AAPL
   Timestamp: 2026-02-12T09:15:32.456Z
 ═══════════════════════════════════════════════════════════════════
 
@@ -2092,7 +2092,7 @@ T+5ms     TICKER_PARSED
           ticker: "AAPL"
 
 T+50ms    ACKNOWLEDGMENT_POSTED
-          message: "⚙️ Running ATLAS V12 on *AAPL*..."
+          message: "⚙️ Running ATLAS V12+ on *AAPL*..."
           thread_ts: "1707732932.456000"
 
 T+100ms   DATA_FETCH_START
@@ -2314,6 +2314,6 @@ T+123000ms  CACHE_UPDATE
 
 ---
 
-*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. Version 3.0 was updated on February 14, 2026, documenting: ATLAS V12 Buffett-aligned owner intelligence layer (business quality, moat durability, capital allocation scoring), intrinsic value and margin of safety computation, V12 decision hierarchy (PASS/WATCH/RESEARCH/BUY/HOLD/TRIM/EXIT), conviction scoring with position sizing, permanent loss risk identification, engine conflict protocol, temperament module, Buffett-aligned Q&A system prompt, Owner Assessment section in Slack reports (11 sections total), Owner's View card on web dashboard, and updated line counts (7,316 lines total). Version 3.1 was updated on February 14, 2026 (commit d56f37a), documenting Stage 1 Hardening: web server security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy) and GZip compression middleware; report ID input validation at web server and storage layers; robots.txt route; removal of raw JSON API endpoint; API key redaction from logs; user question sanitization (control character stripping, 500-char limit); LLM output sanitization (Slack broadcast mention stripping) in gemini_qa.py, bot.py, and narrative generation; 30-day TTL cleanup for web reports in SQLite; per-user 60-second rate limiting on analysis requests; removal of unused `import os` and narrowing of bare `except:` to `except (ValueError, TypeError):` in atlas_engine.py; removal of dead `_pct_return()` function from v8_data.py; addition of `*.db` patterns to .gitignore; and creation of .github/dependabot.yml for weekly pip dependency updates. Zero engine math, scoring, or trading logic was modified. All changes across 8 files (119 insertions, 29 deletions). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality.*
+*Version 2.0 was generated on February 12, 2026 (commit 528780d). Version 2.1 was updated on February 13, 2026, documenting: web report dashboard (web_report.py, web_server.py), cold-start boot detection, graceful shutdown notification, resolve_price() fallback chain, and updated architecture diagrams. Version 3.0 was updated on February 14, 2026, documenting: ATLAS V12 Buffett-aligned owner intelligence layer (business quality, moat durability, capital allocation scoring), intrinsic value and margin of safety computation, V12 decision hierarchy (PASS/WATCH/RESEARCH/BUY/HOLD/TRIM/EXIT), conviction scoring with position sizing, permanent loss risk identification, engine conflict protocol, temperament module, Buffett-aligned Q&A system prompt, Owner Assessment section in Slack reports (11 sections total), Owner's View card on web dashboard, and updated line counts (7,316 lines total). Version 3.1 was updated on February 14, 2026 (commit d56f37a), documenting Stage 1 Hardening: web server security headers (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy) and GZip compression middleware; report ID input validation at web server and storage layers; robots.txt route; removal of raw JSON API endpoint; API key redaction from logs; user question sanitization (control character stripping, 500-char limit); LLM output sanitization (Slack broadcast mention stripping) in gemini_qa.py, bot.py, and narrative generation; 30-day TTL cleanup for web reports in SQLite; per-user 60-second rate limiting on analysis requests; removal of unused `import os` and narrowing of bare `except:` to `except (ValueError, TypeError):` in atlas_engine.py; removal of dead `_pct_return()` function from v8_data.py; addition of `*.db` patterns to .gitignore; and creation of .github/dependabot.yml for weekly pip dependency updates. Zero engine math, scoring, or trading logic was modified. All changes across 8 files (119 insertions, 29 deletions). All architectural descriptions reflect the current production implementation. Sections marked as recommendations or roadmap items represent proposed enhancements, not current functionality. Version 4.0 was updated on February 14, 2026, documenting: ATLAS V12+ Mathematical Redesign — probabilistic engine framework (per-engine variance estimates, 8x8 covariance matrix with PSD enforcement, confidence-adjusted composite, quadratic interaction terms, smooth sigmoid decision mapping, Kelly-inspired position sizing), Monte Carlo DCF (N=1000 vectorized numpy simulations with Cholesky-decorrelated draws, AR(1) growth paths, correlated margin/wacc/terminal_g shocks, P5/P50/P95 percentile scenarios replacing deterministic bear/base/bull, sensitivity analysis via central finite differences), web dashboard panels (MC distribution, sensitivity table, signal confidence, Kelly sizing), 61 new tests (238 total), and updated version strings across all files (8,600+ lines total).*
 
 *Where specific implementation details were not directly observable in the codebase, reasonable architectural assumptions have been made and are labeled accordingly throughout the document.*

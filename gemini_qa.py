@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ATLAS V12 — Groq AI Follow-Up Q&A Module
+ATLAS V12+ — Groq AI Follow-Up Q&A Module
 Handles conversational follow-up questions in ATLAS report threads
 using Groq (Llama 3.3 70B, free tier — 30 RPM).
 
-V12 upgrade: Buffett-aligned reasoning order — business durability first,
+V12+ upgrade: Buffett-aligned reasoning order — business durability first,
 intrinsic value second, margin of safety third, then regime/timing last.
 """
 
@@ -20,7 +20,7 @@ _last_call_time = 0
 _MIN_CALL_INTERVAL = 3  # seconds between calls (free tier: 30 RPM)
 _MAX_RETRIES = 2        # retry on 429 with backoff
 
-SYSTEM_PROMPT = """You are ATLAS V12 — a disciplined long-term business analyst.
+SYSTEM_PROMPT = """You are ATLAS V12+ — a disciplined long-term business analyst.
 
 You treat stocks as fractional ownership in businesses.
 You prioritize intrinsic value and margin of safety over momentum.
@@ -71,10 +71,10 @@ def init_groq(api_key):
 
 
 # ============================================================================
-# V12 NARRATIVE INTERPRETATION LAYER
+# V12+ NARRATIVE INTERPRETATION LAYER
 # ============================================================================
 
-V9_NARRATIVE_PROMPT = """You are ATLAS V12 — Narrative Interpretation Layer. Read-only. All provided metrics are final and authoritative. Never recalculate, override, or introduce new data.
+V9_NARRATIVE_PROMPT = """You are ATLAS V12+ — Narrative Interpretation Layer. Read-only. All provided metrics are final and authoritative. Never recalculate, override, or introduce new data.
 
 OUTPUT FORMAT — Return EXACTLY these four sections with NO extra text. Be extremely concise (under 600 characters total).
 
@@ -95,7 +95,7 @@ RULES: Professional institutional tone. No retail language. No superlatives. No 
 
 
 def _build_v9_data_block(v9_scores, summary, v8_extended):
-    """Build structured data block of finalized V12 metrics for narrative generation."""
+    """Build structured data block of finalized V12+ metrics for narrative generation."""
     s = summary or {}
     v = v8_extended or {}
     v9 = v9_scores or {}
@@ -107,12 +107,12 @@ def _build_v9_data_block(v9_scores, summary, v8_extended):
     iv = _safe_float(v9.get('intrinsic_value_base'))
 
     lines = [
-        "ATLAS V12 FINALIZED METRICS",
+        "ATLAS V12+ FINALIZED METRICS",
         "",
         f"Symbol: {s.get('ticker', 'N/A')}",
         f"Company: {co.get('name', 'N/A')}",
         "",
-        "--- V12 OWNER SCORES ---",
+        "--- V12+ OWNER SCORES ---",
         f"Decision: {v9.get('v9_decision', 'N/A')}",
         f"Decision Reason: {v9.get('decision_reason', '')}",
         f"Business Quality: {_safe_float(v9.get('business_quality')):.1f}/5" if v9.get('business_quality') is not None else "Business Quality: N/A (data unavailable)",
@@ -166,9 +166,9 @@ def _build_v9_data_block(v9_scores, summary, v8_extended):
 
 def generate_v9_narrative(v9_scores, summary, v8_extended):
     """
-    Generate professional V12 narrative interpretation using Groq LLM.
+    Generate professional V12+ narrative interpretation using Groq LLM.
 
-    Takes finalized V12 scores and produces a 4-section narrative:
+    Takes finalized V12+ scores and produces a 4-section narrative:
     Investment Summary, Recommended Action, Decision Triggers, Quantitative Overlay.
 
     Returns formatted narrative string or None if generation fails.
@@ -190,7 +190,7 @@ def generate_v9_narrative(v9_scores, summary, v8_extended):
 
     messages = [
         {"role": "system", "content": V9_NARRATIVE_PROMPT},
-        {"role": "user", "content": f"Generate the narrative interpretation for the following finalized ATLAS V12 metrics:\n\n{data_block}"},
+        {"role": "user", "content": f"Generate the narrative interpretation for the following finalized ATLAS V12+ metrics:\n\n{data_block}"},
     ]
 
     try:
@@ -254,13 +254,13 @@ def build_context(symbol, summary, v8_extended):
     inst = v.get('institutional', {})
     dcf = v.get('dcf', {})
 
-    lines = [f"=== ATLAS V12 ANALYSIS: {symbol} ==="]
+    lines = [f"=== ATLAS V12+ ANALYSIS: {symbol} ==="]
 
-    # --- V12 OWNER ASSESSMENT (primary) ---
+    # --- V12+ OWNER ASSESSMENT (primary) ---
     v9 = v.get('v9_scores', {})
     if v9:
         lines.append("")
-        lines.append("--- V12 OWNER ASSESSMENT ---")
+        lines.append("--- V12+ OWNER ASSESSMENT ---")
         lines.append(f"Decision: {v9.get('v9_decision', 'N/A')} — {v9.get('decision_reason', '')}")
         bq = v9.get('business_quality')
         lines.append(f"Business Quality: {bq:.1f}/5" if bq is not None else "Business Quality: N/A")

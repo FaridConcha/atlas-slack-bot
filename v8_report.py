@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ATLAS V12 — Full-Spectrum Report Formatter
+ATLAS V12+ — Full-Spectrum Report Formatter
 Transforms engine output + extended data into an 11-section Slack report.
 
 V12adds a Buffett-aligned Owner Assessment layer on top of V8 quant signals.
@@ -993,7 +993,7 @@ def _section_owner_assessment(summary, v8_data):
     header = (
         f"```\n"
         f"{'=' * 52}\n"
-        f"  ATLAS V12 — OWNER ASSESSMENT\n"
+        f"  ATLAS V12+ — OWNER ASSESSMENT\n"
         f"  {symbol} — {name} — ${price:.2f}\n"
         f"  As of {now}\n"
         f"{'=' * 52}\n"

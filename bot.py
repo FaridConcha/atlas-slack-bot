@@ -169,7 +169,7 @@ def _handle_shutdown(signum, frame):
             app.client.chat_postMessage(
                 channel=_last_channel,
                 thread_ts=_last_thread_ts,
-                text=":zzz: ATLAS V12 is going offline (Render free-tier sleep). "
+                text=":zzz: ATLAS V12+ is going offline (Render free-tier sleep). "
                      "Mention me again to wake up — takes ~30 seconds.",
             )
         except Exception:
@@ -213,7 +213,7 @@ def handle_atlas_mention(event, say, client):
     if 'HELP' in text.upper():
         say(
             text=(
-                "*ATLAS V12 — Capital Allocation Intelligence* :chart_with_upwards_trend:\n"
+                "*ATLAS V12+ — Capital Allocation Intelligence* :chart_with_upwards_trend:\n"
                 "Mention me with any ticker symbol to get analysis:\n"
                 "  `@atlas AAPL` — Apple\n"
                 "  `@atlas TSLA` — Tesla\n"
@@ -238,7 +238,7 @@ def handle_atlas_mention(event, say, client):
     else:
         # Acknowledge immediately (warm path)
         say(
-            text=f":gear: Running ATLAS V12 on *{symbol}*... pulling live data & building owner assessment + full report (30-45 sec)",
+            text=f":gear: Running ATLAS V12+ on *{symbol}*... pulling live data & building owner assessment + full report (30-45 sec)",
             thread_ts=thread_ts
         )
         progress_ts = None
@@ -363,7 +363,7 @@ def handle_atlas_mention(event, say, client):
 
         # Final confirmation
         say(
-            text=f":white_check_mark: ATLAS V12 complete for *{symbol}* — {len(v8_messages)} sections delivered"
+            text=f":white_check_mark: ATLAS V12+ complete for *{symbol}* — {len(v8_messages)} sections delivered"
                 + (f"\n:mag: <{report_url}|View full web report>" if report_url else "")
                 + ("\n:brain: _Reply in this thread to ask follow-up questions (AI-powered)_" if GROQ_API_KEY else ""),
             thread_ts=thread_ts
