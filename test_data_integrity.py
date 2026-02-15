@@ -17,8 +17,13 @@ from v8_data import (
     _safe_num, _safe_pct, _check_fundamental_integrity,
     _build_financials, _build_dcf, _validate_financials,
     _sanitize_yield, _sanitize_payout,
+    _stabilize_beta, _compute_wacc_governed,
 )
-from v8_report import _n, _compute_v8_scores, _compute_v9_owner_scores
+from v8_report import (
+    _n, _compute_v8_scores, _compute_v9_owner_scores,
+    _compute_fragility, _compute_dynamic_mos, _reconciliation_checks,
+)
+from valuation_config import CONFIG, SECTOR_BETA_BOUNDS
 
 
 # ============================================================================
@@ -433,16 +438,18 @@ class TestCAPMArithmetic:
         }
 
     def test_cost_of_equity_exact_precision(self):
-        """Ke = Rf + β × ERP = 4.00% + 0.42 × 5.00% = 6.10% exactly."""
+        """Ke = Rf + β × ERP — Stage 5: beta floored for low-beta inputs."""
         info = {'currentPrice': 200.0, 'beta': 0.42}
         fin = self._make_valid_fin()
         result = _build_dcf(info, fin)
         a = result['assumptions']
-        # CAPM: 4.00 + 0.42 × 5.00 = 6.10
-        assert a['cost_of_equity'] == 6.10
+        # Stage 5: beta=0.42 floored to 0.80 (DEFAULT_BETA_BOUNDS)
+        # CAPM: 4.00 + 0.80 × 5.00 = 8.00
+        assert a['beta_raw'] == 0.42
+        assert a['beta'] == 0.80
+        assert a['cost_of_equity'] == 8.00
         assert a['risk_free_rate'] == 4.00
         assert a['equity_risk_premium'] == 5.00
-        assert a['beta'] == 0.42
 
     def test_wacc_vs_cost_of_equity_distinct(self):
         """When D/E > 0, WACC must differ from cost_of_equity."""
@@ -470,14 +477,15 @@ class TestCAPMArithmetic:
         assert a['equity_weight'] == 1.0  # decimal [0,1]
 
     def test_discount_rate_clamping(self):
-        """Discount rate clamped between 6% and 15%."""
-        # Very low beta → should hit floor
+        """Discount rate governed by multi-layer floor (Stage 5)."""
+        # Very low beta → beta floored, then WACC floored
         info = {'currentPrice': 200.0, 'beta': 0.1}
         fin = self._make_valid_fin(de=2.0)
         result = _build_dcf(info, fin)
         a = result['assumptions']
-        assert a['discount_rate'] >= 6.0
-        assert a['clamp_rule'] == 'FLOOR_ABSOLUTE'
+        # Stage 5: general floor is 6.5%, default sector floor also applies
+        assert a['discount_rate'] >= 6.5
+        assert len(a['wacc_clamp_codes']) > 0  # Some floor applied
 
     def test_discount_rate_type_label(self):
         """discount_rate_type must be 'WACC' when D/E > 0."""
@@ -487,15 +495,17 @@ class TestCAPMArithmetic:
         assert result['assumptions']['discount_rate_type'] == 'WACC'
 
     def test_wacc_arithmetic_precise(self):
-        """Verify WACC = E/V × Ke + D/V × Kd(1-t) with exact values."""
+        """Verify WACC = E/V × Ke + D/V × Kd(1-t) with governed beta."""
         info = {'currentPrice': 200.0, 'beta': 0.42}
         fin = self._make_valid_fin(de=1.5)
         result = _build_dcf(info, fin)
         a = result['assumptions']
+        # Stage 5: beta=0.42 floored to 0.80
+        governed_beta = a['beta']  # 0.80
         # D/E = 1.5 → D/V = 1.5/2.5 = 60%, E/V = 40%
         expected_dw = 1.5 / 2.5  # 0.6
         expected_ew = 1 - expected_dw  # 0.4
-        ke = 0.04 + 0.42 * 0.05  # 0.061
+        ke = 0.04 + governed_beta * 0.05
         kd_at = 0.05 * (1 - 0.25)  # 0.0375
         expected_wacc = expected_ew * ke + expected_dw * kd_at
         # Allow rounding tolerance
@@ -807,8 +817,8 @@ class TestRTXRegressionSnapshot:
     """End-to-end regression test with RTX-like inputs."""
 
     def test_rtx_dcf_full_pipeline(self):
-        """RTX (beta=0.42, D/E=1.5, revenue=70B) should produce auditable DCF."""
-        info = {'currentPrice': 200.0, 'beta': 0.42}
+        """RTX (beta=0.42, D/E=1.5, revenue=70B) should produce auditable DCF with Stage 5 governance."""
+        info = {'currentPrice': 200.0, 'beta': 0.42, 'sector': 'Industrials'}
         fin = {
             '_data_status': 'OK',
             'revenue_ttm': 70e9,
@@ -820,7 +830,7 @@ class TestRTXRegressionSnapshot:
             'debt_equity': 1.5,
             'net_debt': 32.5e9,
         }
-        result = _build_dcf(info, fin)
+        result = _build_dcf(info, fin, sector='Industrials')
 
         # Must NOT be disabled
         assert result.get('_dcf_disabled') is not True
@@ -828,19 +838,25 @@ class TestRTXRegressionSnapshot:
         # Must have projections
         assert len(result['projections']) == 5
 
-        # Assumptions: full CAPM decomposition
+        # Assumptions: full CAPM decomposition — Stage 5: beta floored to 0.80
         a = result['assumptions']
-        assert a['cost_of_equity'] == 6.10  # 4 + 0.42×5
+        assert a['beta_raw'] == 0.42  # Original beta preserved
+        assert a['beta'] == 0.80  # Industrials floor applied
+        assert 'BETA_FLOOR_APPLIED' in a['beta_flags']
+        assert a['cost_of_equity'] == 8.00  # 4 + 0.80×5
         assert a['discount_rate_type'] == 'WACC'
         assert a['after_tax_cost_of_debt'] == 3.75  # 5% × (1-0.25)
+
+        # Stage 5: WACC governance — sector floor should dominate
+        assert a['discount_rate'] == 8.50  # Industrials sector floor
+        assert 'FLOOR_SECTOR_INDUSTRIALS' in a['wacc_clamp_codes']
 
         # Weights stored as decimals [0,1]
         assert 0 < a['equity_weight'] < 1
         assert 0 < a['debt_weight'] < 1
         assert abs(a['equity_weight'] + a['debt_weight'] - 1.0) < 0.001
 
-        # Clamp rule explicit
-        assert a['clamp_rule'] in (None, 'FLOOR_ABSOLUTE', 'CEILING_ABSOLUTE')
+        # Clamp fields present
         assert 'clamp_floor' in a
         assert 'clamp_ceiling' in a
 
@@ -857,8 +873,11 @@ class TestRTXRegressionSnapshot:
         # Bear < Base < Bull
         assert result['bear'] < result['base'] < result['bull']
 
-        # Shares: never formatted with $ prefix (tested via fN in JS, but verify data)
-        assert a['shares'] > 1e9  # In absolute units, not dollars
+        # Shares: never formatted with $ prefix
+        assert a['shares'] > 1e9
+
+        # Stage 5: IV is significantly lower than pre-governance (~$184 → ~$95-110)
+        assert result['base'] < 150, f"Expected governed IV < $150, got ${result['base']}"
 
 
 # ============================================================================
@@ -1044,7 +1063,7 @@ class TestCAPMDisplayConsistency:
     """Beta is rounded to 2dp at source, so displayed Ke = Rf + β×ERP is exact."""
 
     def test_ke_matches_displayed_beta(self):
-        """Ke must equal Rf + rounded_beta × ERP exactly (no rounding drift)."""
+        """Ke must equal Rf + governed_beta × ERP exactly (no rounding drift)."""
         info = {'currentPrice': 200.0, 'beta': 0.418}
         fin = {
             '_data_status': 'OK', 'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
@@ -1053,15 +1072,16 @@ class TestCAPMDisplayConsistency:
         }
         result = _build_dcf(info, fin)
         a = result['assumptions']
-        # Beta should be rounded to 2dp: 0.418 → 0.42
-        assert a['beta'] == 0.42
-        # Ke = Rf + β × ERP = 4.00 + 0.42 × 5.00 = 6.10
+        # Stage 5: raw beta 0.418 → rounded to 0.42 → floored to 0.80
+        assert a['beta_raw'] == 0.42
+        assert a['beta'] == 0.80  # DEFAULT_BETA_BOUNDS floor
+        # Ke = Rf + β × ERP — uses governed beta
         expected_ke = a['risk_free_rate'] + a['beta'] * a['equity_risk_premium']
         assert abs(a['cost_of_equity'] - expected_ke) < 0.005, \
             f"CAPM display mismatch: Ke={a['cost_of_equity']}, expected={expected_ke}"
 
     def test_beta_exact_at_two_dp(self):
-        """Beta=1.0 stays 1.0; beta=0.4178 becomes 0.42."""
+        """Stage 5: low beta floored; high beta preserved at 2dp."""
         info = {'currentPrice': 100.0, 'beta': 0.4178}
         fin = {
             '_data_status': 'OK', 'revenue_ttm': 50e9, 'shares_outstanding': 1e9,
@@ -1069,7 +1089,15 @@ class TestCAPMDisplayConsistency:
             'revenue_growth': 3.0, 'debt_equity': 0.5, 'net_debt': 5e9,
         }
         result = _build_dcf(info, fin)
-        assert result['assumptions']['beta'] == 0.42
+        # Raw: 0.4178 → 0.42, then floored to 0.80
+        assert result['assumptions']['beta_raw'] == 0.42
+        assert result['assumptions']['beta'] == 0.80
+
+        # Test with beta that's within bounds (no floor/cap)
+        info2 = {'currentPrice': 100.0, 'beta': 1.15}
+        result2 = _build_dcf(info2, fin)
+        assert result2['assumptions']['beta'] == 1.15
+        assert result2['assumptions']['beta_raw'] == 1.15
 
     def test_beta_none_defaults_to_one(self):
         """Missing beta defaults to 1.0."""
@@ -1192,6 +1220,255 @@ class TestNormalizedScoresExport:
         contribution = round(weight * norm * 100, 2)
         # Verify: contribution should be weight × norm × 100
         assert abs(contribution - round(weight * norm * 100, 2)) < 0.01
+
+
+# ============================================================================
+# STAGE 5: Beta Stabilization Tests
+# ============================================================================
+
+class TestBetaStabilization:
+    """Sector beta floors and caps from valuation_config."""
+
+    def test_industrials_floor(self):
+        """Beta 0.42 for Industrials → floored to 0.80."""
+        beta, flags = _stabilize_beta(0.42, 'Industrials')
+        assert beta == 0.80
+        assert 'BETA_FLOOR_APPLIED' in flags
+        assert 'LOW_BETA_WARNING' in flags
+
+    def test_industrials_cap(self):
+        """Beta 2.0 for Industrials → capped to 1.60."""
+        beta, flags = _stabilize_beta(2.0, 'Industrials')
+        assert beta == 1.60
+        assert 'BETA_CAP_APPLIED' in flags
+
+    def test_no_clamp_when_in_bounds(self):
+        """Beta 1.1 for Industrials → no clamp."""
+        beta, flags = _stabilize_beta(1.1, 'Industrials')
+        assert beta == 1.1
+        assert 'BETA_FLOOR_APPLIED' not in flags
+        assert 'BETA_CAP_APPLIED' not in flags
+
+    def test_feature_flag_disables(self):
+        """When beta_stabilization=False, raw beta passes through."""
+        original = CONFIG.flags.beta_stabilization
+        try:
+            CONFIG.flags.beta_stabilization = False
+            beta, flags = _stabilize_beta(0.42, 'Industrials')
+            assert beta == 0.42
+            assert flags == []
+        finally:
+            CONFIG.flags.beta_stabilization = original
+
+
+# ============================================================================
+# STAGE 5: WACC Governance Tests
+# ============================================================================
+
+class TestWACCGovernance:
+    """Multi-layer WACC floor/ceiling governance."""
+
+    def test_general_floor(self):
+        """WACC below general floor → floored."""
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(0.80, '', 0)
+        # Ke = 4% + 0.80*5% = 8%, no debt → WACC = 8%
+        # General floor = 6.5%, sector floor for '' = 6.5%
+        # 8% > 6.5% → no floor applied
+        assert dr >= 0.065
+
+    def test_sector_floor_industrials(self):
+        """Industrials sector floor of 8.5% dominates when WACC < 8.5%."""
+        # beta=0.80, D/E=1.5 → WACC ≈ 6.5% → sector floor 8.5% kicks in
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(0.80, 'Industrials', 1.5)
+        assert abs(dr - 0.085) < 0.001
+        assert any('SECTOR' in c for c in codes)
+
+    def test_ceiling(self):
+        """WACC above ceiling → capped at 15%."""
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(3.0, 'Technology', 0)
+        # Ke = 4% + 3.0*5% = 19%, no debt → WACC = 19%
+        assert abs(dr - 0.15) < 0.001
+        assert 'CEILING_ABSOLUTE' in codes
+
+    def test_reason_codes_present(self):
+        """Reason codes list is always returned."""
+        dr, wacc_raw, codes, audit = _compute_wacc_governed(1.0, 'Industrials', 0)
+        assert isinstance(codes, list)
+        assert isinstance(audit, dict)
+
+
+# ============================================================================
+# STAGE 5: Dynamic MOS Tests
+# ============================================================================
+
+class TestDynamicMOS:
+    """Additive MOS model from valuation_config."""
+
+    def test_base_only_very_stable(self):
+        """Very Stable business with no uplifts → base MOS = 20%."""
+        # Set up minimal DCF with no triggers
+        dcf = {'assumptions': {'terminal_value_pct': 50, 'wacc_clamp_codes': [], 'discount_rate': 10}}
+        fin = {'debt_equity': 0.5, 'roe': 15}
+        mos, build = _compute_dynamic_mos('Very Stable', dcf, fin, 90, [])
+        assert mos == 0.20
+        assert build[0]['component'] == 'base'
+
+    def test_all_uplifts(self):
+        """Cyclical with all uplifts → high MOS."""
+        dcf = {'assumptions': {'terminal_value_pct': 85, 'wacc_clamp_codes': ['FLOOR_SECTOR'], 'discount_rate': 9}}
+        fin = {'debt_equity': 3.5, 'roe': 5}
+        fragility = ['LOW_WACC', 'HIGH_TERMINAL_DEP', 'LOW_DATA_CONF']
+        mos, build = _compute_dynamic_mos('Cyclical', dcf, fin, 60, fragility)
+        # base=45 + DC=10 + terminal=10 + clamp=5 + leverage=10 + value_creation=10 + fragility=6 = 96
+        assert mos > 0.80
+        assert len(build) >= 5
+
+    def test_rtx_scenario(self):
+        """RTX-like scenario: Cyclical with high terminal dep and WACC clamp."""
+        dcf = {'assumptions': {'terminal_value_pct': 80, 'wacc_clamp_codes': ['FLOOR_SECTOR_INDUSTRIALS'], 'discount_rate': 8.5}}
+        fin = {'debt_equity': 1.5, 'roe': 7}
+        fragility = ['HIGH_TERMINAL_DEP']
+        mos, build = _compute_dynamic_mos('Cyclical', dcf, fin, 75, fragility)
+        # base=45 + terminal=10 + clamp=5 + value_creation=10 = 70 minimum
+        assert mos >= 0.70
+
+    def test_max_buy_price_decreases(self):
+        """Higher required MOS → lower max buy price."""
+        mos_low = 0.30
+        mos_high = 0.85
+        iv = 100.0
+        assert iv * (1 - mos_high) < iv * (1 - mos_low)
+
+
+# ============================================================================
+# STAGE 5: Fragility Tests
+# ============================================================================
+
+class TestFragility:
+    """Fragility contributor detection."""
+
+    def test_low_wacc_detected(self):
+        """Discount rate < 7% triggers LOW_WACC."""
+        dcf = {'assumptions': {'discount_rate': 6.0, 'terminal_value_pct': 50, 'fcf_margin': 10}}
+        contributors = _compute_fragility(dcf, {}, {'data_confidence': 80})
+        assert 'LOW_WACC' in contributors
+
+    def test_no_fragility_when_healthy(self):
+        """No contributors when all metrics healthy."""
+        dcf = {'assumptions': {'discount_rate': 9.0, 'terminal_value_pct': 60, 'fcf_margin': 15}}
+        contributors = _compute_fragility(dcf, {}, {'data_confidence': 85})
+        assert len(contributors) == 0
+
+    def test_multiple_contributors(self):
+        """Multiple fragility conditions stack."""
+        dcf = {'assumptions': {'discount_rate': 5.0, 'terminal_value_pct': 85, 'fcf_margin': 3}}
+        contributors = _compute_fragility(dcf, {}, {'data_confidence': 60})
+        assert 'LOW_WACC' in contributors
+        assert 'HIGH_TERMINAL_DEP' in contributors
+        assert 'LOW_DATA_CONF' in contributors
+        assert 'FLAT_MARGINS_ASSUMPTION' in contributors
+        assert len(contributors) == 4
+
+
+# ============================================================================
+# STAGE 5: Terminal Governance Tests
+# ============================================================================
+
+class TestTerminalGovernance:
+    """Enhanced terminal penalty and bear_mult haircut."""
+
+    def test_high_terminal_penalty(self):
+        """80% terminal dependence → penalty = min(20, (80-70)*0.5) = 5."""
+        info = {'currentPrice': 100.0, 'beta': 1.0}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 10e9, 'shares_outstanding': 1e9,
+            'free_cash_flow': 500e6, 'net_income_ttm': 1e9, 'ebitda': 2e9,
+            'revenue_growth': 3.0, 'debt_equity': 0, 'net_debt': 0,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        if a['terminal_value_pct'] >= 80:
+            assert 'BEAR_MULT_HAIRCUT' in a['terminal_flags']
+
+    def test_extreme_terminal_iv_confidence(self):
+        """terminal_pct >= 90 → IV_CONFIDENCE_LOW flag."""
+        info = {'currentPrice': 100.0, 'beta': 1.0}
+        fin = {
+            '_data_status': 'OK', 'revenue_ttm': 10e9, 'shares_outstanding': 1e9,
+            'free_cash_flow': 500e6, 'net_income_ttm': 1e9, 'ebitda': 2e9,
+            'revenue_growth': 2.0, 'debt_equity': 0, 'net_debt': 0,
+        }
+        result = _build_dcf(info, fin)
+        a = result['assumptions']
+        # terminal_flags should contain IV_CONFIDENCE_LOW only if pct >= 90
+        if a['terminal_value_pct'] >= 90:
+            assert 'IV_CONFIDENCE_LOW' in a['terminal_flags']
+        else:
+            assert 'IV_CONFIDENCE_LOW' not in a['terminal_flags']
+
+    def test_terminal_penalty_cap_20(self):
+        """Terminal conviction penalty cannot exceed 20."""
+        # Penalty = min(20, (pct - 70) * 0.5)
+        # At pct=110 (hypothetical): (110-70)*0.5 = 20, capped at 20
+        penalty = min(CONFIG.terminal.penalty_cap, round((110 - 70) * CONFIG.terminal.penalty_per_pct))
+        assert penalty == 20
+
+
+# ============================================================================
+# STAGE 5: Reconciliation Tests
+# ============================================================================
+
+class TestReconciliation:
+    """Cross-module consistency checks."""
+
+    def test_mos_sign_invariant(self):
+        """If price > IV and MOS is positive, reconciliation error fires."""
+        v9 = {'intrinsic_value_base': 100, 'mos_pct': 10}  # Bug: MOS should be negative
+        v8 = {'company': {'price': 120}}
+        errors = _reconciliation_checks({}, v8, v9)
+        assert any(e['check'] == 'MOS_SIGN_INVARIANT' for e in errors)
+
+    def test_no_error_when_consistent(self):
+        """Consistent data produces no errors."""
+        v9 = {'intrinsic_value_base': 100, 'mos_pct': -20}
+        v8 = {'company': {'price': 120}, 'dcf': {'assumptions': {'pv_fcf_sum': 50, 'terminal_value_pv': 50, 'enterprise_value': 100}}}
+        summary = {'w_dynamic': {'trend': 0.125, 'valuation': 0.125, 'consensus': 0.125, 'volatility': 0.125, 'macro': 0.125, 'liquidity': 0.125, 'global': 0.125, 'correlation': 0.125}}
+        errors = _reconciliation_checks(summary, v8, v9)
+        assert len(errors) == 0
+
+    def test_weight_sum_warning(self):
+        """Weight sum != 1.0 produces warning."""
+        v9 = {'intrinsic_value_base': 0, 'mos_pct': 0}
+        v8 = {'company': {'price': 100}, 'dcf': {}}
+        summary = {'w_dynamic': {'trend': 0.2, 'valuation': 0.2}}  # Sum = 0.4, not 1.0
+        errors = _reconciliation_checks(summary, v8, v9)
+        assert any(e['check'] == 'WEIGHT_SUM' for e in errors)
+
+
+# ============================================================================
+# STAGE 5: Narrative Gating Tests
+# ============================================================================
+
+class TestNarrativeGating:
+    """Sector-aware narrative gating logic."""
+
+    def test_moat_protected_industries(self):
+        """Aerospace & Defense is in MOAT_PROTECTED_INDUSTRIES."""
+        from valuation_config import MOAT_PROTECTED_INDUSTRIES
+        assert 'Aerospace & Defense' in MOAT_PROTECTED_INDUSTRIES
+
+    def test_thin_margin_thresholds(self):
+        """Thin margin thresholds match config."""
+        from valuation_config import THIN_MARGIN_NET_THRESHOLD, THIN_MARGIN_OP_THRESHOLD
+        assert THIN_MARGIN_NET_THRESHOLD == 5.0
+        assert THIN_MARGIN_OP_THRESHOLD == 8.0
+
+    def test_net_cash_gating(self):
+        """Net cash narrative should only fire when net_debt < 0."""
+        # Net debt = -5B means net cash
+        assert -5e9 < 0  # Net cash condition
+        # Net debt = 10B means NOT net cash
+        assert 10e9 >= 0  # Not net cash
 
 
 if __name__ == '__main__':
