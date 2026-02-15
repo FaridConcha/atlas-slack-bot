@@ -2640,9 +2640,6 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         'shrinkage_weight': shrinkage_w,
     }
 
-    # Layer 10: Generate Report
-    report_text = generate_pyramid_report(symbol, all_layers_data)
-
     # Build summary dict (backward compatible)
     summary = {
         'symbol': symbol,
@@ -2750,7 +2747,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['c_after_gate'] = round(c_raw * g, 4)
     summary['dc_cap'] = round(dc_cap, 4)
 
-    return report_text, summary
+    return summary
 
 # ============================================================================
 # SECTION 18: CLI MODE
@@ -2763,8 +2760,10 @@ if __name__ == "__main__":
     symbol = sys.argv[2] if len(sys.argv) > 2 else 'SPY'
     state_dir = sys.argv[3] if len(sys.argv) > 3 else './state'
 
-    report, summary = run_atlas(symbol=symbol, data_path=data_path, state_dir=state_dir)
+    summary = run_atlas(symbol=symbol, data_path=data_path, state_dir=state_dir)
 
+    # CLI-only: generate text report from summary for terminal display
+    report = generate_pyramid_report(symbol, summary)
     print(report)
     print("\n" + "=" * 88)
     print("SUMMARY")

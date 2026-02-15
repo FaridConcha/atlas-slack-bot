@@ -10,7 +10,7 @@ Phase 1: Added SECTOR_TAIL_DF (Student's t df), REGIME_VARIANCE_MULTIPLIER.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import numpy as np
 
@@ -95,16 +95,10 @@ class FeatureFlags:
     dynamic_mos: bool = True                 # C: Additive MOS model
     fragility_scoring: bool = True           # D: Fragility contributor detection
     terminal_governance: bool = True         # G: Enhanced terminal penalty
-    narrative_gating: bool = True            # I: Sector-aware narratives
     reconciliation_checks: bool = True       # J: Cross-module reconciliation
-    tq_precision: bool = True                # E: 4dp TQ display
-    engine_table_x100: bool = True           # F: Contribution column clarity
     ca_evidence: bool = True                 # Capital allocation evidence block
     industry_priors: bool = True             # Stage 6: Industry prior system for missing data
-    fundamentals_integrity: bool = True      # Stage 5.1: Null propagation for missing fundamentals
-    canonical_suppression: bool = True       # Stage 5.1: ReportMode-based output suppression
-    tq_canonical: bool = True                # Stage 5.1: Single canonical TQ formula
-    monte_carlo_dcf: bool = True              # V12+: Monte Carlo DCF simulations
+    monte_carlo_dcf: bool = True             # V12+: Monte Carlo DCF simulations
 
 
 # ============================================================================

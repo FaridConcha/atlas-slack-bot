@@ -13,10 +13,8 @@ Design: Dense data in tables, natural language in narratives, everything in cont
 
 from datetime import datetime
 from valuation_config import (
-    CONFIG, MOAT_PROTECTED_INDUSTRIES, THIN_MARGIN_NET_THRESHOLD,
-    THIN_MARGIN_OP_THRESHOLD, FRAGILITY_LOW_WACC, FRAGILITY_HIGH_TERMINAL_DEP,
+    CONFIG, FRAGILITY_LOW_WACC, FRAGILITY_HIGH_TERMINAL_DEP,
     FRAGILITY_LOW_DATA_CONF, FRAGILITY_FLAT_MARGINS,
-    BetaPath, SectorProvenance,
     INDUSTRY_PRIORS, PRIOR_CAP,
 )
 

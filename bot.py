@@ -262,7 +262,7 @@ def handle_atlas_mention(event, say, client):
 
         # Run the 11-layer engine
         print(f"[BOT] Running ATLAS engine on {symbol}...")
-        report_text, summary = run_atlas(
+        summary = run_atlas(
             symbol=symbol,
             data_path=data_path,
             capital=CAPITAL,

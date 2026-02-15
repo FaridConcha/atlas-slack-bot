@@ -25,8 +25,8 @@ from data_fetcher import resolve_price
 from valuation_config import (
     CONFIG, SECTOR_BETA_BOUNDS, DEFAULT_BETA_BOUNDS, SECTOR_WACC_FLOORS,
     BetaPath, SectorProvenance,
-    SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX, MonteCarloConfig,
-    SECTOR_TAIL_DF, REGIME_VARIANCE_MULTIPLIER,
+    SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX,
+    SECTOR_TAIL_DF,
 )
 
 
