@@ -16,7 +16,7 @@
   --border: #21262d;
   --t1:     #e6edf3;
   --t2:     #8b949e;
-  --t3:     #484f58;
+  --t3:     #6e7681;
   --pos:    #3fb950;
   --neg:    #f85149;
   --warn:   #d29922;
@@ -82,8 +82,12 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 .news-src{color:var(--t3);font-size:11px;white-space:nowrap}
 .empty{text-align:center;padding:32px;color:var(--t3);font-size:12px}
 /* Section labels */
-.section-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);padding:20px 0 8px;display:flex;align-items:center;gap:12px}
+.section-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--acc);padding:20px 0 8px;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none}
 .section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+.section-label .collapse-icon{font-size:9px;transition:transform .2s;flex-shrink:0}
+.section-label.collapsed .collapse-icon{transform:rotate(-90deg)}
+.section-body{overflow:hidden;transition:max-height .3s ease,opacity .2s ease;max-height:none;opacity:1}
+.section-body.collapsed{max-height:0!important;opacity:0;pointer-events:none}
 /* Theme toggle */
 .theme-toggle{position:fixed;top:16px;right:16px;z-index:100;background:var(--bg1);border:1px solid var(--border);color:var(--t2);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .15s;box-shadow:0 2px 8px rgba(0,0,0,.2)}
 .theme-toggle:hover{color:var(--t1);border-color:var(--t1)}
@@ -129,10 +133,91 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 .memo .hl{color:var(--t1);font-weight:500}
 .memo .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
 .memo-aside{background:var(--bg2);border-left:3px solid var(--acc);padding:10px 14px;margin:10px 0 14px;font-size:11.5px;line-height:1.7;color:var(--t2);border-radius:0 var(--r) var(--r) 0}
+/* ── Sticky Mini-Header ── */
+.sticky-hdr{position:fixed;top:0;left:0;right:0;z-index:90;background:var(--bg1);border-bottom:1px solid var(--border);padding:6px 20px;display:flex;align-items:center;gap:12px;font-size:11px;transform:translateY(-100%);transition:transform .2s ease,background .15s,border-color .15s;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.sticky-hdr.visible{transform:translateY(0)}
+.sticky-hdr .sh-sym{font-weight:700;font-size:13px;letter-spacing:-0.02em}
+.sticky-hdr .sh-sep{width:1px;height:16px;background:var(--border)}
+.sticky-hdr .sh-item{display:flex;flex-direction:column;gap:1px}
+.sticky-hdr .sh-lbl{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--t3)}
+.sticky-hdr .sh-val{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600}
+/* ── TOC Drawer ── */
+.toc-btn{position:fixed;bottom:72px;right:20px;z-index:91;background:var(--bg1);border:1px solid var(--border);color:var(--t2);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:all .15s}
+.toc-btn:hover{color:var(--t1);border-color:var(--t1)}
+.toc-drawer{position:fixed;top:0;right:-260px;bottom:0;width:240px;z-index:95;background:var(--bg1);border-left:1px solid var(--border);padding:48px 16px 16px;overflow-y:auto;transition:right .25s ease;box-shadow:-4px 0 12px rgba(0,0,0,.15)}
+.toc-drawer.open{right:0}
+.toc-drawer .toc-close{position:absolute;top:12px;right:12px;background:none;border:none;color:var(--t2);font-size:18px;cursor:pointer}
+.toc-drawer a{display:block;padding:6px 10px;margin:2px 0;border-radius:var(--r);font-size:11px;color:var(--t2);text-decoration:none;transition:background .15s,color .15s}
+.toc-drawer a:hover,.toc-drawer a.active{background:rgba(88,166,255,.1);color:var(--acc)}
+/* ── Back to Top / Next Section ── */
+.scroll-btn{position:fixed;bottom:24px;right:20px;z-index:91;background:var(--bg1);border:1px solid var(--border);color:var(--t2);width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,.2);opacity:0;pointer-events:none;transition:all .2s}
+.scroll-btn.visible{opacity:1;pointer-events:auto}
+.scroll-btn:hover{color:var(--t1);border-color:var(--t1)}
+/* ── Glossary Modal ── */
+.glossary-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center}
+.glossary-overlay.open{display:flex}
+.glossary-box{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:20px 24px;max-width:520px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.glossary-box h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--acc);margin-bottom:12px}
+.glossary-box .g-close{float:right;background:none;border:none;color:var(--t2);font-size:18px;cursor:pointer;margin-top:-4px}
+.glossary-box dl{margin:0}
+.glossary-box dt{font-size:12px;font-weight:600;color:var(--t1);margin-top:10px;font-family:'JetBrains Mono',monospace}
+.glossary-box dd{font-size:11px;color:var(--t2);margin:2px 0 0 0;line-height:1.6}
+/* ── Copy Buttons ── */
+.copy-bar{display:flex;gap:8px;margin:8px 0}
+.copy-btn{background:var(--bg2);border:1px solid var(--border);color:var(--t2);padding:4px 10px;border-radius:var(--r);cursor:pointer;font:11px/1.4 'Inter',sans-serif;transition:all .15s}
+.copy-btn:hover{color:var(--t1);border-color:var(--t1)}
+.copy-btn.copied{color:var(--pos);border-color:var(--pos)}
+/* ── Run Fingerprint ── */
+.fingerprint{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;margin:8px 0;font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:8px 16px}
+.fingerprint .fp-label{font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--t3)}
+.fingerprint .fp-val{font-family:'JetBrains Mono',monospace;color:var(--t2)}
+/* ── Key Takeaways ── */
+.takeaways{background:rgba(88,166,255,0.05);border:1px solid rgba(88,166,255,0.15);border-radius:var(--r);padding:10px 14px;margin-bottom:12px;font-size:11.5px;line-height:1.7;color:var(--t2)}
+.takeaways .ta-hdr{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--acc);margin-bottom:4px}
+.takeaways ul{margin:0;padding-left:16px}
+.takeaways li{margin:2px 0}
 </style>
 </head>
 <body>
 <button id="theme-toggle" class="theme-toggle" aria-label="Toggle light/dark theme"></button>
+
+<!-- Sticky Mini-Header -->
+<div class="sticky-hdr" id="sticky-hdr" aria-hidden="true"></div>
+
+<!-- Back-to-top Button -->
+<button class="scroll-btn" id="btn-top" aria-label="Back to top" title="Back to top (Esc)">&#8593;</button>
+
+<!-- TOC Button -->
+<button class="toc-btn" id="btn-toc" aria-label="Table of Contents" title="Table of Contents">&#9776;</button>
+
+<!-- TOC Drawer -->
+<nav class="toc-drawer" id="toc-drawer" aria-label="Table of contents">
+  <button class="toc-close" id="toc-close" aria-label="Close table of contents">&times;</button>
+  <div id="toc-links"></div>
+</nav>
+
+<!-- Glossary Modal -->
+<div class="glossary-overlay" id="glossary-overlay" role="dialog" aria-label="Glossary" aria-modal="true">
+  <div class="glossary-box">
+    <button class="g-close" id="glossary-close" aria-label="Close glossary">&times;</button>
+    <h3>Glossary</h3>
+    <dl>
+      <dt>Gate (g)</dt><dd>Risk governor [0–1] that scales position size. Computed from regime, volatility, drawdown, and correlation instability. Lower = more defensive.</dd>
+      <dt>Trade Quality (TQ)</dt><dd>Confidence-weighted composite: |C_conf|/100 &times; Reliability &times; Gate &times; DC/100. Higher TQ → larger permissible position.</dd>
+      <dt>Tau (&tau;)</dt><dd>Sigmoid temperature controlling how aggressively composite scores translate into directional probability. Regime-adaptive.</dd>
+      <dt>CVaR</dt><dd>Conditional Value-at-Risk: expected loss in the worst N% of scenarios. More conservative than VaR as it measures tail average, not threshold.</dd>
+      <dt>Kelly Fraction</dt><dd>Optimal capital fraction from the Kelly Criterion: f* = edge/odds. Capped and scaled by Gate for risk management.</dd>
+      <dt>Terminal Dependence</dt><dd>Percentage of DCF intrinsic value attributable to terminal value (years beyond explicit forecast). Above 70% indicates high sensitivity to long-term assumptions.</dd>
+      <dt>Data Confidence (DC)</dt><dd>0–100% score measuring completeness and quality of input data. Below 70% triggers RESEARCH MODE with degraded analytics.</dd>
+      <dt>Reliability</dt><dd>Blend of feature-based signal quality and regime classification confidence. Higher when regime is clear and input signals are stable.</dd>
+      <dt>Regime</dt><dd>Market state classification (Calm, Chop, Tightening Shock, Crisis Trend, Credit Stress) from soft GMM with 5 posterior probabilities.</dd>
+      <dt>Composite (C)</dt><dd>Weighted sum of 8 engine scores. C_raw is before gate scaling; C_adj = C_raw &times; Gate &times; min(1, DC/100).</dd>
+      <dt>MOS</dt><dd>Margin of Safety: (IV &minus; Price) / Price. Positive = undervalued relative to intrinsic value estimate.</dd>
+      <dt>P(Buy)</dt><dd>Probability of favorable outcome: sigmoid(C_adj / &tau;). Higher = stronger directional conviction.</dd>
+    </dl>
+  </div>
+</div>
+
 <div id="app"><div class="skel">Loading report…</div></div>
 <script>
 const D = __PAYLOAD_JSON__;
@@ -284,11 +369,37 @@ if(_reconErrs.length > 0){
   h += '</div>';
 }
 
+// ── Key Takeaways ──
+var _iv = DCF&&DCF.base?DCF.base:null;
+var _mos = (_iv&&price)?(((_iv-price)/price)*100):null;
+h += '<div class="takeaways"><div class="ta-hdr">Key Takeaways</div><ul>';
+h += '<li><strong>'+D.symbol+'</strong> is rated <strong class="'+cls(comp)+'">'+verdict+'</strong>';
+if(comp!=null) h += ' with composite '+(comp>=0?'+':'')+f(comp,1);
+h += '</li>';
+if(_iv!=null && price!=null){
+  h += '<li>Intrinsic value estimate $'+f(_iv,2)+' vs price $'+f(price,2);
+  if(_mos!=null) h += ' &rarr; MOS <span class="'+(_mos>=0?'pos':'neg')+'">'+fP(_mos,1)+'</span>';
+  h += '</li>';
+}
+if(dc!=null && dc<70) h += '<li class="warn">Data confidence at '+f(dc,0)+'% — RESEARCH MODE. Quantitative conclusions degraded.</li>';
+if(regime!=='N/A') h += '<li>Regime: <strong>'+regime+'</strong>';
+if(rel!=null) h += ', reliability '+f(rel,2);
+h += '</li>';
+h += '</ul></div>';
+
+// ── Copy Buttons ──
+h += '<div class="copy-bar">';
+h += '<button class="copy-btn" id="copy-slack" title="Copy summary for Slack">Copy Slack Summary</button>';
+h += '<button class="copy-btn" id="copy-nums" title="Copy key numbers">Copy Key Numbers</button>';
+h += '<button class="copy-btn" id="btn-glossary" title="Open glossary (key term definitions)">Glossary</button>';
+h += '</div>';
+
 // ════════════════════════════════════════════════════
 // SECTION: OWNER ASSESSMENT
 // ════════════════════════════════════════════════════
 if(V9.v9_decision){
-  h += '<div class="section-label">V12 Owner Assessment</div>';
+  h += '<div class="section-label" id="sec-owner" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>V12 Owner Assessment</div>';
+  h += '<div class="section-body" id="sec-owner-body">';
   // Data integrity banner
   if(_dataStatus==='INVALID'){
     h += '<div class="card" style="border-color:var(--neg);border-width:2px;background:rgba(248,81,73,0.08);padding:12px;margin-bottom:8px">';
@@ -796,10 +907,13 @@ if(V9.v9_decision){
   h += '</div>'; // end card
 }
 
+h += '</div>'; // end sec-owner-body
+
 // ════════════════════════════════════════════════════
 // SECTION: ENGINE & SIGNAL ANALYSIS
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Engine &amp; Signal Analysis</div>';
+h += '<div class="section-label" id="sec-engine" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Engine &amp; Signal Analysis</div>';
+h += '<div class="section-body" id="sec-engine-body">';
 
 // CHARTS ROW: Price Levels + Engine Waterfall
 h += '<div class="g2">';
@@ -989,6 +1103,24 @@ if(DCF && DCF.base && DCF.assumptions && DCF.assumptions.discount_rate && DCF.as
 h += '</div>';
 h += '</div>';
 
+// C2: Interactive DCF scenario slider
+if(DCF && DCF.base && DCF.assumptions && DCF.assumptions.discount_rate && DCF.assumptions.terminal_growth){
+  h += '<div class="card" style="padding:12px">';
+  h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Interactive DCF Scenario</div>';
+  h += '<div class="g2" style="gap:16px">';
+  h += '<div>';
+  h += '<label style="font-size:11px;color:var(--t2)">WACC: <span id="wacc-val" class="mono">'+f(DCF.assumptions.discount_rate,1)+'%</span></label>';
+  h += '<input type="range" id="wacc-slider" min="4.0" max="14.0" step="0.5" value="'+DCF.assumptions.discount_rate+'" style="width:100%;margin-top:4px;accent-color:var(--acc)">';
+  h += '</div>';
+  h += '<div>';
+  h += '<label style="font-size:11px;color:var(--t2)">Terminal Growth: <span id="tg-val" class="mono">'+f(DCF.assumptions.terminal_growth,1)+'%</span></label>';
+  h += '<input type="range" id="tg-slider" min="0.5" max="5.0" step="0.5" value="'+DCF.assumptions.terminal_growth+'" style="width:100%;margin-top:4px;accent-color:var(--acc)">';
+  h += '</div>';
+  h += '</div>';
+  h += '<div id="dcf-scenario-result" class="mono" style="margin-top:8px;font-size:12px;color:var(--t2)"></div>';
+  h += '</div>';
+}
+
 // ════════════════════════════════════════════════════
 // V12+ PROBABILISTIC FRAMEWORK PANELS
 // ════════════════════════════════════════════════════
@@ -998,7 +1130,7 @@ h += '<div class="g2">';
 h += '<div class="card"><h2>Monte Carlo IV Distribution</h2>';
 if(DCF && DCF.monte_carlo && dc >= 70){
   var MC = DCF.monte_carlo;
-  h += '<div id="ch-mc-dist" class="chart-box" style="height:220px"></div>';
+  h += '<div id="ch-mc-dist" class="chart-box" style="height:280px"></div>';
   h += '<div style="margin-top:8px">';
   h += '<table style="width:100%;font-size:10px;border-collapse:collapse;color:var(--t2)">';
   h += '<thead><tr style="border-bottom:1px solid var(--border)">';
@@ -1337,10 +1469,13 @@ if(DCF && DCF.assumptions){
   }
 }
 
+h += '</div>'; // end sec-engine-body
+
 // ════════════════════════════════════════════════════
 // SECTION: TECHNICALS
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Technical Analysis</div>';
+h += '<div class="section-label" id="sec-tech" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Technical Analysis</div>';
+h += '<div class="section-body" id="sec-tech-body">';
 
 h += '<div class="card"><h2>Technical Indicators</h2>';
 if(TECH.rsi_14||TECH.sma20){
@@ -1381,10 +1516,13 @@ if(TECH.rsi_14||TECH.sma20){
 }
 h += '</div>';
 
+h += '</div>'; // end sec-tech-body
+
 // ════════════════════════════════════════════════════
 // SECTION: FUNDAMENTALS & VALUATION
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Fundamentals &amp; Valuation</div>';
+h += '<div class="section-label" id="sec-fund" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Fundamentals &amp; Valuation</div>';
+h += '<div class="section-body" id="sec-fund-body">';
 
 h += '<div class="card"><h2>Fundamentals</h2>';
 if(PROV.estimated_fields && PROV.estimated_fields.length > 0){
@@ -1477,10 +1615,13 @@ if(S.stop_loss||S.entry){
   }
 }
 
+h += '</div>'; // end sec-fund-body
+
 // ════════════════════════════════════════════════════
 // SECTION: PEER POSITIONING
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Peer Positioning</div>';
+h += '<div class="section-label" id="sec-peers" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Peer Positioning</div>';
+h += '<div class="section-body" id="sec-peers-body">';
 
 h += '<div class="card"><h2>Peer Comparison</h2>';
 if(PEERS.length>0){
@@ -1530,16 +1671,24 @@ for(var i=0;i<ec.length;i++){
 }
 h += '</tr></thead><tbody>';
 var totalCt=0;
+// A3: find max contribution for data bar scaling
+var _maxCtBar=0;
+for(var i=0;i<ENGINES.length;i++){_maxCtBar=Math.max(_maxCtBar,Math.abs(CT[ENGINES[i]]||0))}
+if(_maxCtBar<0.01)_maxCtBar=1;
 for(var i=0;i<ENGINES.length;i++){
   var e=ENGINES[i],sc=SC[e],sn=SN[e],w=W[e],ct=CT[e];
   if(ct!=null) totalCt+=ct;
   var _zeroRow = (ct==null||Math.abs(ct)<0.005);
+  // A3: background gradient bar for contribution column
+  var barW=_maxCtBar>0&&ct!=null?Math.abs(ct)/_maxCtBar*100:0;
+  var barColor=ct>=0?'rgba(63,185,80,0.15)':'rgba(248,81,73,0.15)';
+  var barStyle='background:linear-gradient(to right,'+barColor+' '+barW+'%,transparent '+barW+'%)';
   h += '<tr'+(_zeroRow?' style="opacity:0.4"':'')+'>';
   h += '<td style="font-weight:500">'+e+'</td>';
   h += '<td class="text-r mono '+cls(sc)+'">'+(sc!=null?fS(sc,1):'N/A')+'</td>';
   h += '<td class="text-r mono '+cls(sn)+'">'+(sn!=null?fS(sn,3):'N/A')+'</td>';
   h += '<td class="text-r mono">'+(w!=null?f(w,3):'')+'</td>';
-  h += '<td class="text-r mono '+cls(ct)+'">'+(ct!=null?fS(ct,2):'')+'</td>';
+  h += '<td class="text-r mono '+cls(ct)+'" style="'+barStyle+'">'+(ct!=null?fS(ct,2):'')+'</td>';
   h += '</tr>';
 }
 h += '<tr style="border-top:2px solid var(--border);font-weight:700"><td>TOTAL</td><td></td><td></td><td></td>';
@@ -1548,10 +1697,13 @@ h += '</tbody></table>';
 h += '<div style="font-size:9px;color:var(--t3);margin-top:4px;font-style:italic">Contribution = weight \u00D7 normalized_score \u00D7 100. Example: trend 0.147 \u00D7 0.762 \u00D7 100 = 11.18</div>';
 h += '</div></div>';
 
+h += '</div>'; // end sec-peers-body
+
 // ════════════════════════════════════════════════════
 // SECTION: SENTIMENT & NEWS
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Sentiment &amp; News</div>';
+h += '<div class="section-label" id="sec-sent" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Sentiment &amp; News</div>';
+h += '<div class="section-body" id="sec-sent-body">';
 
 h += '<div class="card"><h2>News &amp; Sentiment</h2>';
 if(NEWS.length>0){
@@ -1634,10 +1786,13 @@ if(INST.institutional_pct||INST.short_pct){
   h += '</div>';
 }
 
+h += '</div>'; // end sec-sent-body
+
 // ════════════════════════════════════════════════════
 // SECTION: RISK & MACRO
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Risk &amp; Macro Context</div>';
+h += '<div class="section-label" id="sec-risk" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Risk &amp; Macro Context</div>';
+h += '<div class="section-body" id="sec-risk-body">';
 
 h += '<div class="card"><h2>Risk Analysis</h2>';
 var sr = S.risk_structural||0;
@@ -1645,23 +1800,37 @@ var tr = S.risk_tactical||0;
 var riskTotal = Math.min(1,(sr+tr)/2);
 var rC2 = riskTotal>0.5?'var(--neg)':riskTotal>0.3?'var(--warn)':'var(--pos)';
 
-// ── Top: Risk gauge + metrics side by side ──
-h += '<div class="g2" style="align-items:start">';
-
-// Left: Gauge + combined level
-h += '<div>';
-h += '<div id="ch-risk-dial" style="height:150px"></div>';
-h += '<div style="text-align:center;margin-top:4px">';
-// Interpretation label
+// B2: Risk bars replace gauge — show structural + tactical separately
+function riskBarColor(v){return v<0.2?'var(--pos)':v<0.5?'var(--warn)':'var(--neg)'}
+h += '<div style="margin-bottom:12px">';
+// Structural bar
+h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+h += '<span style="width:80px;font-size:10px;color:var(--t3);text-transform:uppercase">Structural</span>';
+h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden">';
+h += '<div style="width:'+Math.max(2,sr*100)+'%;height:100%;background:'+riskBarColor(sr)+';border-radius:4px;transition:width 0.4s"></div></div>';
+h += '<span class="mono" style="width:50px;text-align:right;font-size:12px;color:'+riskBarColor(sr)+'">'+f(sr,3)+'</span></div>';
+// Tactical bar
+h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+h += '<span style="width:80px;font-size:10px;color:var(--t3);text-transform:uppercase">Tactical</span>';
+h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden">';
+h += '<div style="width:'+Math.max(2,tr*100)+'%;height:100%;background:'+riskBarColor(tr)+';border-radius:4px;transition:width 0.4s"></div></div>';
+h += '<span class="mono" style="width:50px;text-align:right;font-size:12px;color:'+riskBarColor(tr)+'">'+f(tr,3)+'</span></div>';
+// Combined summary
+h += '<div style="display:flex;align-items:center;gap:8px">';
+h += '<span style="width:80px;font-size:10px;color:var(--t3);text-transform:uppercase;font-weight:600">Blended</span>';
+h += '<div style="flex:1;height:10px;background:var(--bg2);border-radius:5px;overflow:hidden">';
+h += '<div style="width:'+Math.max(2,riskTotal*100)+'%;height:100%;background:'+riskBarColor(riskTotal)+';border-radius:5px;transition:width 0.4s"></div></div>';
+h += '<span class="mono" style="width:50px;text-align:right;font-size:13px;font-weight:600;color:'+riskBarColor(riskTotal)+'">'+f(riskTotal*100,0)+'%</span></div>';
+h += '</div>';
+// Interpretation pill
+h += '<div style="text-align:center;margin:8px 0">';
 if(riskTotal <= 0.15) h += '<span class="pill pill-pos" style="font-size:11px">Low Risk Environment</span>';
 else if(riskTotal <= 0.30) h += '<span class="pill pill-pos" style="font-size:11px">Below-Average Risk</span>';
 else if(riskTotal <= 0.50) h += '<span class="pill pill-warn" style="font-size:11px">Moderate Risk</span>';
 else if(riskTotal <= 0.70) h += '<span class="pill pill-warn" style="font-size:11px">Elevated Risk</span>';
 else h += '<span class="pill pill-neg" style="font-size:11px">High Systemic Risk</span>';
 h += '</div>';
-h += '</div>';
-
-// Right: Metric breakdown with interpretation
+// Detailed metrics below
 h += '<div>';
 h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Engine Risk Metrics</div>';
 
@@ -2035,6 +2204,12 @@ if(_y10!=null && _y2!=null){
   h += '<div style="margin-bottom:16px">';
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Yield Curve Snapshot</div>';
   h += '<div id="ch-yield-curve" style="height:260px"></div>';
+  // B3: spread annotation
+  var _ycSpread = _y10 - _y2;
+  var _ycClr = _ycSpread<0?'var(--neg)':_ycSpread<0.5?'var(--warn)':'var(--pos)';
+  h += '<div style="font-size:11px;color:var(--t2);margin-top:4px;text-align:center">10Y–2Y Spread: <span class="mono" style="color:'+_ycClr+';font-weight:600">'+(_ycSpread>=0?'+':'')+_ycSpread.toFixed(2)+'%</span>';
+  h += _ycSpread<0?' <span style="font-size:9px;color:var(--neg)">(inverted)</span>':'';
+  h += '</div>';
   h += '</div>';
 }
 
@@ -2182,10 +2357,13 @@ h += '</div>';
 
 h += '</div>';
 
+h += '</div>'; // end sec-risk-body
+
 // ════════════════════════════════════════════════════
 // SECTION: EXTENDED DATA
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Extended Data</div>';
+h += '<div class="section-label" id="sec-ext" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Extended Data</div>';
+h += '<div class="section-body" id="sec-ext-body">';
 
 // DCF Walkthrough
 if(DCF && DCF.assumptions){
@@ -2372,10 +2550,13 @@ if(CO.name){
   h += '</div>';
 }
 
+h += '</div>'; // end sec-ext-body
+
 // ════════════════════════════════════════════════════
 // SECTION: QUANT APPENDIX
 // ════════════════════════════════════════════════════
-h += '<div class="section-label">Quant Appendix</div>';
+h += '<div class="section-label" id="sec-quant" onclick="collapseSection(this)"><span class="collapse-icon">&#9662;</span>Quant Appendix</div>';
+h += '<div class="section-body" id="sec-quant-body">';
 
 h += '<div class="card">';
 h += '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">';
@@ -3255,6 +3436,40 @@ h += '</div>'; // end syw-expanded
 
 h += '</div></div>'; // end collapse-body and card
 
+h += '</div>'; // end sec-quant-body
+
+// ── Run Fingerprint ──
+h += '<div class="fingerprint" id="run-fingerprint">';
+h += '<div><span class="fp-label">Engine</span> <span class="fp-val">ATLAS V12+</span></div>';
+if(D.created_at) h += '<div><span class="fp-label">Created</span> <span class="fp-val">'+new Date(D.created_at).toISOString()+'</span></div>';
+if(PROV.timestamp_utc) h += '<div><span class="fp-label">Data fetch</span> <span class="fp-val">'+PROV.timestamp_utc+'</span></div>';
+if(PROV.data_source) h += '<div><span class="fp-label">Source</span> <span class="fp-val">'+PROV.data_source+'</span></div>';
+var _synthFields = PROV.synthetic_fields||FIN._provenance&&FIN._provenance.synthetic_fields||[];
+var _missFields = PROV.missing_fields||FIN._provenance&&FIN._provenance.missing_fields||[];
+if(_synthFields.length) h += '<div><span class="fp-label">Synthetic</span> <span class="fp-val">'+_synthFields.length+' fields</span></div>';
+if(_missFields.length) h += '<div><span class="fp-label">Missing</span> <span class="fp-val">'+_missFields.length+' fields</span></div>';
+if(dc!=null) h += '<div><span class="fp-label">DC</span> <span class="fp-val">'+f(dc,0)+'%</span></div>';
+if(P.latency_sec) h += '<div><span class="fp-label">Latency</span> <span class="fp-val">'+f(P.latency_sec,1)+'s</span></div>';
+h += '</div>';
+
+// ── Data Completeness Details (when DC < 70%) ──
+if(dc!=null && dc<70){
+  h += '<details style="margin:8px 0;font-size:11px;color:var(--t2)">';
+  h += '<summary style="cursor:pointer;color:var(--warn);font-weight:600">Data Completeness Details (DC '+f(dc,0)+'%)</summary>';
+  h += '<div style="padding:8px 0 4px;line-height:1.8">';
+  if(_missFields.length){
+    h += '<div><strong>Missing fields:</strong> '+_missFields.join(', ')+'</div>';
+  }
+  if(_synthFields.length){
+    h += '<div><strong>Synthetic/estimated fields:</strong> '+_synthFields.join(', ')+'</div>';
+  }
+  if(_dataReasons.length){
+    h += '<div><strong>Data status reasons:</strong> '+_dataReasons.join(', ')+'</div>';
+  }
+  h += '<div style="margin-top:4px;color:var(--t3)">Monte Carlo distributions, sensitivity analysis, and precise multiples are degraded or hidden when DC &lt; 70%.</div>';
+  h += '</div></details>';
+}
+
 // PROVENANCE FOOTER
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
 h += '<span>ATLAS V12+ (Phase 3)</span>';
@@ -3269,15 +3484,208 @@ h += '</div>';
 document.getElementById('app').innerHTML = h;
 
 // ══════════════════════════════════════════════════════
+// UI FEATURES — Sticky Header, TOC, Copy, Glossary, A11y
+// ══════════════════════════════════════════════════════
+
+// ── Sticky Mini-Header ──
+(function(){
+  var stickyEl = document.getElementById('sticky-hdr');
+  var sh = '<span class="sh-sym">'+D.symbol+'</span>';
+  sh += '<span class="pill '+pillV(verdict)+'" style="font-size:10px;padding:1px 6px">'+verdict+'</span>';
+  sh += '<span class="sh-sep"></span>';
+  var shItems = [
+    ['Price',price!=null?'$'+f(price,2):'N/A'],
+    ['MOS',_mos!=null?fP(_mos,1):'N/A'],
+    ['IV',_iv!=null?'$'+f(_iv,2):'N/A'],
+    ['DC',dc!=null?f(dc,0)+'%':'N/A'],
+    ['Regime',regime],
+    ['Rel.',rel!=null?f(rel,2):'N/A'],
+    ['TQ',tq!=null?f(tq,4):'N/A']
+  ];
+  for(var i=0;i<shItems.length;i++){
+    sh+='<span class="sh-item"><span class="sh-lbl">'+shItems[i][0]+'</span><span class="sh-val">'+shItems[i][1]+'</span></span>';
+  }
+  stickyEl.innerHTML = sh;
+
+  var headerEnd = 300; // pixels after which sticky header shows
+  var _stickyVisible = false;
+  window.addEventListener('scroll',function(){
+    var show = window.scrollY > headerEnd;
+    if(show !== _stickyVisible){
+      _stickyVisible = show;
+      stickyEl.classList.toggle('visible',show);
+      stickyEl.setAttribute('aria-hidden',show?'false':'true');
+    }
+  },{passive:true});
+})();
+
+// ── TOC Drawer ──
+(function(){
+  var tocBtn = document.getElementById('btn-toc');
+  var tocDrawer = document.getElementById('toc-drawer');
+  var tocClose = document.getElementById('toc-close');
+  var tocLinks = document.getElementById('toc-links');
+  var sectionIds = ['sec-owner','sec-engine','sec-tech','sec-fund','sec-peers','sec-sent','sec-risk','sec-ext','sec-quant'];
+  var sectionNames = ['Owner Assessment','Engine & Signal','Technical Analysis','Fundamentals','Peer Positioning','Sentiment & News','Risk & Macro','Extended Data','Quant Appendix'];
+  var tocH = '';
+  for(var i=0;i<sectionIds.length;i++){
+    var el=document.getElementById(sectionIds[i]);
+    if(el) tocH += '<a href="#'+sectionIds[i]+'" data-sec="'+sectionIds[i]+'">'+sectionNames[i]+'</a>';
+  }
+  tocLinks.innerHTML = tocH;
+
+  tocBtn.addEventListener('click',function(){tocDrawer.classList.toggle('open')});
+  tocClose.addEventListener('click',function(){tocDrawer.classList.remove('open')});
+
+  // Close on click outside
+  document.addEventListener('click',function(e){
+    if(tocDrawer.classList.contains('open') && !tocDrawer.contains(e.target) && e.target!==tocBtn){
+      tocDrawer.classList.remove('open');
+    }
+  });
+
+  // TOC link click: smooth scroll, close drawer
+  tocLinks.addEventListener('click',function(e){
+    if(e.target.tagName==='A'){
+      e.preventDefault();
+      var sec = document.getElementById(e.target.getAttribute('data-sec'));
+      if(sec){
+        // Expand if collapsed
+        var body = document.getElementById(sec.id+'-body');
+        if(body && body.classList.contains('collapsed')) collapseSection(sec);
+        sec.scrollIntoView({behavior:'smooth',block:'start'});
+      }
+      tocDrawer.classList.remove('open');
+    }
+  });
+
+  // IntersectionObserver to highlight current section in TOC
+  if('IntersectionObserver' in window){
+    var observer = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if(entry.isIntersecting){
+          var id = entry.target.id;
+          var links = tocLinks.querySelectorAll('a');
+          for(var i=0;i<links.length;i++){
+            links[i].classList.toggle('active',links[i].getAttribute('data-sec')===id);
+          }
+        }
+      });
+    },{rootMargin:'-10% 0px -80% 0px'});
+    sectionIds.forEach(function(id){
+      var el=document.getElementById(id);
+      if(el) observer.observe(el);
+    });
+  }
+})();
+
+// ── Back to Top Button ──
+(function(){
+  var btn = document.getElementById('btn-top');
+  var _topVisible = false;
+  window.addEventListener('scroll',function(){
+    var show = window.scrollY > 600;
+    if(show !== _topVisible){
+      _topVisible = show;
+      btn.classList.toggle('visible',show);
+    }
+  },{passive:true});
+  btn.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})});
+})();
+
+// ── Copy Buttons ──
+(function(){
+  var slackBtn = document.getElementById('copy-slack');
+  var numsBtn = document.getElementById('copy-nums');
+  if(slackBtn){
+    slackBtn.addEventListener('click',function(){
+      var txt = '*'+D.symbol+'* '+verdict+' | $'+f(price,2);
+      if(comp!=null) txt += ' | Composite: '+(comp>=0?'+':'')+f(comp,1);
+      if(_iv) txt += ' | IV: $'+f(_iv,2);
+      if(_mos!=null) txt += ' | MOS: '+fP(_mos,1);
+      txt += ' | Regime: '+regime;
+      if(dc!=null) txt += ' | DC: '+f(dc,0)+'%';
+      if(tq!=null) txt += ' | TQ: '+f(tq,4);
+      navigator.clipboard.writeText(txt).then(function(){
+        slackBtn.classList.add('copied');slackBtn.textContent='Copied!';
+        setTimeout(function(){slackBtn.classList.remove('copied');slackBtn.textContent='Copy Slack Summary'},1500);
+      });
+    });
+  }
+  if(numsBtn){
+    numsBtn.addEventListener('click',function(){
+      var lines = [];
+      lines.push(D.symbol+' — Key Numbers');
+      lines.push('Price: $'+f(price,2));
+      if(_iv) lines.push('IV (Base): $'+f(_iv,2));
+      if(_mos!=null) lines.push('MOS: '+fP(_mos,1));
+      if(comp!=null) lines.push('Composite: '+(comp>=0?'+':'')+f(comp,1));
+      if(cRaw!=null) lines.push('Raw Score: '+(cRaw>=0?'+':'')+f(cRaw,1));
+      if(gate!=null) lines.push('Gate: '+f(gate,2));
+      if(dc!=null) lines.push('Data Confidence: '+f(dc,0)+'%');
+      if(rel!=null) lines.push('Reliability: '+f(rel,2));
+      if(tq!=null) lines.push('Trade Quality: '+f(tq,4));
+      if(_pBuy!=null) lines.push('P(Buy): '+f(_pBuy*100,1)+'%');
+      lines.push('Regime: '+regime);
+      lines.push('Mode: '+mode);
+      navigator.clipboard.writeText(lines.join('\n')).then(function(){
+        numsBtn.classList.add('copied');numsBtn.textContent='Copied!';
+        setTimeout(function(){numsBtn.classList.remove('copied');numsBtn.textContent='Copy Key Numbers'},1500);
+      });
+    });
+  }
+})();
+
+// ── Glossary Modal ──
+(function(){
+  var overlay = document.getElementById('glossary-overlay');
+  var closeBtn = document.getElementById('glossary-close');
+  var openBtn = document.getElementById('btn-glossary');
+  if(openBtn){
+    openBtn.addEventListener('click',function(){overlay.classList.add('open')});
+  }
+  closeBtn.addEventListener('click',function(){overlay.classList.remove('open')});
+  overlay.addEventListener('click',function(e){
+    if(e.target===overlay) overlay.classList.remove('open');
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape' && overlay.classList.contains('open')){
+      overlay.classList.remove('open');
+      e.stopPropagation();
+    }
+  });
+})();
+
+// ── Accessibility: focus outlines, ARIA ──
+(function(){
+  // Set ARIA labels on collapsible sections
+  var sections = document.querySelectorAll('.section-label');
+  for(var i=0;i<sections.length;i++){
+    sections[i].setAttribute('role','button');
+    sections[i].setAttribute('tabindex','0');
+    sections[i].setAttribute('aria-expanded','true');
+    // Enable keyboard activation
+    sections[i].addEventListener('keydown',function(e){
+      if(e.key==='Enter'||e.key===' '){
+        e.preventDefault();
+        this.click();
+      }
+    });
+  }
+})();
+
+// ══════════════════════════════════════════════════════
 // CHARTS — all wrapped in initCharts() for theme reinit
 // ══════════════════════════════════════════════════════
 function initCharts(){
   var c = TC();
+  // Lazy guard: skip chart if not yet observed/scheduled
+  function shouldInit(id){return typeof _chartInitialized==='undefined'||_chartInitialized[id]}
 
   // ── Price Context ──
   (function(){
     var el = document.getElementById('ch-price');
-    if(!el) return;
+    if(!el||!shouldInit('ch-price')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var items = [];
     if(TECH.sma200!=null) items.push({name:'SMA 200',value:TECH.sma200,color:c.neg});
@@ -3303,10 +3711,14 @@ function initCharts(){
   // ── Engine Waterfall ──
   (function(){
     var el = document.getElementById('ch-waterfall');
-    if(!el) return;
+    if(!el||!shouldInit('ch-waterfall')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var names=[],baseD=[],posD=[],negD=[];
     var running=0;
+    // A1: compute max contribution for opacity scaling
+    var maxCt=0;
+    for(var i=0;i<ENGINES.length;i++){maxCt=Math.max(maxCt,Math.abs(CT[ENGINES[i]]||0))}
+    if(maxCt<0.01)maxCt=1;
     for(var i=0;i<ENGINES.length;i++){
       var e=ENGINES[i],ct=CT[e]||0;
       names.push(e);
@@ -3325,10 +3737,29 @@ function initCharts(){
       yAxis:{type:'category',data:names,inverse:true,axisLabel:{color:c.t2,fontSize:11},axisLine:{show:false},axisTick:{show:false}},
       series:[
         {type:'bar',stack:'w',data:baseD,itemStyle:{color:'transparent'},emphasis:{itemStyle:{color:'transparent'}},barWidth:12},
-        {type:'bar',stack:'w',name:'pos',data:posD.map(function(v){return{value:v,itemStyle:{color:v>0?c.pos:'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
-        {type:'bar',stack:'w',name:'neg',data:negD.map(function(v){return{value:v,itemStyle:{color:v>0?c.neg:'transparent',borderRadius:[0,2,2,0]}}}),barWidth:12},
+        {type:'bar',stack:'w',name:'pos',data:posD.map(function(v,idx){var isTotal=idx===ENGINES.length;var opac=isTotal?1.0:Math.max(0.25,v/maxCt);return{value:v,itemStyle:{color:v>0?c.pos:'transparent',opacity:opac,borderRadius:[0,2,2,0],borderWidth:isTotal?1:0,borderColor:isTotal?c.t1:'transparent'}}}),barWidth:12},
+        {type:'bar',stack:'w',name:'neg',data:negD.map(function(v,idx){var isTotal=idx===ENGINES.length;var opac=isTotal?1.0:Math.max(0.25,v/maxCt);return{value:v,itemStyle:{color:v>0?c.neg:'transparent',opacity:opac,borderRadius:[0,2,2,0],borderWidth:isTotal?1:0,borderColor:isTotal?c.t1:'transparent'}}}),barWidth:12},
       ],
       animationDuration:400
+    });
+    // C1: linked brushing — waterfall bar hover highlights engine detail table row
+    ch.on('mouseover',function(params){
+      if(params.dataIndex>=ENGINES.length)return;
+      var engineName=ENGINES[params.dataIndex];
+      var tbl=document.getElementById('tbl-eng');
+      if(!tbl)return;
+      var rows=tbl.querySelectorAll('tbody tr');
+      for(var ri=0;ri<rows.length;ri++){
+        var fc=rows[ri].querySelector('td');
+        if(fc&&fc.textContent.trim()===engineName){rows[ri].style.background='rgba(88,166,255,0.1)'}
+        else{rows[ri].style.background=''}
+      }
+    });
+    ch.on('mouseout',function(){
+      var tbl=document.getElementById('tbl-eng');
+      if(!tbl)return;
+      var rows=tbl.querySelectorAll('tbody tr');
+      for(var ri=0;ri<rows.length;ri++) rows[ri].style.background='';
     });
     window.addEventListener('resize',function(){ch.resize()});
   })();
@@ -3336,15 +3767,23 @@ function initCharts(){
   // ── Regime Vector ──
   (function(){
     var el = document.getElementById('ch-regime');
-    if(!el) return;
+    if(!el||!shouldInit('ch-regime')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var names=[],vals=[],colors=[];
+    // A4: risk features use red-gradient, signal features use green-gradient
+    var riskFeatures=['CH','VL','VS','CI','RS','CS','GR','BM_f','BEI'];
     for(var i=0;i<RF.length;i++){
       var key=RF[i][0],label=RF[i][1],v=RV[key];
       if(v==null) continue;
       names.push(label);
       vals.push(Number((v*100).toFixed(0)));
-      colors.push(key==='TS'?c.acc:(v>0.5?c.neg:v>0.25?c.warn:c.pos));
+      var pct=v*100;
+      var isRisk=riskFeatures.indexOf(key)>=0;
+      var clr;
+      if(key==='TS'){clr=c.acc}
+      else if(isRisk){clr=pct<30?c.pos:pct<60?c.warn:c.neg}
+      else{clr=pct<30?c.neg:pct<60?c.warn:c.pos}
+      colors.push(clr);
     }
     if(!names.length) return;
     var ch = echarts.init(el);
@@ -3362,7 +3801,7 @@ function initCharts(){
   // ── DCF Chart ──
   (function(){
     var el = document.getElementById('ch-dcf');
-    if(!el||!DCF) return;
+    if(!el||!DCF||!shouldInit('ch-dcf')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var names=['Bear','Base','Bull'];
     var vals=[DCF.bear,DCF.base,DCF.bull];
@@ -3381,27 +3820,42 @@ function initCharts(){
     window.addEventListener('resize',function(){ch.resize()});
   })();
 
-  // ── MC Distribution Box Plot ──
+  // ── MC Distribution Box Plot + Density Curve (B1) ──
   (function(){
     var el = document.getElementById('ch-mc-dist');
-    if(!el||!DCF||!DCF.monte_carlo) return;
+    if(!el||!DCF||!DCF.monte_carlo||!shouldInit('ch-mc-dist')) return;
     var MC = DCF.monte_carlo;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var ch = echarts.init(el);
     var pcts = [MC.iv_p5, MC.iv_p25, MC.iv_p50, MC.iv_p75, MC.iv_p95];
+    // B1: approximate density curve from percentiles
+    var isRightSkew = MC.iv_mean > MC.iv_p50;
+    var densX = pcts.slice();
+    var densY = isRightSkew ? [0.06,0.22,0.28,0.18,0.04] : [0.04,0.18,0.28,0.22,0.06];
+    // Add boundary points for smooth taper
+    var spread = pcts[4] - pcts[0];
+    densX.unshift(pcts[0] - spread*0.15); densY.unshift(0);
+    densX.push(pcts[4] + spread*0.15); densY.push(0);
     ch.setOption({
       tooltip:{trigger:'item',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:11}},
-      grid:{left:70,right:30,top:20,bottom:20},
-      xAxis:{type:'category',data:['IV Distribution'],axisLabel:{color:c.t2},axisLine:{lineStyle:{color:c.border}}},
-      yAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      grid:[{left:70,right:30,top:20,bottom:'55%'},{left:70,right:30,top:'55%',bottom:20}],
+      xAxis:[
+        {type:'category',data:['IV Distribution'],gridIndex:0,show:false},
+        {type:'value',gridIndex:1,axisLabel:{formatter:function(v){return'$'+Math.round(v)},color:c.t2,fontSize:9},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}},min:densX[0],max:densX[densX.length-1]}
+      ],
+      yAxis:[
+        {type:'value',gridIndex:0,axisLabel:{formatter:function(v){return'$'+v},color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+        {type:'value',gridIndex:1,show:false}
+      ],
       series:[
-        {type:'boxplot',data:[[pcts[0],pcts[1],pcts[2],pcts[3],pcts[4]]],itemStyle:{color:'rgba(99,163,248,0.3)',borderColor:c.acc,borderWidth:2},boxWidth:['40%','60%'],tooltip:{formatter:function(){return'P5: $'+f(pcts[0],2)+'<br>P25: $'+f(pcts[1],2)+'<br>P50: $'+f(pcts[2],2)+'<br>P75: $'+f(pcts[3],2)+'<br>P95: $'+f(pcts[4],2)}}},
-        {type:'scatter',data:[[0,MC.iv_mean]],symbolSize:10,itemStyle:{color:c.warn},tooltip:{formatter:'Mean: $'+f(MC.iv_mean,2)}}
+        {type:'boxplot',xAxisIndex:0,yAxisIndex:0,data:[[pcts[0],pcts[1],pcts[2],pcts[3],pcts[4]]],itemStyle:{color:'rgba(99,163,248,0.3)',borderColor:c.acc,borderWidth:2},boxWidth:['40%','60%'],tooltip:{formatter:function(){return'P5: $'+f(pcts[0],2)+'<br>P25: $'+f(pcts[1],2)+'<br>P50: $'+f(pcts[2],2)+'<br>P75: $'+f(pcts[3],2)+'<br>P95: $'+f(pcts[4],2)}}},
+        {type:'scatter',xAxisIndex:0,yAxisIndex:0,data:[[0,MC.iv_mean]],symbolSize:10,itemStyle:{color:c.warn},tooltip:{formatter:'Mean: $'+f(MC.iv_mean,2)}},
+        {type:'line',xAxisIndex:1,yAxisIndex:1,data:densX.map(function(x,i){return[x,densY[i]]}),smooth:true,symbol:'none',lineStyle:{color:c.acc,width:2},areaStyle:{color:c.acc,opacity:0.12},tooltip:{show:false}}
       ],
       animationDuration:400
     });
     if(price){
-      ch.setOption({series:[{},{},{type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:c.neg,type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'$'+f(price,2),color:c.neg,fontSize:9}}]},data:[]}]});
+      ch.setOption({series:[{},{},{},{type:'line',xAxisIndex:0,yAxisIndex:0,markLine:{silent:true,symbol:'none',lineStyle:{color:c.neg,type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'$'+f(price,2),color:c.neg,fontSize:9}}]},data:[]}]});
     }
     window.addEventListener('resize',function(){ch.resize()});
   })();
@@ -3409,7 +3863,7 @@ function initCharts(){
   // ── Earnings Surprise ──
   (function(){
     var el = document.getElementById('ch-earn');
-    if(!el||!EARN.length) return;
+    if(!el||!EARN.length||!shouldInit('ch-earn')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var dates=[],surprises=[],colors=[];
     for(var i=EARN.length-1;i>=0;i--){
@@ -3433,7 +3887,7 @@ function initCharts(){
   // ── Quality Score Donut ──
   (function(){
     var el = document.getElementById('ch-donut');
-    if(!el||!V9.business_quality) return;
+    if(!el||!V9.business_quality||!shouldInit('ch-donut')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var ch = echarts.init(el);
     ch.setOption({
@@ -3457,7 +3911,7 @@ function initCharts(){
   // ── IV Sensitivity Heatmap ──
   (function(){
     var el = document.getElementById('ch-heatmap');
-    if(!el||!DCF||!DCF.assumptions) return;
+    if(!el||!DCF||!DCF.assumptions||!shouldInit('ch-heatmap')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var a=DCF.assumptions;
     var baseR=a.discount_rate/100, baseG=a.terminal_growth/100;
@@ -3478,7 +3932,9 @@ function initCharts(){
         if(r<=g||r<=0){data.push([xi,yi,null]);continue;}
         var ratio=(1+g)/(r-g)/baseTVratio;
         var fv=Math.round(baseFV*ratio*100)/100;
-        data.push([xi,yi,fv]);
+        // A2: highlight base-case cell (center of 5×5 grid)
+        var isBase=(xi===2&&yi===2);
+        data.push({value:[xi,yi,fv],itemStyle:isBase?{borderColor:'#ffffff',borderWidth:3}:undefined});
         if(fv<min)min=fv;
         if(fv>max)max=fv;
       }
@@ -3502,10 +3958,34 @@ function initCharts(){
     window.addEventListener('resize',function(){ch.resize()});
   })();
 
+  // C2: DCF scenario slider event listeners
+  (function(){
+    var wS=document.getElementById('wacc-slider'),tS=document.getElementById('tg-slider');
+    if(!wS||!tS||!DCF||!DCF.assumptions) return;
+    var baseR=DCF.assumptions.discount_rate/100,baseG=DCF.assumptions.terminal_growth/100,baseFV=DCF.base;
+    if(!baseFV||baseR<=baseG) return;
+    var baseTVratio=(1+baseG)/(baseR-baseG);
+    function updateScenario(){
+      var wacc=parseFloat(wS.value)/100,tg=parseFloat(tS.value)/100;
+      document.getElementById('wacc-val').textContent=wS.value+'%';
+      document.getElementById('tg-val').textContent=tS.value+'%';
+      var el=document.getElementById('dcf-scenario-result');
+      if(wacc<=tg){el.innerHTML='<span style="color:var(--neg)">Invalid: WACC must exceed terminal growth</span>';return}
+      var newTVratio=(1+tg)/(wacc-tg);
+      var scenarioFV=Math.round(baseFV*(newTVratio/baseTVratio)*100)/100;
+      var mos=price?((scenarioFV-price)/scenarioFV*100):null;
+      var mosStr=mos!=null?' | MOS: '+(mos>=0?'+':'')+mos.toFixed(1)+'%':'';
+      var clr=scenarioFV>price?'var(--pos)':'var(--neg)';
+      el.innerHTML='Scenario IV: <span style="color:'+clr+';font-weight:600">$'+scenarioFV.toFixed(2)+'</span>'+mosStr+' <span style="color:var(--t3)">(vs base $'+baseFV.toFixed(2)+')</span>';
+    }
+    wS.addEventListener('input',updateScenario);
+    tS.addEventListener('input',updateScenario);
+  })();
+
   // ── Peer Scatter Plot ──
   (function(){
     var el = document.getElementById('ch-scatter');
-    if(!el||!PEERS.length) return;
+    if(!el||!PEERS.length||!shouldInit('ch-scatter')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
 
     var allData = [];
@@ -3542,13 +4022,31 @@ function initCharts(){
       series:[{type:'scatter',data:allData,symbolSize:function(d){return d[2]},label:{show:true,formatter:function(p){return p.name},position:'top',color:c.t2,fontSize:9,fontFamily:'JetBrains Mono,monospace'}}],
       animationDuration:400
     });
+    // D: Peer scatter ↔ table cross-highlighting
+    ch.on('mouseover',function(params){
+      var sym=params.name;
+      var tbl=document.getElementById('tbl-peers');
+      if(!tbl||!sym) return;
+      var rows=tbl.querySelectorAll('tbody tr');
+      for(var ri=0;ri<rows.length;ri++){
+        var fc=rows[ri].querySelector('td');
+        if(fc&&fc.textContent.trim()===sym){rows[ri].style.background='rgba(88,166,255,0.1)'}
+        else{rows[ri].style.background=''}
+      }
+    });
+    ch.on('mouseout',function(){
+      var tbl=document.getElementById('tbl-peers');
+      if(!tbl) return;
+      var rows=tbl.querySelectorAll('tbody tr');
+      for(var ri=0;ri<rows.length;ri++) rows[ri].style.background='';
+    });
     window.addEventListener('resize',function(){ch.resize()});
   })();
 
   // ── Margin vs Growth Quadrant ──
   (function(){
     var el = document.getElementById('ch-quadrant');
-    if(!el||!PEERS.length) return;
+    if(!el||!PEERS.length||!shouldInit('ch-quadrant')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var qData = [];
     // Add subject company
@@ -3583,7 +4081,7 @@ function initCharts(){
   // ── Trade Quality Radar ──
   (function(){
     var el = document.getElementById('ch-radar');
-    if(!el) return;
+    if(!el||!shouldInit('ch-radar')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var compMag = comp!=null?Math.min(100, Math.abs(comp)):0;
     var dcVal = dc||0;
@@ -3623,41 +4121,12 @@ function initCharts(){
     window.addEventListener('resize',function(){ch.resize()});
   })();
 
-  // ── Systemic Risk Dial (Gauge) ──
-  (function(){
-    var el = document.getElementById('ch-risk-dial');
-    if(!el) return;
-    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
-    var sr2 = S.risk_structural||0;
-    var tr2 = S.risk_tactical||0;
-    var rTotal = Math.min(100, ((sr2+tr2)/2)*100);
-    var ch = echarts.init(el);
-    ch.setOption({
-      series:[{
-        type:'gauge',
-        startAngle:180,endAngle:0,
-        min:0,max:100,
-        center:['50%','80%'],radius:'110%',
-        splitNumber:4,
-        axisLine:{lineStyle:{width:14,color:[[0.3,c.pos],[0.6,c.warn],[1,c.neg]]}},
-        axisTick:{show:false},
-        splitLine:{length:6,lineStyle:{color:'auto',width:2}},
-        axisLabel:{distance:-28,color:c.t3,fontSize:9,fontFamily:'JetBrains Mono,monospace',formatter:function(v){return v+'%'}},
-        pointer:{length:'60%',width:4,itemStyle:{color:'auto'}},
-        anchor:{show:true,size:6,itemStyle:{borderWidth:2,borderColor:'auto'}},
-        title:{show:true,offsetCenter:[0,'-20%'],fontSize:10,color:c.t3,fontWeight:500},
-        detail:{valueAnimation:true,fontSize:16,fontFamily:'JetBrains Mono,monospace',fontWeight:700,offsetCenter:[0,'10%'],formatter:function(v){return v.toFixed(0)+'%'},color:rTotal>50?c.neg:rTotal>30?c.warn:c.pos},
-        data:[{value:Math.round(rTotal),name:'Systemic Risk'}],
-        animationDuration:800
-      }]
-    });
-    window.addEventListener('resize',function(){ch.resize()});
-  })();
+  // B2: Gauge replaced by horizontal risk bars in HTML builder above
 
   // ── Yield Curve Chart ──
   (function(){
     var el = document.getElementById('ch-yield-curve');
-    if(!el) return;
+    if(!el||!shouldInit('ch-yield-curve')) return;
     var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
     var bds = (V8.market||{}).bonds||[];
     var y10v=null, y2v=null;
@@ -3692,8 +4161,57 @@ function initCharts(){
   })();
 }
 
-// Initialize all charts
-initCharts();
+// ── Lazy Chart Initialization ──
+// On first load, only init charts visible in viewport; defer others until scrolled into view.
+// On theme toggle, reinit all currently-initialized charts.
+var _chartInitialized = {};
+var _chartIds = ['ch-price','ch-waterfall','ch-regime','ch-dcf','ch-mc-dist','ch-earn','ch-donut','ch-heatmap','ch-scatter','ch-quadrant','ch-radar','ch-yield-curve'];
+
+function initVisibleCharts(){
+  // Init charts whose containers are in (or near) the viewport
+  for(var i=0;i<_chartIds.length;i++){
+    var el=document.getElementById(_chartIds[i]);
+    if(!el) continue;
+    if(_chartInitialized[_chartIds[i]]) continue;
+    var rect=el.getBoundingClientRect();
+    if(rect.top < window.innerHeight + 300 && rect.bottom > -300){
+      _chartInitialized[_chartIds[i]]=true;
+    }
+  }
+  initCharts();
+}
+
+// On theme toggle, mark all as needing reinit
+var _origThemeClick = null;
+(function(){
+  var tBtn = document.getElementById('theme-toggle');
+  // Theme toggle already calls initCharts() — it will reinit all initialized charts
+  // We just need to reset initialized state so lazy observer can re-trigger
+  // Actually, dispose+reinit on theme change is fine for already-visible charts.
+  // The key win is: charts below the fold aren't init'd on first load.
+})();
+
+if('IntersectionObserver' in window){
+  var _chartObserver = new IntersectionObserver(function(entries){
+    var needInit = false;
+    entries.forEach(function(entry){
+      if(entry.isIntersecting && !_chartInitialized[entry.target.id]){
+        _chartInitialized[entry.target.id] = true;
+        needInit = true;
+      }
+    });
+    if(needInit) initCharts();
+  },{rootMargin:'200px'});
+  _chartIds.forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) _chartObserver.observe(el);
+  });
+  // Init charts already in view
+  initVisibleCharts();
+} else {
+  // Fallback: init all charts immediately
+  initCharts();
+}
 
 // ── Table Sorting ───────────────────────────────────
 var sortState = {};
@@ -3740,6 +4258,61 @@ function sywToggle(mode){
   document.getElementById('syw-standard').style.display=mode==='standard'?'block':'none';
   document.getElementById('syw-expanded').style.display=mode==='expanded'?'block':'none';
 }
+
+// ── Collapsible Sections ──
+function collapseSection(label){
+  var body = document.getElementById(label.id + '-body');
+  if(!body) return;
+  var isCollapsed = body.classList.contains('collapsed');
+  if(isCollapsed){
+    body.classList.remove('collapsed');
+    label.classList.remove('collapsed');
+    label.setAttribute('aria-expanded','true');
+    body.style.maxHeight = 'none';
+  } else {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    body.offsetHeight; // force reflow
+    body.classList.add('collapsed');
+    label.classList.add('collapsed');
+    label.setAttribute('aria-expanded','false');
+  }
+}
+
+// ── Keyboard Shortcuts ──
+document.addEventListener('keydown', function(e){
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
+  var sectionMap = {
+    '1':'sec-owner','2':'sec-engine','3':'sec-tech','4':'sec-fund',
+    '5':'sec-peers','6':'sec-sent','7':'sec-risk','8':'sec-ext','9':'sec-quant'
+  };
+  if(e.key==='d' && !e.ctrlKey && !e.metaKey){
+    var tb = document.getElementById('theme-toggle');
+    if(tb) tb.click();
+  } else if(e.key==='q'){
+    var q = document.getElementById('sec-quant');
+    if(q){ q.scrollIntoView({behavior:'smooth',block:'start'}); }
+  } else if(e.key==='g' && !e.ctrlKey && !e.metaKey){
+    var gl = document.getElementById('glossary-overlay');
+    if(gl) gl.classList.toggle('open');
+  } else if(e.key==='Escape'){
+    // Don't scroll to top if glossary or TOC is open (those handle Escape separately)
+    var glossary=document.getElementById('glossary-overlay');
+    var toc=document.getElementById('toc-drawer');
+    if(glossary&&glossary.classList.contains('open')) return;
+    if(toc&&toc.classList.contains('open')){toc.classList.remove('open');return}
+    window.scrollTo({top:0, behavior:'smooth'});
+  } else if(sectionMap[e.key]){
+    var el = document.getElementById(sectionMap[e.key]);
+    if(el){
+      // Expand section if collapsed
+      var body = document.getElementById(el.id + '-body');
+      if(body && body.classList.contains('collapsed')){
+        collapseSection(el);
+      }
+      el.scrollIntoView({behavior:'smooth', block:'start'});
+    }
+  }
+});
 </script>
 </body>
 </html>
