@@ -170,9 +170,6 @@ REGIME_INTERACTION_MATRICES = {
     for regime in REGIME_NAMES
 }
 
-# L2 regularization weight for quadratic term (audit: Part 3)
-INTERACTION_L2_LAMBDA = 10.0
-
 # Kelly criterion risk aversion: λ = 2.0 → half-Kelly
 # Full Kelly (λ=1) is provably optimal for log-utility but empirically
 # over-bets; half-Kelly sacrifices ~25% return for ~50% variance reduction.
@@ -290,16 +287,6 @@ def atr(high, low, close, period=14):
         else:
             atr_vals.append(np.mean(tr_list[i-period+1:i+1]))
     return atr_vals
-
-def realized_vol(returns, period=20):
-    """Calculate realized volatility."""
-    vol_vals = []
-    for i in range(len(returns)):
-        if i < period - 1:
-            vol_vals.append(np.nan)
-        else:
-            vol_vals.append(np.std(returns[i-period+1:i+1]) * np.sqrt(252))
-    return vol_vals
 
 def z_score(values, window=None):
     """Calculate z-score of values."""
@@ -644,7 +631,7 @@ def engine_volatility(vol_data, price_data):
         closes = [safe_float(row['close']) for row in price_data]
         returns = []
         for i in range(1, len(closes)):
-            if closes[i-1] > 0:
+            if closes[i-1] > 0 and closes[i] > 0:
                 returns.append(np.log(closes[i] / closes[i-1]))
 
         if len(returns) >= 20:
@@ -1111,8 +1098,10 @@ def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq, regime_
     p_buy = 1.0 / (1.0 + np.exp(-x))
     p_sell = 1.0 - p_buy
 
-    # Smooth verdict
-    if p_buy > 0.70:
+    # Smooth verdict — O3: TQ gate mirrors legacy CASH classification
+    if tq < 0.12:
+        verdict_smooth = "CASH / STAND ASIDE"
+    elif p_buy > 0.70:
         verdict_smooth = "BUY / LONG BIAS"
     elif p_sell > 0.70:
         verdict_smooth = "SELL / SHORT BIAS"
@@ -1531,7 +1520,7 @@ def compute_regime_vector(data, scores_dict, engine_details):
             sign_flip = (np.sign(corr_now) != np.sign(corr_old)) and (corr_old != 0)
             regime_vector['BEI'] = 1.0 if sign_flip else 0.0
         else:
-            regime_vector['BEI'] = 1.0 if (corr_now > 0 and np.sign(corr_now) < 0) else 0.0
+            regime_vector['BEI'] = 0.0  # D17: fallback — no old data to detect sign flip
     else:
         regime_vector['BEI'] = 0.0
 
