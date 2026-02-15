@@ -102,7 +102,10 @@ ENGINE_STRUCTURAL_CORRELATIONS = np.array([
     [ 0.10,  0.05, -0.20,  0.40,  0.15,  0.10,  0.15,  1.00],  # correlation
 ])
 
-# Sparse interaction matrix: only 3 nonzero pairs
+# Engine order: trend=0, valuation=1, consensus=2, volatility=3,
+#               macro=4, liquidity=5, global=6, correlation=7
+
+# Legacy sparse interaction matrix (preserved for backward compat / tests)
 INTERACTION_MATRIX = np.zeros((8, 8))
 INTERACTION_MATRIX[0, 3] = -0.003  # trend × volatility
 INTERACTION_MATRIX[3, 0] = -0.003
@@ -111,11 +114,136 @@ INTERACTION_MATRIX[4, 1] = -0.002
 INTERACTION_MATRIX[2, 7] = -0.002  # consensus × correlation
 INTERACTION_MATRIX[7, 2] = -0.002
 
+# --------------------------------------------------------------------------
+# Regime-conditioned interaction matrices  A(r) = Σ_k π_k(r) A_k
+# 6 economically motivated pairs × 5 regimes
+# Spectral bound ‖A_k‖₂ ≤ 0.05 enforced at load time
+# --------------------------------------------------------------------------
+_REGIME_INTERACTION_PAIRS = {
+    # (i, j): {regime: coefficient}
+    # trend × volatility — momentum dampened in high vol
+    (0, 3): {'Calm': 0.00, 'Chop': -0.02, 'Tightening Shock': -0.01,
+             'Crisis Trend': -0.03, 'Credit Stress': -0.02},
+    # valuation × macro — value traps in tightening
+    (1, 4): {'Calm': 0.00, 'Chop': -0.01, 'Tightening Shock': -0.03,
+             'Crisis Trend': -0.02, 'Credit Stress': -0.02},
+    # consensus × correlation — herding risk
+    (2, 7): {'Calm': 0.00, 'Chop': -0.01, 'Tightening Shock': -0.01,
+             'Crisis Trend': -0.02, 'Credit Stress': -0.03},
+    # trend × liquidity — liquidity-momentum coupling
+    (0, 5): {'Calm': 0.01, 'Chop': 0.00, 'Tightening Shock': 0.00,
+             'Crisis Trend': 0.02, 'Credit Stress': 0.00},
+    # volatility × correlation — vol clustering
+    (3, 7): {'Calm': 0.00, 'Chop': -0.01, 'Tightening Shock': -0.01,
+             'Crisis Trend': -0.02, 'Credit Stress': -0.03},
+    # macro × global — global contagion
+    (4, 6): {'Calm': 0.00, 'Chop': 0.00, 'Tightening Shock': -0.02,
+             'Crisis Trend': -0.01, 'Credit Stress': -0.02},
+}
+
+REGIME_NAMES = ['Calm', 'Chop', 'Tightening Shock', 'Crisis Trend', 'Credit Stress']
+
+def _enforce_spectral_bound(A, alpha_max=0.05):
+    """Clip eigenvalues of symmetric A so ‖A‖₂ ≤ alpha_max."""
+    eigvals, eigvecs = np.linalg.eigh(A)
+    max_abs = np.max(np.abs(eigvals))
+    if max_abs > alpha_max:
+        eigvals = np.clip(eigvals, -alpha_max, alpha_max)
+        A = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    return A
+
+def _build_regime_interaction_matrix(regime_name):
+    """Build 8×8 symmetric interaction matrix for a given regime."""
+    A = np.zeros((8, 8))
+    for (i, j), regime_vals in _REGIME_INTERACTION_PAIRS.items():
+        val = regime_vals.get(regime_name, 0.0)
+        A[i, j] = val
+        A[j, i] = val
+    return _enforce_spectral_bound(A, alpha_max=0.05)
+
+# Pre-build all 5 regime matrices at import time (zero runtime cost)
+REGIME_INTERACTION_MATRICES = {
+    regime: _build_regime_interaction_matrix(regime)
+    for regime in REGIME_NAMES
+}
+
+# L2 regularization weight for quadratic term (audit: Part 3)
+INTERACTION_L2_LAMBDA = 10.0
+
+# Kelly criterion risk aversion: λ = 2.0 → half-Kelly
+# Full Kelly (λ=1) is provably optimal for log-utility but empirically
+# over-bets; half-Kelly sacrifices ~25% return for ~50% variance reduction.
+KELLY_LAMBDA = 2.0
+
 # Kelly regime caps
 KELLY_REGIME_CAPS = {
     'Calm': 0.15, 'Chop': 0.08, 'Tightening Shock': 0.10,
     'Crisis Trend': 0.05, 'Credit Stress': 0.06,
 }
+
+# --------------------------------------------------------------------------
+# Soft GMM Regime Model (Phase 2a)
+# 5 centroids in 10D feature space [TS,CH,VL,VS,CI,RS,CS,GR,BM_f,BEI]
+# Expert-calibrated from empirical regime behavior
+# --------------------------------------------------------------------------
+GMM_REGIME_CENTROIDS = np.array([
+    # Calm: low vol, low chop, moderate trend, low stress
+    [ 0.30, 0.25, 0.15, 0.10, 0.10, 0.10, 0.05, 0.10, 0.05, 0.05],
+    # Chop: near-zero trend, high choppiness, moderate vol
+    [ 0.00, 0.70, 0.35, 0.25, 0.30, 0.15, 0.10, 0.15, 0.15, 0.20],
+    # Tightening Shock: rates shock, moderate stress, some vol
+    [ 0.10, 0.40, 0.40, 0.35, 0.25, 0.70, 0.30, 0.20, 0.10, 0.25],
+    # Crisis Trend: strong negative trend, high vol, high stress
+    [-0.70, 0.30, 0.75, 0.70, 0.60, 0.40, 0.40, 0.60, 0.50, 0.60],
+    # Credit Stress: high credit spreads, moderate vol, correlation breakdown
+    [-0.20, 0.45, 0.55, 0.45, 0.50, 0.35, 0.80, 0.40, 0.30, 0.40],
+])
+
+# Prior probabilities: reflects typical market state distribution
+GMM_REGIME_PRIORS = np.array([0.45, 0.20, 0.15, 0.10, 0.10])
+
+# Isotropic bandwidth per regime (diagonal covariance approximation)
+GMM_REGIME_BANDWIDTHS = np.array([0.20, 0.25, 0.25, 0.30, 0.25])
+
+# EMA smoothing factor for regime transitions (Phase 2b)
+REGIME_EMA_ALPHA = 0.3
+
+# Regime-conditioned engine variance multiplier (Phase 2c)
+ENGINE_VARIANCE_REGIME_MULT = {
+    'Calm': 1.0, 'Chop': 1.4, 'Tightening Shock': 1.3,
+    'Crisis Trend': 1.6, 'Credit Stress': 1.5,
+}
+
+# Regime-conditioned engine correlation matrices (Phase 2d)
+# In stress regimes, cross-engine correlations increase (contagion effect)
+_REGIME_CORR_SHIFTS = {
+    'Calm':              0.00,   # structural prior as-is
+    'Chop':              0.05,   # mild correlation increase
+    'Tightening Shock':  0.08,   # moderate shift
+    'Crisis Trend':      0.15,   # strong contagion
+    'Credit Stress':     0.12,   # credit-driven contagion
+}
+
+# Dynamic structural/tactical risk blend (Phase 2e)
+RISK_BLEND_ALPHA = {
+    'Calm':              0.70,   # 70% structural, 30% tactical
+    'Chop':              0.55,   # more balanced
+    'Tightening Shock':  0.50,   # balanced
+    'Crisis Trend':      0.30,   # 30% structural, 70% tactical (fast-moving)
+    'Credit Stress':     0.40,   # lean tactical
+}
+
+# Phase 3c: Dynamic threshold constants
+DYNAMIC_THRESHOLD_K1 = 0.5   # uncertainty sensitivity (same as existing)
+DYNAMIC_THRESHOLD_K2 = 0.3   # regime entropy sensitivity
+
+# Phase 3d: Cold-start σ inflation schedule
+COLD_START_RUN_THRESHOLD = 20   # runs needed for full convergence
+COLD_START_SIGMA_MULT = 2.0     # max inflation at run_count=0
+
+# Phase 3e: Uncertainty shrinkage
+SHRINKAGE_LAMBDA_BASE = 0.8   # blend weight toward prior at cold start
+SHRINKAGE_DECAY_RUNS = 50     # runs to decay shrinkage to near-zero
 
 # ============================================================================
 # SECTION 2: HELPERS (KEEP EXACTLY AS-IS)
@@ -794,10 +922,15 @@ def engine_correlation(price_data, vol_data, macro_data):
 # SECTION 4b: PROBABILISTIC ENGINE FRAMEWORK (P1–P6)
 # ============================================================================
 
-def _compute_engine_variance(engine_name, score, dc_details, score_range):
+def _compute_engine_variance(engine_name, score, dc_details, score_range,
+                              ensemble_sign=None, regime_label=None):
     """
     Compute variance estimate for a single engine.
-    σ²_i = σ²_base × f_data × f_extremity
+    σ²_i = σ²_base × f_data × f_extremity × f_agreement × f_regime
+
+    Phase 2c additions:
+      f_agreement: penalizes engines disagreeing with ensemble direction
+      f_regime: regime-conditioned variance multiplier
     """
     sigma2_base = ENGINE_VARIANCE_BASE.get(engine_name, 50)
 
@@ -817,25 +950,47 @@ def _compute_engine_variance(engine_name, score, dc_details, score_range):
     half_range = score_range / 2.0 if score_range > 0 else 1.0
     f_extremity = 1.0 + 0.5 * ((score - mid) / half_range) ** 2
 
-    return sigma2_base * f_data * f_extremity
+    # f_agreement (Phase 2c): engines disagreeing with ensemble have higher uncertainty
+    f_agreement = 1.0
+    if ensemble_sign is not None and ensemble_sign != 0:
+        engine_sign = 1 if score > 0 else (-1 if score < 0 else 0)
+        if engine_sign != 0 and engine_sign != ensemble_sign:
+            f_agreement = 1.5  # 50% variance inflation for disagreement
+
+    # f_regime (Phase 2c): regime-conditioned variance scaling
+    f_regime = ENGINE_VARIANCE_REGIME_MULT.get(regime_label, 1.0) if regime_label else 1.0
+
+    return sigma2_base * f_data * f_extremity * f_agreement * f_regime
 
 
-def compute_all_engine_variances(scores_dict, dc_details):
-    """Compute variance estimates for all 8 engines."""
+def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
+    """
+    Compute variance estimates for all 8 engines.
+    Phase 2c: includes f_agreement (ensemble disagreement) and f_regime.
+    """
     score_ranges = {
         'trend': 200, 'valuation': 80, 'consensus': 100, 'volatility': 80,
         'macro': 80, 'liquidity': 100, 'global': 100, 'correlation': 100,
     }
+
+    # Determine ensemble direction (sign of mean normalized score)
+    ensemble_mean = np.mean([s for s in scores_dict.values()])
+    ensemble_sign = 1 if ensemble_mean > 0 else (-1 if ensemble_mean < 0 else 0)
+
     variances = {}
     for engine_name, score in scores_dict.items():
         sr = score_ranges.get(engine_name, 100)
-        variances[engine_name] = _compute_engine_variance(engine_name, score, dc_details, sr)
+        variances[engine_name] = _compute_engine_variance(
+            engine_name, score, dc_details, sr,
+            ensemble_sign=ensemble_sign, regime_label=regime_label
+        )
     return variances
 
 
-def build_covariance_matrix(engine_variances):
+def build_covariance_matrix(engine_variances, correlation_matrix=None):
     """
     Build engine covariance matrix Σ = ρ ⊙ (σσᵀ), PSD-corrected.
+    Phase 2d: accepts optional regime-conditioned correlation matrix.
     Returns (Σ, engine_order).
     """
     engine_order = ['trend', 'valuation', 'consensus', 'volatility',
@@ -844,9 +999,11 @@ def build_covariance_matrix(engine_variances):
 
     sigmas = np.array([np.sqrt(engine_variances.get(e, 50)) for e in engine_order])
 
+    R = correlation_matrix if correlation_matrix is not None else ENGINE_STRUCTURAL_CORRELATIONS
+
     # Σ[i,j] = ρ[i,j] × σ_i × σ_j
     sigma_outer = np.outer(sigmas, sigmas)
-    cov = ENGINE_STRUCTURAL_CORRELATIONS * sigma_outer
+    cov = R * sigma_outer
 
     # PSD enforcement: eigenvalue floor at 1e-6
     eigvals, eigvecs = np.linalg.eigh(cov)
@@ -888,17 +1045,23 @@ def compute_confidence_adjusted_composite(c_raw, sigma2_C):
     return c_conf, p_positive, confidence_ratio
 
 
-def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq):
+def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq, regime_entropy=0.0):
     """
     Smooth decision mapping with sigmoid probability.
+    Phase 3c: τ now includes regime entropy term.
+    θ = θ_base × regime_mult × (1 + k₁σ_C) × (1 + k₂ H_π/H_max)
     Returns both smooth verdict and legacy verdict for backward compatibility.
     """
     cfg = ATLAS_CONFIG['decision']
     tau_base = cfg['tau_base']
-    k = cfg['uncertainty_sensitivity']
+    k1 = cfg['uncertainty_sensitivity']
+    k2 = DYNAMIC_THRESHOLD_K2
     regime_mult = cfg['regime_tau_multiplier'].get(regime_label, 1.0)
 
-    tau_effective = max(tau_base * regime_mult * (1.0 + k * sigma_C), 1.0)
+    tau_effective = max(
+        tau_base * regime_mult * (1.0 + k1 * sigma_C) * (1.0 + k2 * regime_entropy),
+        1.0
+    )
 
     # Sigmoid: P_buy = 1 / (1 + exp(-C_adjusted / τ))
     x = c_adjusted / tau_effective
@@ -941,9 +1104,32 @@ def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq):
     }
 
 
-def compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label):
+def compute_cvar_gate(mu_C, sigma_C, alpha=0.05, theta=30.0):
     """
-    Kelly-inspired position sizing: f* = μ_C / σ²_C, clipped by regime.
+    CVaR (Conditional Value at Risk) gate for tail-risk control.
+
+    CVaR_α(C) = μ_C - σ_C × φ(z_α) / α
+    where z_α = Φ⁻¹(α) = 1.6449 for α=0.05
+    and φ(z_α) = 0.10314 (standard normal PDF at z_α).
+
+    Returns (pass: bool, cvar: float).
+    Gate passes when CVaR > -θ (i.e., tail loss is within acceptable bound).
+    """
+    if sigma_C < 1e-10:
+        return True, float(mu_C)
+
+    z_alpha = 1.6449   # Φ⁻¹(0.95) for α=0.05
+    phi_z = 0.10314    # φ(1.6449) = standard normal PDF
+
+    cvar = mu_C - sigma_C * phi_z / alpha
+    return cvar > -theta, float(cvar)
+
+
+def compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label, cvar_pass=True):
+    """
+    Half-Kelly position sizing: f* = μ_C / (λ × σ²_C), clipped by regime.
+    λ = KELLY_LAMBDA (default 2.0) gives half-Kelly fraction.
+    If cvar_pass=False (CVaR gate failed), Kelly fraction is zeroed.
     Informational only — does not override existing position sizing.
     """
     mu = c_raw / 100.0
@@ -951,10 +1137,14 @@ def compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label):
     if sigma2_C < 1e-10:
         kelly_raw = 0.0
     else:
-        kelly_raw = mu / sigma2_C
+        kelly_raw = mu / (KELLY_LAMBDA * sigma2_C)
 
     f_max = KELLY_REGIME_CAPS.get(regime_label, 0.10)
     kelly_clipped = float(np.clip(kelly_raw, -f_max, f_max))
+
+    # CVaR gate: zero position if tail risk exceeds threshold
+    if not cvar_pass:
+        kelly_clipped = 0.0
 
     dc_factor = min(1.0, dc / 100.0)
     position = capital * abs(kelly_clipped) * g * dc_factor
@@ -964,6 +1154,7 @@ def compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label):
         'kelly_clipped': kelly_clipped,
         'kelly_position': float(position),
         'kelly_pct': float(position / capital * 100) if capital > 0 else 0.0,
+        'cvar_pass': cvar_pass,
     }
 
 
@@ -1022,6 +1213,125 @@ def compute_data_confidence(data):
 # ============================================================================
 # SECTION 6: LAYER 1 — REGIME VECTOR
 # ============================================================================
+
+def compute_soft_regime(regime_vector):
+    """
+    Soft GMM regime classification (Phase 2a).
+
+    Computes posterior probabilities π_k for each of 5 regimes using
+    isotropic Gaussian kernels with expert-calibrated centroids.
+
+    Input: regime_vector dict with keys [TS,CH,VL,VS,CI,RS,CS,GR,BM_f,BEI]
+    Returns: (regime_probs: dict, regime_label: str)
+      - regime_probs: {regime_name: probability} summing to 1.0
+      - regime_label: argmax regime (for backward compat)
+    """
+    feature_order = ['TS', 'CH', 'VL', 'VS', 'CI', 'RS', 'CS', 'GR', 'BM_f', 'BEI']
+    x = np.array([regime_vector.get(f, 0.0) for f in feature_order])
+
+    n_regimes = len(REGIME_NAMES)
+    log_probs = np.zeros(n_regimes)
+
+    for k in range(n_regimes):
+        diff = x - GMM_REGIME_CENTROIDS[k]
+        sigma = GMM_REGIME_BANDWIDTHS[k]
+        # Log of isotropic Gaussian: -0.5 * ||diff||² / σ² + log(prior)
+        log_probs[k] = -0.5 * np.sum(diff ** 2) / (sigma ** 2) + np.log(GMM_REGIME_PRIORS[k])
+
+    # Numerically stable softmax
+    log_probs -= np.max(log_probs)
+    probs = np.exp(log_probs)
+    probs /= np.sum(probs)
+
+    regime_probs = {REGIME_NAMES[k]: float(probs[k]) for k in range(n_regimes)}
+    regime_label = REGIME_NAMES[int(np.argmax(probs))]
+
+    return regime_probs, regime_label
+
+
+def smooth_regime_probs(regime_probs_new, regime_probs_prev, alpha=None):
+    """
+    EMA-smooth regime probabilities to prevent whipsawing (Phase 2b).
+    π_smooth = α × π_new + (1-α) × π_prev
+    """
+    if alpha is None:
+        alpha = REGIME_EMA_ALPHA
+
+    if regime_probs_prev is None:
+        return regime_probs_new
+
+    smoothed = {}
+    for regime in REGIME_NAMES:
+        p_new = regime_probs_new.get(regime, 0.0)
+        p_prev = regime_probs_prev.get(regime, 1.0 / len(REGIME_NAMES))
+        smoothed[regime] = alpha * p_new + (1.0 - alpha) * p_prev
+
+    # Re-normalize after smoothing
+    total = sum(smoothed.values())
+    if total > 0:
+        smoothed = {k: v / total for k, v in smoothed.items()}
+
+    return smoothed
+
+
+def compute_regime_entropy(regime_probs):
+    """
+    Compute Shannon entropy of regime probability vector (Phase 3c).
+    H(π) = -Σ π_k log(π_k), normalized to [0, 1] via H_max = log(K).
+    High entropy → uncertain regime → widen thresholds.
+    """
+    probs = np.array([regime_probs.get(r, 0.0) for r in REGIME_NAMES])
+    probs = np.maximum(probs, 1e-10)  # avoid log(0)
+    H = -np.sum(probs * np.log(probs))
+    H_max = np.log(len(REGIME_NAMES))  # log(5) ≈ 1.609
+    return float(H / H_max) if H_max > 0 else 0.0
+
+
+def build_regime_conditioned_correlations(regime_probs):
+    """
+    Build regime-conditioned engine correlation matrix (Phase 2d).
+    Blends structural correlations with regime-specific shifts.
+    In stress, off-diagonal correlations increase (contagion).
+    """
+    # Weighted shift based on regime probabilities
+    shift = sum(
+        regime_probs.get(r, 0.0) * _REGIME_CORR_SHIFTS.get(r, 0.0)
+        for r in REGIME_NAMES
+    )
+
+    # Shift off-diagonals toward 1.0 (contagion)
+    R = ENGINE_STRUCTURAL_CORRELATIONS.copy()
+    n = R.shape[0]
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                R[i, j] = R[i, j] + shift * (1.0 - abs(R[i, j]))
+                R[i, j] = np.clip(R[i, j], -0.95, 0.95)
+
+    # PSD enforcement
+    eigvals, eigvecs = np.linalg.eigh(R)
+    eigvals = np.maximum(eigvals, 1e-6)
+    R = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    R = (R + R.T) / 2.0
+
+    # Force unit diagonal
+    d = np.sqrt(np.diag(R))
+    R = R / np.outer(d, d)
+
+    return R
+
+
+def compute_dynamic_risk_blend(regime_probs):
+    """
+    Compute dynamic structural/tactical risk blend α(r) (Phase 2e).
+    Returns α ∈ [0,1]: weight on structural risk (1-α on tactical).
+    """
+    alpha = sum(
+        regime_probs.get(r, 0.0) * RISK_BLEND_ALPHA.get(r, 0.60)
+        for r in REGIME_NAMES
+    )
+    return float(np.clip(alpha, 0.1, 0.9))
+
 
 def compute_regime_vector(data, scores_dict, engine_details):
     """
@@ -1247,17 +1557,18 @@ def load_meta_state(state_dir):
         except (ValueError, TypeError):
             pass
 
-    # Cold start defaults
+    # Cold start defaults (includes Phase 2b/3a/3b state fields)
+    engines = ['trend', 'valuation', 'consensus', 'volatility',
+               'macro', 'liquidity', 'global', 'correlation']
     return {
-        'w0': {
-            'trend': 1/8, 'valuation': 1/8, 'consensus': 1/8, 'volatility': 1/8,
-            'macro': 1/8, 'liquidity': 1/8, 'global': 1/8, 'correlation': 1/8
-        },
-        'Q': {
-            'trend': 0.0, 'valuation': 0.0, 'consensus': 0.0, 'volatility': 0.0,
-            'macro': 0.0, 'liquidity': 0.0, 'global': 0.0, 'correlation': 0.0
-        },
-        'run_count': 0
+        'w0': {e: 1/8 for e in engines},
+        'Q': {e: 0.0 for e in engines},
+        'run_count': 0,
+        'regime_probs_prev': None,       # Phase 2b: previous smoothed π
+        'ewma_var': {e: 0.0 for e in engines},   # Phase 3a
+        'ewma_mean': {e: 0.0 for e in engines},  # Phase 3a
+        'ewma_cross': None,              # Phase 3b: cross-product matrix
+        'ewma_enorm_mean': None,         # Phase 3b: EWMA of e_norm means
     }
 
 def save_meta_state(state, state_dir):
@@ -1335,6 +1646,119 @@ def update_meta_learning(state, e_norm, regime_vector):
 
     return state, Q
 
+
+def update_ewma_engine_variances(state, scores_dict, decay=0.94):
+    """
+    Phase 3a: EWMA volatility tracking per engine.
+    Tracks exponentially weighted moving average of engine score squared
+    deviations across runs. Stored in state['ewma_var'].
+    """
+    engines = ['trend', 'valuation', 'consensus', 'volatility',
+               'macro', 'liquidity', 'global', 'correlation']
+
+    ewma_var = state.get('ewma_var', {e: 0.0 for e in engines})
+    ewma_mean = state.get('ewma_mean', {e: 0.0 for e in engines})
+
+    for eng in engines:
+        score = scores_dict.get(eng, 0.0)
+        prev_mean = ewma_mean.get(eng, 0.0)
+        prev_var = ewma_var.get(eng, 0.0)
+
+        # Update EWMA mean
+        new_mean = decay * prev_mean + (1 - decay) * score
+        # Update EWMA variance (running second moment)
+        new_var = decay * prev_var + (1 - decay) * (score - new_mean) ** 2
+
+        ewma_mean[eng] = float(new_mean)
+        ewma_var[eng] = float(new_var)
+
+    state['ewma_var'] = ewma_var
+    state['ewma_mean'] = ewma_mean
+    return state
+
+
+def update_realized_correlations(state, e_norm, shrinkage_weight=0.3, decay=0.94):
+    """
+    Phase 3b: Realized cross-engine correlation tracking with shrinkage.
+    Tracks EWMA cross-product matrix, computes realized correlations,
+    then shrinks toward structural prior.
+    """
+    engines = ['trend', 'valuation', 'consensus', 'volatility',
+               'macro', 'liquidity', 'global', 'correlation']
+    n = len(engines)
+
+    # Current normalized score vector
+    e_vec = np.array([e_norm.get(f'{eng}_norm', 0.0) for eng in engines])
+
+    # Load or initialize EWMA cross-product and means
+    cross_key = 'ewma_cross'
+    if cross_key in state:
+        cross = np.array(state[cross_key])
+    else:
+        cross = np.zeros((n, n))
+
+    mean_key = 'ewma_enorm_mean'
+    if mean_key in state:
+        means = np.array(state[mean_key])
+    else:
+        means = np.zeros(n)
+
+    # Update EWMA
+    means = decay * means + (1 - decay) * e_vec
+    cross = decay * cross + (1 - decay) * np.outer(e_vec, e_vec)
+
+    # Compute realized covariance
+    realized_cov = cross - np.outer(means, means)
+
+    # Extract realized correlation
+    diag = np.sqrt(np.maximum(np.diag(realized_cov), 1e-10))
+    realized_corr = realized_cov / np.outer(diag, diag)
+    np.fill_diagonal(realized_corr, 1.0)
+    realized_corr = np.clip(realized_corr, -0.95, 0.95)
+
+    # Shrink toward structural prior
+    R_shrunk = (1 - shrinkage_weight) * realized_corr + shrinkage_weight * ENGINE_STRUCTURAL_CORRELATIONS
+
+    # PSD enforcement
+    eigvals, eigvecs = np.linalg.eigh(R_shrunk)
+    eigvals = np.maximum(eigvals, 1e-6)
+    R_shrunk = eigvecs @ np.diag(eigvals) @ eigvecs.T
+    R_shrunk = (R_shrunk + R_shrunk.T) / 2.0
+    d = np.sqrt(np.diag(R_shrunk))
+    R_shrunk = R_shrunk / np.outer(d, d)
+
+    # Store in state
+    state[cross_key] = cross.tolist()
+    state[mean_key] = means.tolist()
+
+    return state, R_shrunk
+
+
+def compute_cold_start_sigma_mult(run_count):
+    """
+    Phase 3d: Cold-start σ inflation.
+    When run_count is low, inflate variance estimates to express uncertainty.
+    Returns multiplier ∈ [1.0, COLD_START_SIGMA_MULT].
+    Decays to 1.0 as run_count → COLD_START_RUN_THRESHOLD.
+    """
+    if run_count >= COLD_START_RUN_THRESHOLD:
+        return 1.0
+    t = run_count / COLD_START_RUN_THRESHOLD  # 0→1
+    # Exponential decay from max to 1.0
+    return 1.0 + (COLD_START_SIGMA_MULT - 1.0) * (1.0 - t) ** 2
+
+
+def compute_shrinkage_weight(run_count):
+    """
+    Phase 3e: Uncertainty shrinkage weight.
+    Blends prior variance toward realized data as evidence accumulates.
+    Returns λ ∈ [~0, SHRINKAGE_LAMBDA_BASE]: weight on structural prior.
+    At cold start, λ → SHRINKAGE_LAMBDA_BASE (heavy prior).
+    As runs accumulate, λ → 0 (data dominates).
+    """
+    return SHRINKAGE_LAMBDA_BASE * np.exp(-run_count / SHRINKAGE_DECAY_RUNS)
+
+
 # ============================================================================
 # SECTION 9: LAYER 4 — DYNAMIC WEIGHT MATRIX
 # ============================================================================
@@ -1391,11 +1815,14 @@ def compute_dynamic_weights(w0, regime_vector):
 # SECTION 10: LAYER 5 — COMPOSITE SCORE
 # ============================================================================
 
-def compute_composite(e_norm, w_dynamic, interaction_matrix=None):
+def compute_composite(e_norm, w_dynamic, interaction_matrix=None, regime_label=None):
     """
     Compute composite score from normalized engine scores and dynamic weights.
-    C_raw = 100 * (wᵀe + eᵀAe)  when interaction_matrix is provided.
-    Default None preserves exact old behavior.
+    C_raw = 100 * (wᵀe + eᵀA(r)e)  where A(r) is regime-conditioned.
+
+    If regime_label is provided, uses REGIME_INTERACTION_MATRICES[regime_label].
+    If interaction_matrix is provided (legacy), uses that directly.
+    If neither, pure linear (no quadratic term).
     """
     engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
 
@@ -1405,8 +1832,15 @@ def compute_composite(e_norm, w_dynamic, interaction_matrix=None):
     linear_term = float(np.dot(w_vec, e_vec))
     quadratic_term = 0.0
 
-    if interaction_matrix is not None:
-        quadratic_term = float(e_vec @ interaction_matrix @ e_vec)
+    # Regime-conditioned matrix takes priority over legacy static matrix
+    A = None
+    if regime_label is not None and regime_label in REGIME_INTERACTION_MATRICES:
+        A = REGIME_INTERACTION_MATRICES[regime_label]
+    elif interaction_matrix is not None:
+        A = interaction_matrix
+
+    if A is not None:
+        quadratic_term = float(e_vec @ A @ e_vec)
 
     c_raw = (linear_term + quadratic_term) * 100
 
@@ -1433,9 +1867,10 @@ def compute_composite(e_norm, w_dynamic, interaction_matrix=None):
 # SECTION 11: LAYER 6 — RISK GOVERNOR
 # ============================================================================
 
-def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm):
+def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm, risk_blend_alpha=None):
     """
     Compute risk governor gate and adjusted composite score.
+    Phase 2e: dynamic structural/tactical blend via risk_blend_alpha.
     """
     # Structural risk
     ci = regime_vector.get('CI', 0.0)
@@ -1452,8 +1887,9 @@ def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm):
 
     sr_t = 0.4 * abs(ts) + 0.3 * bm_f + 0.3 * (vs / 2.0)
 
-    # Total risk
-    sr = 0.6 * sr_s + 0.4 * sr_t
+    # Total risk (Phase 2e: dynamic blend)
+    alpha = risk_blend_alpha if risk_blend_alpha is not None else 0.6
+    sr = alpha * sr_s + (1.0 - alpha) * sr_t
 
     # Gate function (sigmoid-like)
     tau = ATLAS_CONFIG['risk_governor_tau']
@@ -1493,6 +1929,7 @@ def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm):
         'SR_t': sr_t,
         'SR': sr,
         'G': g,
+        'risk_blend_alpha': alpha,
         'risk_drivers': risk_drivers
     }
 
@@ -1964,36 +2401,71 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 0: Data Integrity
     dc, dc_details = compute_data_confidence(data)
 
-    # [P1] Engine Variance Estimates
-    engine_variances = compute_all_engine_variances(scores_dict, dc_details)
+    # Layer 1: Regime Vector (hard classification)
+    regime_vector, rel, regime_label_hard = compute_regime_vector(data, scores_dict, engine_details)
 
-    # Layer 1: Regime Vector
-    regime_vector, rel, regime_label = compute_regime_vector(data, scores_dict, engine_details)
+    # [Phase 2a] Soft GMM Regime Classification
+    regime_probs, regime_label_gmm = compute_soft_regime(regime_vector)
+
+    # [Phase 2b] EMA Smoothing for regime transitions
+    state = load_meta_state(state_dir)
+    regime_probs_prev = state.get('regime_probs_prev', None)
+    regime_probs = smooth_regime_probs(regime_probs, regime_probs_prev)
+    regime_label = max(regime_probs, key=regime_probs.get)  # argmax of smoothed π
+    state['regime_probs_prev'] = regime_probs
+
+    # [Phase 3c] Regime entropy for dynamic threshold
+    regime_entropy = compute_regime_entropy(regime_probs)
+
+    # [P1 + Phase 2c] Engine Variance Estimates (with f_agreement, f_regime)
+    engine_variances = compute_all_engine_variances(scores_dict, dc_details, regime_label=regime_label)
+
+    # [Phase 3d] Cold-start σ inflation
+    run_count = state.get('run_count', 0)
+    cold_start_mult = compute_cold_start_sigma_mult(run_count)
+    if cold_start_mult > 1.0:
+        engine_variances = {e: v * cold_start_mult for e, v in engine_variances.items()}
 
     # Layer 2: Score Normalization
     e_norm = normalize_engine_scores(scores_dict)
 
     # Layer 3: Meta-Learning
-    state = load_meta_state(state_dir)
     state, q_metrics = update_meta_learning(state, e_norm, {**regime_vector, 'Rel': rel})
+
+    # [Phase 3a] EWMA Volatility Tracking
+    state = update_ewma_engine_variances(state, scores_dict)
+
+    # [Phase 3b] Realized Correlation Tracking
+    shrinkage_w = compute_shrinkage_weight(run_count)
+    state, realized_corr = update_realized_correlations(state, e_norm, shrinkage_weight=shrinkage_w)
+
     save_meta_state(state, state_dir)
 
     # Layer 4: Dynamic Weights
     w_dynamic = compute_dynamic_weights(state['w0'], regime_vector)
 
-    # Layer 5: Composite Score [P4: with interaction matrix]
-    c_raw, comp_details = compute_composite(e_norm, w_dynamic, INTERACTION_MATRIX)
+    # Layer 5: Composite Score [P4: regime-conditioned interaction matrix A(r)]
+    c_raw, comp_details = compute_composite(e_norm, w_dynamic, regime_label=regime_label)
 
-    # [P2] Covariance Matrix + Composite Variance
-    cov_matrix, engine_order = build_covariance_matrix(engine_variances)
+    # [Phase 2d] Regime-conditioned correlation matrix
+    regime_corr = build_regime_conditioned_correlations(regime_probs)
+
+    # [P2] Covariance Matrix + Composite Variance (using regime-conditioned correlations)
+    cov_matrix, engine_order = build_covariance_matrix(engine_variances, correlation_matrix=regime_corr)
     sigma2_C = compute_composite_variance(w_dynamic, cov_matrix, engine_order)
     sigma_C = np.sqrt(sigma2_C)
 
     # [P3] Confidence-Adjusted Composite
     c_conf, p_positive, confidence_ratio = compute_confidence_adjusted_composite(c_raw, sigma2_C)
 
-    # Layer 6: Risk Governor
-    c_adjusted, g, risk_details = compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm)
+    # [Phase 2e] Dynamic structural/tactical risk blend
+    risk_blend_alpha = compute_dynamic_risk_blend(regime_probs)
+
+    # Layer 6: Risk Governor (with dynamic blend)
+    c_adjusted, g, risk_details = compute_risk_governor(
+        regime_vector, c_raw, regime_label, dc, e_norm,
+        risk_blend_alpha=risk_blend_alpha
+    )
 
     # Layer 7: Trade Quality
     tq, tq_category = compute_trade_quality(c_raw, rel, g, dc)
@@ -2001,14 +2473,18 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 8: Portfolio Policy
     policy, mu, b = compute_portfolio_policy(regime_label, tq, c_adjusted, capital)
 
-    # [P6] Kelly-Inspired Position Sizing
-    kelly_data = compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label)
+    # [CVaR Gate] Tail-risk control — blocks Kelly when CVaR breaches threshold
+    cvar_pass, cvar_value = compute_cvar_gate(c_raw / 100.0, sigma_C)
+
+    # [P6] Half-Kelly Position Sizing (λ=2.0, CVaR-gated)
+    kelly_data = compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label, cvar_pass=cvar_pass)
 
     # Layer 9: Execution Microstructure
     exec_params, size_final = compute_execution_micro(data, regime_vector, regime_label, c_adjusted, tq, b, engine_details)
 
-    # [P5] Smooth Decision Mapping
-    verdict_data = compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq)
+    # [P5 + Phase 3c] Smooth Decision Mapping (with regime entropy)
+    verdict_data = compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq,
+                                          regime_entropy=regime_entropy)
     verdict = verdict_data['verdict_legacy']  # backward compat
 
     # Self-Audit
@@ -2080,6 +2556,15 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         'kelly_clipped': kelly_data['kelly_clipped'],
         'kelly_position': kelly_data['kelly_position'],
         'kelly_pct': kelly_data['kelly_pct'],
+        'cvar_pass': cvar_pass,
+        'cvar_value': cvar_value,
+        # Phase 2+3 fields
+        'regime_probs': regime_probs,
+        'regime_entropy': regime_entropy,
+        'regime_label_hard': regime_label_hard,
+        'risk_blend_alpha': risk_blend_alpha,
+        'cold_start_mult': cold_start_mult,
+        'shrinkage_weight': shrinkage_w,
     }
 
     # Layer 10: Generate Report
@@ -2154,6 +2639,17 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['kelly_clipped'] = round(float(kelly_data['kelly_clipped']), 6)
     summary['kelly_position'] = round(float(kelly_data['kelly_position']), 0)
     summary['kelly_pct'] = round(float(kelly_data['kelly_pct']), 2)
+    summary['kelly_lambda'] = KELLY_LAMBDA
+    summary['cvar_pass'] = cvar_pass
+    summary['cvar_value'] = round(float(cvar_value), 4)
+
+    # Phase 2+3 summary fields
+    summary['regime_probs'] = {k: round(float(v), 4) for k, v in regime_probs.items()}
+    summary['regime_entropy'] = round(float(regime_entropy), 4)
+    summary['regime_label_hard'] = regime_label_hard
+    summary['risk_blend_alpha'] = round(float(risk_blend_alpha), 4)
+    summary['cold_start_mult'] = round(float(cold_start_mult), 4)
+    summary['shrinkage_weight'] = round(float(shrinkage_w), 4)
 
     # Composite adjustment chain — full auditability
     dc_cap = min(1.0, dc / 100.0)

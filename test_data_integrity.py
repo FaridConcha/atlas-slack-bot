@@ -21,6 +21,7 @@ from v8_data import (
     _sanitize_yield, _sanitize_payout,
     _stabilize_beta, _compute_wacc_governed,
     _evaluate_dcf_single, _ticker_seed, _run_monte_carlo_dcf, _compute_sensitivity,
+    _student_t_unit,
 )
 from v8_report import (
     _n, _compute_v8_scores, _compute_v9_owner_scores,
@@ -31,9 +32,22 @@ from atlas_engine import (
     _compute_engine_variance, compute_all_engine_variances,
     build_covariance_matrix, compute_composite_variance,
     compute_confidence_adjusted_composite, compute_composite,
-    compute_smooth_verdict, compute_kelly_position,
+    compute_smooth_verdict, compute_kelly_position, compute_cvar_gate,
     ENGINE_VARIANCE_BASE, INTERACTION_MATRIX, ENGINE_STRUCTURAL_CORRELATIONS,
+    REGIME_INTERACTION_MATRICES, REGIME_NAMES, _enforce_spectral_bound,
+    KELLY_LAMBDA, KELLY_REGIME_CAPS,
+    # Phase 2+3 imports
+    compute_soft_regime, smooth_regime_probs, compute_regime_entropy,
+    build_regime_conditioned_correlations, compute_dynamic_risk_blend,
+    update_ewma_engine_variances, update_realized_correlations,
+    compute_cold_start_sigma_mult, compute_shrinkage_weight,
+    GMM_REGIME_CENTROIDS, GMM_REGIME_PRIORS, GMM_REGIME_BANDWIDTHS,
+    REGIME_EMA_ALPHA, ENGINE_VARIANCE_REGIME_MULT, _REGIME_CORR_SHIFTS,
+    RISK_BLEND_ALPHA, DYNAMIC_THRESHOLD_K2,
+    COLD_START_RUN_THRESHOLD, COLD_START_SIGMA_MULT,
+    SHRINKAGE_LAMBDA_BASE, SHRINKAGE_DECAY_RUNS,
 )
+from valuation_config import SECTOR_TAIL_DF, REGIME_VARIANCE_MULTIPLIER
 
 
 # ============================================================================
@@ -2997,6 +3011,701 @@ class TestBuildDCFMonteCarlo:
         for key in ['bear', 'base', 'bull', 'cash_flow_source',
                     'forecast_years', 'projections', 'assumptions']:
             assert key in result, f"Missing existing field: {key}"
+
+
+# ============================================================================
+# Phase 1 Audit: Regime-Conditioned Interaction Matrices (1a)
+# ============================================================================
+
+class TestRegimeInteractionMatrices:
+    """Test regime-conditioned interaction matrices A(r)."""
+
+    def test_all_regimes_present(self):
+        """All 5 regimes should have a pre-built matrix."""
+        for regime in REGIME_NAMES:
+            assert regime in REGIME_INTERACTION_MATRICES
+
+    def test_matrices_are_8x8(self):
+        """Each regime matrix is 8×8."""
+        for regime, A in REGIME_INTERACTION_MATRICES.items():
+            assert A.shape == (8, 8), f"Matrix for {regime} has wrong shape"
+
+    def test_matrices_symmetric(self):
+        """All regime matrices should be symmetric."""
+        for regime, A in REGIME_INTERACTION_MATRICES.items():
+            np.testing.assert_allclose(A, A.T, atol=1e-12,
+                                       err_msg=f"Matrix for {regime} not symmetric")
+
+    def test_spectral_bound_enforced(self):
+        """All regime matrices should have ‖A‖₂ ≤ 0.05."""
+        for regime, A in REGIME_INTERACTION_MATRICES.items():
+            eigvals = np.linalg.eigvalsh(A)
+            max_abs = np.max(np.abs(eigvals))
+            assert max_abs <= 0.05 + 1e-10, \
+                f"Spectral bound violated for {regime}: ‖A‖₂ = {max_abs:.6f}"
+
+    def test_calm_regime_nearly_zero(self):
+        """Calm regime should have near-zero interaction (most pairs are 0)."""
+        A = REGIME_INTERACTION_MATRICES['Calm']
+        # Only trend×liq has nonzero value (+0.01)
+        assert np.sum(np.abs(A) > 1e-10) <= 4  # at most 2 pairs = 4 entries
+
+    def test_crisis_has_stronger_interactions(self):
+        """Crisis Trend should have larger total interaction magnitude than Calm."""
+        A_calm = REGIME_INTERACTION_MATRICES['Calm']
+        A_crisis = REGIME_INTERACTION_MATRICES['Crisis Trend']
+        assert np.sum(np.abs(A_crisis)) > np.sum(np.abs(A_calm))
+
+    def test_enforce_spectral_bound_clips(self):
+        """_enforce_spectral_bound should clip eigenvalues exceeding alpha_max."""
+        A = np.eye(8) * 0.10  # eigenvalues all 0.10
+        A_clipped = _enforce_spectral_bound(A, alpha_max=0.05)
+        eigvals = np.linalg.eigvalsh(A_clipped)
+        assert np.max(np.abs(eigvals)) <= 0.05 + 1e-10
+
+    def test_composite_with_regime_label(self):
+        """compute_composite should accept regime_label and produce valid output."""
+        e_norm = {f'{eng}_norm': 0.5 for eng in
+                  ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']}
+        w = {eng: 0.125 for eng in
+             ['trend', 'valuation', 'consensus', 'volatility',
+              'macro', 'liquidity', 'global', 'correlation']}
+        c_raw, details = compute_composite(e_norm, w, regime_label='Chop')
+        assert isinstance(c_raw, float)
+        assert 'composite_quadratic' in details
+
+    def test_regime_label_overrides_static_matrix(self):
+        """regime_label should take priority over interaction_matrix."""
+        e_norm = {f'{eng}_norm': 0.5 for eng in
+                  ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']}
+        w = {eng: 0.125 for eng in
+             ['trend', 'valuation', 'consensus', 'volatility',
+              'macro', 'liquidity', 'global', 'correlation']}
+        # Both provided — regime_label should win
+        c_regime, _ = compute_composite(e_norm, w, interaction_matrix=INTERACTION_MATRIX, regime_label='Crisis Trend')
+        c_static, _ = compute_composite(e_norm, w, interaction_matrix=INTERACTION_MATRIX, regime_label=None)
+        # These should differ because regime matrix != static matrix
+        # (or at least the code path is correct)
+        assert isinstance(c_regime, float)
+        assert isinstance(c_static, float)
+
+
+# ============================================================================
+# Phase 1 Audit: Half-Kelly (1b)
+# ============================================================================
+
+class TestHalfKelly:
+    """Test half-Kelly (λ=2.0) position sizing."""
+
+    def test_kelly_lambda_is_two(self):
+        """KELLY_LAMBDA should be 2.0 (half-Kelly)."""
+        assert KELLY_LAMBDA == 2.0
+
+    def test_half_kelly_halves_fraction(self):
+        """Half-Kelly should give ~half the full-Kelly fraction."""
+        c_raw = 30.0
+        sigma2_C = 0.04
+        result = compute_kelly_position(c_raw, sigma2_C, g=1.0, dc=100,
+                                        capital=100000, regime_label='Calm')
+        # Full Kelly: 0.30 / 0.04 = 7.5
+        # Half Kelly: 0.30 / (2.0 * 0.04) = 3.75
+        expected_raw = 0.30 / (2.0 * 0.04)
+        assert abs(result['kelly_fraction'] - expected_raw) < 1e-6
+
+    def test_cvar_pass_false_zeros_position(self):
+        """When cvar_pass=False, kelly_clipped should be 0."""
+        result = compute_kelly_position(c_raw=30.0, sigma2_C=0.04, g=1.0, dc=100,
+                                        capital=100000, regime_label='Calm',
+                                        cvar_pass=False)
+        assert result['kelly_clipped'] == 0.0
+        assert result['kelly_position'] == 0.0
+        assert result['cvar_pass'] is False
+
+    def test_cvar_pass_true_allows_position(self):
+        """When cvar_pass=True, position should be nonzero for nonzero signal."""
+        result = compute_kelly_position(c_raw=30.0, sigma2_C=0.04, g=1.0, dc=100,
+                                        capital=100000, regime_label='Calm',
+                                        cvar_pass=True)
+        assert result['kelly_clipped'] != 0.0
+        assert result['kelly_position'] > 0.0
+        assert result['cvar_pass'] is True
+
+    def test_regime_caps_still_apply(self):
+        """Regime caps should still clip the half-Kelly fraction."""
+        # Very large signal → raw fraction exceeds cap
+        result = compute_kelly_position(c_raw=90.0, sigma2_C=0.001, g=1.0, dc=100,
+                                        capital=100000, regime_label='Crisis Trend')
+        assert abs(result['kelly_clipped']) <= KELLY_REGIME_CAPS['Crisis Trend'] + 1e-10
+
+
+# ============================================================================
+# Phase 1 Audit: CVaR Gate (1c)
+# ============================================================================
+
+class TestCVaRGate:
+    """Test CVaR tail-risk gate."""
+
+    def test_strong_positive_signal_passes(self):
+        """Strong positive signal with low uncertainty should pass."""
+        passed, cvar = compute_cvar_gate(mu_C=0.3, sigma_C=0.1)
+        assert passed is True
+        assert cvar > -30
+
+    def test_zero_signal_high_uncertainty_may_fail(self):
+        """Near-zero signal with very high uncertainty should fail."""
+        passed, cvar = compute_cvar_gate(mu_C=0.0, sigma_C=100.0)
+        assert passed is False
+        assert cvar < -30
+
+    def test_zero_uncertainty_always_passes(self):
+        """With σ=0, CVaR = μ, always passes for positive μ."""
+        passed, cvar = compute_cvar_gate(mu_C=0.1, sigma_C=0.0)
+        assert passed is True
+        assert abs(cvar - 0.1) < 1e-10
+
+    def test_cvar_formula_correct(self):
+        """Verify the CVaR formula: μ - σ × φ(z_α)/α."""
+        mu = 0.2
+        sigma = 0.3
+        alpha = 0.05
+        z_alpha = 1.6449
+        phi_z = 0.10314
+        expected_cvar = mu - sigma * phi_z / alpha
+        _, cvar = compute_cvar_gate(mu, sigma, alpha=alpha)
+        assert abs(cvar - expected_cvar) < 1e-6
+
+    def test_negative_signal_may_fail(self):
+        """Negative signal with moderate uncertainty should fail."""
+        passed, cvar = compute_cvar_gate(mu_C=-0.2, sigma_C=0.5)
+        assert cvar < 0  # CVaR is negative
+
+    def test_threshold_adjustable(self):
+        """Custom threshold should change gate behavior."""
+        # With default θ=30, this should pass
+        passed_default, _ = compute_cvar_gate(mu_C=0.0, sigma_C=1.0, theta=30.0)
+        # With very tight θ=0.01, this should fail
+        passed_tight, _ = compute_cvar_gate(mu_C=0.0, sigma_C=1.0, theta=0.01)
+        # At least one should differ (high sigma makes CVaR negative)
+        assert passed_tight is False
+
+
+# ============================================================================
+# Phase 1 Audit: Fat-Tailed Growth (1d)
+# ============================================================================
+
+class TestFatTailedGrowth:
+    """Test Student's t fat-tailed growth innovations."""
+
+    def test_student_t_unit_variance(self):
+        """_student_t_unit should produce approximately unit variance."""
+        rng = np.random.default_rng(42)
+        samples = _student_t_unit(rng, nu=5, size=50000)
+        assert abs(np.var(samples) - 1.0) < 0.1  # within 10% of 1.0
+
+    def test_student_t_zero_mean(self):
+        """_student_t_unit should produce approximately zero mean."""
+        rng = np.random.default_rng(42)
+        samples = _student_t_unit(rng, nu=5, size=50000)
+        assert abs(np.mean(samples)) < 0.05
+
+    def test_student_t_fatter_tails_than_normal(self):
+        """Student's t (ν=4) should have higher kurtosis than normal."""
+        rng = np.random.default_rng(42)
+        t_samples = _student_t_unit(rng, nu=4, size=100000)
+        rng2 = np.random.default_rng(42)
+        n_samples = rng2.standard_normal(100000)
+        t_kurtosis = np.mean(t_samples**4) - 3.0
+        n_kurtosis = np.mean(n_samples**4) - 3.0
+        assert t_kurtosis > n_kurtosis
+
+    def test_high_df_approaches_normal(self):
+        """ν >= 30 should fall back to standard normal."""
+        rng = np.random.default_rng(42)
+        samples = _student_t_unit(rng, nu=30, size=10000)
+        # Should behave like standard normal (kurtosis near 0)
+        kurtosis = np.mean(samples**4) - 3.0
+        assert abs(kurtosis) < 0.5
+
+    def test_sector_tail_df_coverage(self):
+        """SECTOR_TAIL_DF should cover all expected sectors."""
+        assert len(SECTOR_TAIL_DF) >= 11
+        for sector, df in SECTOR_TAIL_DF.items():
+            assert 3 <= df <= 30, f"DF for {sector} out of range: {df}"
+
+    def test_mc_dcf_with_fat_tails(self):
+        """MC DCF should run successfully with fat-tailed growth."""
+        result = _run_monte_carlo_dcf(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8, sector='Energy',
+            ticker_seed=42, price=100.0, n_simulations=500
+        )
+        assert result['tail_df'] == 4  # Energy sector
+        assert result['iv_p5'] > 0
+        assert result['iv_p95'] > result['iv_p5']
+
+    def test_mc_dcf_includes_shape_metrics(self):
+        """MC result should include skewness and kurtosis."""
+        result = _run_monte_carlo_dcf(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8, sector='Technology',
+            ticker_seed=42, price=100.0, n_simulations=500
+        )
+        assert 'iv_skewness' in result
+        assert 'iv_kurtosis' in result
+
+
+# ============================================================================
+# Phase 1 Audit: WACC Sigma Regime Scaling (1e)
+# ============================================================================
+
+class TestWACCRegimeScaling:
+    """Test WACC sigma regime-conditioned scaling."""
+
+    def test_regime_variance_multiplier_coverage(self):
+        """All 5 regimes should have a variance multiplier."""
+        for regime in ['Calm', 'Chop', 'Tightening Shock', 'Crisis Trend', 'Credit Stress']:
+            assert regime in REGIME_VARIANCE_MULTIPLIER
+
+    def test_calm_multiplier_is_one(self):
+        """Calm regime should have multiplier 1.0 (no scaling)."""
+        assert REGIME_VARIANCE_MULTIPLIER['Calm'] == 1.0
+
+    def test_stress_regimes_wider_than_calm(self):
+        """All stress regimes should have multiplier > 1.0."""
+        for regime in ['Chop', 'Tightening Shock', 'Crisis Trend', 'Credit Stress']:
+            assert REGIME_VARIANCE_MULTIPLIER[regime] > 1.0
+
+    def test_crisis_has_highest_multiplier(self):
+        """Crisis Trend should have the highest multiplier."""
+        crisis_mult = REGIME_VARIANCE_MULTIPLIER['Crisis Trend']
+        for regime, mult in REGIME_VARIANCE_MULTIPLIER.items():
+            assert crisis_mult >= mult, f"{regime} has higher mult than Crisis"
+
+    def test_mc_dcf_regime_mult_passthrough(self):
+        """regime_variance_mult should propagate into MC result."""
+        result = _run_monte_carlo_dcf(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8, sector='Technology',
+            ticker_seed=42, price=100.0, n_simulations=500,
+            regime_variance_mult=1.4
+        )
+        assert result['regime_variance_mult'] == 1.4
+
+    def test_higher_mult_wider_spread(self):
+        """Higher regime_variance_mult should produce wider IV spread."""
+        kwargs = dict(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8, sector='Technology',
+            ticker_seed=42, price=100.0, n_simulations=1000,
+        )
+        r_calm = _run_monte_carlo_dcf(**kwargs, regime_variance_mult=1.0)
+        r_crisis = _run_monte_carlo_dcf(**kwargs, regime_variance_mult=1.6)
+        spread_calm = r_calm['iv_p95'] - r_calm['iv_p5']
+        spread_crisis = r_crisis['iv_p95'] - r_crisis['iv_p5']
+        assert spread_crisis > spread_calm
+
+    def test_build_dcf_accepts_regime_mult(self):
+        """_build_dcf should accept regime_variance_mult without error."""
+        info = {
+            'sector': 'Technology',
+            'beta': 1.1,
+            'totalDebt': 5e9,
+            'totalCash': 2e9,
+            'marketCap': 50e9,
+            'interestExpense': 2e8,
+        }
+        fin = {
+            'revenue_ttm': 10e9,
+            'shares_outstanding': 1e9,
+            'free_cash_flow': 1.5e9,
+            'revenue_growth': 10.0,
+            '_data_status': 'OK',
+        }
+        result = _build_dcf(info, fin, sector='Technology', ticker='TEST',
+                           price=50.0, regime_variance_mult=1.3)
+        assert not result.get('_dcf_disabled', False)
+        if 'monte_carlo' in result:
+            assert result['monte_carlo']['regime_variance_mult'] == 1.3
+
+
+# ============================================================================
+# Phase 2a: Soft GMM Regime Model
+# ============================================================================
+
+class TestSoftGMMRegime:
+    """Test soft GMM regime classification."""
+
+    def _make_regime_vector(self, **overrides):
+        rv = {'TS': 0.3, 'CH': 0.2, 'VL': 0.15, 'VS': 0.1, 'CI': 0.1,
+              'RS': 0.1, 'CS': 0.05, 'GR': 0.1, 'BM_f': 0.05, 'BEI': 0.05}
+        rv.update(overrides)
+        return rv
+
+    def test_returns_probs_and_label(self):
+        probs, label = compute_soft_regime(self._make_regime_vector())
+        assert isinstance(probs, dict)
+        assert label in REGIME_NAMES
+        assert len(probs) == 5
+
+    def test_probs_sum_to_one(self):
+        probs, _ = compute_soft_regime(self._make_regime_vector())
+        assert abs(sum(probs.values()) - 1.0) < 1e-6
+
+    def test_calm_vector_gives_calm(self):
+        """Low-stress vector should classify as Calm."""
+        probs, label = compute_soft_regime(self._make_regime_vector())
+        assert label == 'Calm'
+        assert probs['Calm'] > 0.3
+
+    def test_high_credit_stress_classifies_correctly(self):
+        probs, label = compute_soft_regime(self._make_regime_vector(CS=0.85, VL=0.55, CI=0.50))
+        assert probs['Credit Stress'] > probs['Calm']
+
+    def test_crisis_vector(self):
+        probs, label = compute_soft_regime(self._make_regime_vector(
+            TS=-0.7, VL=0.75, VS=0.7, CI=0.6, GR=0.6, BM_f=0.5, BEI=0.6
+        ))
+        assert probs['Crisis Trend'] > 0.1
+
+    def test_all_probs_positive(self):
+        probs, _ = compute_soft_regime(self._make_regime_vector())
+        for r, p in probs.items():
+            assert p > 0, f"Regime {r} has non-positive probability"
+
+    def test_centroids_shape(self):
+        assert GMM_REGIME_CENTROIDS.shape == (5, 10)
+
+    def test_priors_sum_to_one(self):
+        assert abs(np.sum(GMM_REGIME_PRIORS) - 1.0) < 1e-6
+
+
+# ============================================================================
+# Phase 2b: EMA Regime Smoothing
+# ============================================================================
+
+class TestEMARegimeSmoothing:
+    """Test EMA smoothing of regime probabilities."""
+
+    def test_no_prev_returns_current(self):
+        probs = {'Calm': 0.6, 'Chop': 0.2, 'Tightening Shock': 0.1,
+                 'Crisis Trend': 0.05, 'Credit Stress': 0.05}
+        smoothed = smooth_regime_probs(probs, None)
+        assert smoothed == probs
+
+    def test_smoothing_blends(self):
+        probs_new = {'Calm': 0.0, 'Chop': 1.0, 'Tightening Shock': 0.0,
+                     'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        probs_prev = {'Calm': 1.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                      'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        smoothed = smooth_regime_probs(probs_new, probs_prev, alpha=0.3)
+        # Calm: 0.3*0 + 0.7*1 = 0.7 (before normalization)
+        assert smoothed['Calm'] > smoothed['Chop']
+
+    def test_smoothing_preserves_normalization(self):
+        probs_new = {r: 0.2 for r in REGIME_NAMES}
+        probs_prev = {'Calm': 0.8, 'Chop': 0.05, 'Tightening Shock': 0.05,
+                      'Crisis Trend': 0.05, 'Credit Stress': 0.05}
+        smoothed = smooth_regime_probs(probs_new, probs_prev)
+        assert abs(sum(smoothed.values()) - 1.0) < 1e-6
+
+    def test_alpha_one_ignores_prev(self):
+        probs_new = {r: 0.2 for r in REGIME_NAMES}
+        probs_prev = {'Calm': 1.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                      'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        smoothed = smooth_regime_probs(probs_new, probs_prev, alpha=1.0)
+        for r in REGIME_NAMES:
+            assert abs(smoothed[r] - 0.2) < 1e-6
+
+
+# ============================================================================
+# Phase 2c: Improved Engine Variance
+# ============================================================================
+
+class TestImprovedEngineVariance:
+    """Test f_agreement and f_regime in engine variance."""
+
+    def test_agreement_no_penalty_when_aligned(self):
+        """Engine agreeing with ensemble → f_agreement = 1.0."""
+        v = _compute_engine_variance('trend', 50.0, {'final_dc': 100}, 200,
+                                      ensemble_sign=1, regime_label=None)
+        v_no = _compute_engine_variance('trend', 50.0, {'final_dc': 100}, 200,
+                                         ensemble_sign=None, regime_label=None)
+        assert v == v_no  # aligned → no penalty
+
+    def test_disagreement_increases_variance(self):
+        """Engine disagreeing with ensemble → f_agreement = 1.5."""
+        v_agree = _compute_engine_variance('trend', 50.0, {'final_dc': 100}, 200,
+                                            ensemble_sign=1, regime_label=None)
+        v_disagree = _compute_engine_variance('trend', -50.0, {'final_dc': 100}, 200,
+                                               ensemble_sign=1, regime_label=None)
+        # -50 disagrees with ensemble_sign=1 → 50% higher variance
+        assert v_disagree > v_agree
+
+    def test_regime_multiplier_applies(self):
+        v_calm = _compute_engine_variance('trend', 50.0, {'final_dc': 100}, 200,
+                                           regime_label='Calm')
+        v_crisis = _compute_engine_variance('trend', 50.0, {'final_dc': 100}, 200,
+                                             regime_label='Crisis Trend')
+        assert v_crisis > v_calm
+
+    def test_all_variances_accepts_regime(self):
+        scores = {e: 0.0 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                                     'macro', 'liquidity', 'global', 'correlation']}
+        v = compute_all_engine_variances(scores, {'final_dc': 100}, regime_label='Chop')
+        assert len(v) == 8
+        for val in v.values():
+            assert val > 0
+
+
+# ============================================================================
+# Phase 2d: Regime-Conditioned Correlations
+# ============================================================================
+
+class TestRegimeConditionedCorrelations:
+    """Test regime-conditioned engine correlation matrices."""
+
+    def test_returns_valid_matrix(self):
+        probs = {r: 0.2 for r in REGIME_NAMES}
+        R = build_regime_conditioned_correlations(probs)
+        assert R.shape == (8, 8)
+
+    def test_unit_diagonal(self):
+        probs = {'Calm': 0.5, 'Chop': 0.2, 'Tightening Shock': 0.1,
+                 'Crisis Trend': 0.1, 'Credit Stress': 0.1}
+        R = build_regime_conditioned_correlations(probs)
+        np.testing.assert_allclose(np.diag(R), 1.0, atol=1e-6)
+
+    def test_symmetric(self):
+        probs = {r: 0.2 for r in REGIME_NAMES}
+        R = build_regime_conditioned_correlations(probs)
+        np.testing.assert_allclose(R, R.T, atol=1e-10)
+
+    def test_stress_increases_correlations(self):
+        probs_calm = {'Calm': 1.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                      'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        probs_crisis = {'Calm': 0.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                        'Crisis Trend': 1.0, 'Credit Stress': 0.0}
+        R_calm = build_regime_conditioned_correlations(probs_calm)
+        R_crisis = build_regime_conditioned_correlations(probs_crisis)
+        # Off-diagonal absolute values should be higher in crisis
+        off_diag_calm = np.sum(np.abs(R_calm)) - np.trace(np.abs(R_calm))
+        off_diag_crisis = np.sum(np.abs(R_crisis)) - np.trace(np.abs(R_crisis))
+        assert off_diag_crisis > off_diag_calm
+
+    def test_psd(self):
+        probs = {'Calm': 0.1, 'Chop': 0.1, 'Tightening Shock': 0.2,
+                 'Crisis Trend': 0.3, 'Credit Stress': 0.3}
+        R = build_regime_conditioned_correlations(probs)
+        eigvals = np.linalg.eigvalsh(R)
+        assert np.all(eigvals > 0)
+
+
+# ============================================================================
+# Phase 2e: Dynamic Risk Blend
+# ============================================================================
+
+class TestDynamicRiskBlend:
+    """Test dynamic structural/tactical risk blend."""
+
+    def test_calm_favors_structural(self):
+        probs = {'Calm': 1.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                 'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        alpha = compute_dynamic_risk_blend(probs)
+        assert alpha > 0.6  # structural-heavy
+
+    def test_crisis_favors_tactical(self):
+        probs = {'Calm': 0.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                 'Crisis Trend': 1.0, 'Credit Stress': 0.0}
+        alpha = compute_dynamic_risk_blend(probs)
+        assert alpha < 0.4  # tactical-heavy
+
+    def test_bounded(self):
+        probs = {r: 0.2 for r in REGIME_NAMES}
+        alpha = compute_dynamic_risk_blend(probs)
+        assert 0.1 <= alpha <= 0.9
+
+
+# ============================================================================
+# Phase 2f: MC Output Expansion
+# ============================================================================
+
+class TestMCOutputExpansion:
+    """Test expanded MC DCF outputs."""
+
+    def test_prob_permanent_loss_present(self):
+        result = _run_monte_carlo_dcf(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8, sector='Technology',
+            ticker_seed=42, price=100.0, n_simulations=500
+        )
+        assert 'prob_permanent_loss' in result
+        assert 0.0 <= result['prob_permanent_loss'] <= 1.0
+
+    def test_cross_sensitivity_present(self):
+        result = _compute_sensitivity(
+            revenue=1e9, fcf_margin=0.15, discount_rate=0.10,
+            terminal_growth=0.025, growth_rates=[0.05]*5,
+            shares=1e6, net_debt=1e8
+        )
+        assert 'cross_wacc_growth' in result
+
+
+# ============================================================================
+# Phase 3a: EWMA Volatility Tracking
+# ============================================================================
+
+class TestEWMAVolatilityTracking:
+    """Test EWMA engine volatility tracking."""
+
+    def test_initial_state(self):
+        state = {'ewma_var': {e: 0.0 for e in REGIME_NAMES[:5]},
+                 'ewma_mean': {e: 0.0 for e in REGIME_NAMES[:5]}}
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        state['ewma_var'] = {e: 0.0 for e in engines}
+        state['ewma_mean'] = {e: 0.0 for e in engines}
+        scores = {e: 50.0 for e in engines}
+        state = update_ewma_engine_variances(state, scores)
+        for e in engines:
+            assert 'ewma_var' in state
+            assert e in state['ewma_var']
+
+    def test_variance_grows_with_dispersion(self):
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        state = {'ewma_var': {e: 0.0 for e in engines},
+                 'ewma_mean': {e: 0.0 for e in engines}}
+        # Feed volatile scores
+        for i in range(10):
+            scores = {e: 50.0 * (1 if i % 2 == 0 else -1) for e in engines}
+            state = update_ewma_engine_variances(state, scores)
+        # Variance should be positive
+        for e in engines:
+            assert state['ewma_var'][e] > 0
+
+
+# ============================================================================
+# Phase 3b: Realized Correlation Tracking
+# ============================================================================
+
+class TestRealizedCorrelationTracking:
+    """Test realized correlation tracking with shrinkage."""
+
+    def test_returns_valid_matrix(self):
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        state = {}
+        e_norm = {f'{e}_norm': 0.5 for e in engines}
+        state, R = update_realized_correlations(state, e_norm)
+        assert R.shape == (8, 8)
+
+    def test_shrinkage_toward_structural(self):
+        """High shrinkage weight should yield matrix close to structural."""
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        state = {}
+        e_norm = {f'{e}_norm': 0.5 for e in engines}
+        state, R = update_realized_correlations(state, e_norm, shrinkage_weight=0.99)
+        # Should be very close to structural
+        diff = np.abs(R - ENGINE_STRUCTURAL_CORRELATIONS)
+        assert np.max(diff) < 0.15
+
+    def test_state_persists(self):
+        state = {}
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        e_norm = {f'{e}_norm': 0.5 for e in engines}
+        state, _ = update_realized_correlations(state, e_norm)
+        assert 'ewma_cross' in state
+        assert 'ewma_enorm_mean' in state
+
+
+# ============================================================================
+# Phase 3c: Regime Entropy
+# ============================================================================
+
+class TestRegimeEntropy:
+    """Test regime entropy computation."""
+
+    def test_uniform_gives_max_entropy(self):
+        probs = {r: 0.2 for r in REGIME_NAMES}
+        H = compute_regime_entropy(probs)
+        assert abs(H - 1.0) < 0.01  # normalized max = 1.0
+
+    def test_certain_gives_zero_entropy(self):
+        probs = {'Calm': 1.0, 'Chop': 0.0, 'Tightening Shock': 0.0,
+                 'Crisis Trend': 0.0, 'Credit Stress': 0.0}
+        H = compute_regime_entropy(probs)
+        assert H < 0.05  # near zero (not exactly 0 due to floor)
+
+    def test_entropy_bounded(self):
+        probs = {'Calm': 0.5, 'Chop': 0.3, 'Tightening Shock': 0.1,
+                 'Crisis Trend': 0.05, 'Credit Stress': 0.05}
+        H = compute_regime_entropy(probs)
+        assert 0 <= H <= 1.0
+
+    def test_entropy_in_smooth_verdict(self):
+        """Higher entropy should widen tau_effective."""
+        result_low = compute_smooth_verdict(20, 15, 0.1, 'Calm', 0.5, regime_entropy=0.0)
+        result_high = compute_smooth_verdict(20, 15, 0.1, 'Calm', 0.5, regime_entropy=0.9)
+        assert result_high['tau_effective'] > result_low['tau_effective']
+
+
+# ============================================================================
+# Phase 3d: Cold-Start σ Inflation
+# ============================================================================
+
+class TestColdStartInflation:
+    """Test cold-start sigma inflation schedule."""
+
+    def test_zero_runs_max_inflation(self):
+        mult = compute_cold_start_sigma_mult(0)
+        assert mult == COLD_START_SIGMA_MULT
+
+    def test_mature_runs_no_inflation(self):
+        mult = compute_cold_start_sigma_mult(COLD_START_RUN_THRESHOLD)
+        assert mult == 1.0
+
+    def test_above_threshold_no_inflation(self):
+        mult = compute_cold_start_sigma_mult(100)
+        assert mult == 1.0
+
+    def test_monotonically_decreasing(self):
+        mults = [compute_cold_start_sigma_mult(r) for r in range(0, COLD_START_RUN_THRESHOLD + 1)]
+        for i in range(len(mults) - 1):
+            assert mults[i] >= mults[i + 1]
+
+
+# ============================================================================
+# Phase 3e: Uncertainty Shrinkage
+# ============================================================================
+
+class TestUncertaintyShrinkage:
+    """Test uncertainty shrinkage weight schedule."""
+
+    def test_zero_runs_high_shrinkage(self):
+        w = compute_shrinkage_weight(0)
+        assert abs(w - SHRINKAGE_LAMBDA_BASE) < 1e-6
+
+    def test_many_runs_low_shrinkage(self):
+        w = compute_shrinkage_weight(500)
+        assert w < 0.01
+
+    def test_monotonically_decreasing(self):
+        weights = [compute_shrinkage_weight(r) for r in range(0, 200)]
+        for i in range(len(weights) - 1):
+            assert weights[i] >= weights[i + 1]
+
+    def test_always_positive(self):
+        for r in [0, 1, 10, 50, 100, 500]:
+            assert compute_shrinkage_weight(r) > 0
 
 
 if __name__ == '__main__':

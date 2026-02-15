@@ -277,11 +277,17 @@ def handle_atlas_mention(event, say, client):
             except Exception:
                 pass
 
+        # Derive regime-conditioned WACC scaling from engine summary
+        from valuation_config import REGIME_VARIANCE_MULTIPLIER
+        _regime = summary.get('regime_label', 'Calm')
+        _rvm = REGIME_VARIANCE_MULTIPLIER.get(_regime, 1.0)
+
         # Fetch V12extended data (peers, technicals, news, macro, etc.)
-        print(f"[BOT] Fetching V12extended data for {symbol}...")
+        print(f"[BOT] Fetching V12extended data for {symbol} (regime={_regime}, wacc_mult={_rvm})...")
         v8_extended = fetch_v8_data(
             symbol=symbol,
-            fred_api_key=FRED_API_KEY
+            fred_api_key=FRED_API_KEY,
+            regime_variance_mult=_rvm
         )
 
         # Generate V12full-spectrum report (10 sections)

@@ -330,6 +330,33 @@ SECTOR_GROWTH_SIGMA: Dict[str, float] = {
     'Communication Services': 0.06,
 }
 
+# Sector-specific Student's t degrees of freedom for fat-tailed growth shocks.
+# Lower ν → fatter tails. Empirically: Energy/Cyclical have heavier tails,
+# Defensive/Utilities are near-Gaussian.
+SECTOR_TAIL_DF: Dict[str, int] = {
+    'Technology':               5,
+    'Consumer Cyclical':        5,
+    'Energy':                   4,
+    'Basic Materials':          5,
+    'Financial Services':       5,
+    'Industrials':              6,
+    'Healthcare':               6,
+    'Consumer Defensive':       8,
+    'Utilities':                10,
+    'Real Estate':              6,
+    'Communication Services':   6,
+}
+
+# Regime-conditioned WACC sigma multiplier.
+# Wider uncertainty in stressed regimes → fatter MC WACC distribution.
+REGIME_VARIANCE_MULTIPLIER: Dict[str, float] = {
+    'Calm':              1.0,
+    'Chop':              1.4,
+    'Tightening Shock':  1.3,
+    'Crisis Trend':      1.6,
+    'Credit Stress':     1.5,
+}
+
 # 4×4 correlation matrix for MC draws: [growth, margin, wacc, terminal_g]
 MC_CORRELATION_MATRIX = np.array([
     [ 1.00,  0.30,  0.15,  0.00],   # growth

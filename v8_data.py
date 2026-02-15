@@ -24,6 +24,7 @@ from valuation_config import (
     CONFIG, SECTOR_BETA_BOUNDS, DEFAULT_BETA_BOUNDS, SECTOR_WACC_FLOORS,
     BetaPath, SectorProvenance,
     SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX, MonteCarloConfig,
+    SECTOR_TAIL_DF, REGIME_VARIANCE_MULTIPLIER,
 )
 
 
@@ -343,13 +344,14 @@ def _score_sentiment(title):
 # MAIN ENTRY POINT
 # ============================================================================
 
-def fetch_v8_data(symbol, fred_api_key=None):
+def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
     """
     Fetch all extended data for V8 report.
 
     Args:
         symbol: Ticker symbol (e.g. 'AAPL')
         fred_api_key: Optional FRED API key for economic indicators
+        regime_variance_mult: WACC sigma scaling from engine regime (default 1.0)
 
     Returns:
         dict with keys: company, financials, earnings, technicals,
@@ -422,7 +424,8 @@ def fetch_v8_data(symbol, fred_api_key=None):
     print(f"[V12]   Computing DCF model...")
     _price_for_dcf = company.get('price')
     dcf = _build_dcf(info, financials, sector=info.get('sector'),
-                     ticker=symbol, price=_price_for_dcf)
+                     ticker=symbol, price=_price_for_dcf,
+                     regime_variance_mult=regime_variance_mult)
 
     print(f"[V12] Extended data complete for {symbol}")
 
@@ -1664,9 +1667,26 @@ def _ticker_seed(ticker):
     return zlib.crc32(ticker.upper().encode()) & 0xFFFFFFFF
 
 
+def _student_t_unit(rng, nu, size):
+    """
+    Generate unit-variance Student's t samples.
+    For ν > 2, raw t has variance ν/(ν-2); we rescale to unit variance.
+    Falls back to standard normal when ν >= 30 (negligible tail difference).
+    """
+    if nu >= 30:
+        return rng.standard_normal(size)
+    z = rng.standard_normal(size)
+    chi2 = rng.chisquare(nu, size)
+    t = z / np.sqrt(chi2 / nu)
+    if nu > 2:
+        t *= np.sqrt((nu - 2) / nu)  # rescale to unit variance
+    return t
+
+
 def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
                           growth_rates, shares, net_debt, sector, ticker_seed,
-                          cash_flow_source='fcf', price=None, n_simulations=1000):
+                          cash_flow_source='fcf', price=None, n_simulations=1000,
+                          regime_variance_mult=1.0):
     """
     Fully vectorized Monte Carlo DCF engine.
     Returns distribution statistics for intrinsic value.
@@ -1695,8 +1715,9 @@ def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
 
     # Build growth paths: (N, forecast_years)
     growth_paths = np.tile(growth_base, (N, 1))  # start from base
-    # Year 1: innovation from correlated draw
-    growth_innovations = rng.standard_normal((N, forecast_years)) * growth_sigma
+    # Year 1: innovation from correlated draw — fat-tailed via Student's t
+    tail_df = SECTOR_TAIL_DF.get(sector, 6)
+    growth_innovations = _student_t_unit(rng, tail_df, (N, forecast_years)) * growth_sigma
     growth_innovations[:, 0] += correlated[:, 0] * growth_sigma  # add correlated component
     # AR(1) propagation
     for t in range(forecast_years):
@@ -1711,8 +1732,8 @@ def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
     margins = fcf_margin + correlated[:, 1] * margin_sigma
     margins = np.maximum(margins, 0.01)  # floor at 1%
 
-    # WACC shocks: (N,)
-    wacc_sigma = mc_cfg.wacc_sigma * proxy_mult
+    # WACC shocks: (N,) — regime-scaled uncertainty
+    wacc_sigma = mc_cfg.wacc_sigma * proxy_mult * regime_variance_mult
     waccs = discount_rate + correlated[:, 2] * wacc_sigma
     waccs = np.clip(waccs, 0.03, 0.20)
 
@@ -1754,11 +1775,17 @@ def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
+    # Distribution shape metrics
+    iv_skew = float(np.mean(((iv - np.mean(iv)) / max(np.std(iv), 1e-10)) ** 3)) if np.std(iv) > 0 else 0.0
+    iv_kurtosis = float(np.mean(((iv - np.mean(iv)) / max(np.std(iv), 1e-10)) ** 4)) - 3.0 if np.std(iv) > 0 else 0.0
+
     # Percentile extraction
     result = {
         'n_simulations': N,
         'seed': int(ticker_seed),
         'elapsed_ms': round(elapsed_ms, 1),
+        'tail_df': tail_df,
+        'regime_variance_mult': round(regime_variance_mult, 2),
         'iv_mean': round(float(np.mean(iv)), 2),
         'iv_median': round(float(np.median(iv)), 2),
         'iv_std': round(float(np.std(iv)), 2),
@@ -1769,15 +1796,20 @@ def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
         'iv_p75': round(float(np.percentile(iv, 75)), 2),
         'iv_p90': round(float(np.percentile(iv, 90)), 2),
         'iv_p95': round(float(np.percentile(iv, 95)), 2),
+        'iv_skewness': round(iv_skew, 4),
+        'iv_kurtosis': round(iv_kurtosis, 4),
     }
 
     if price is not None and price > 0:
         result['prob_undervalued'] = round(float(np.mean(iv > price)), 4)
         mos_vals = np.maximum(0, (iv - price) / np.where(iv > 0, iv, 1))
         result['expected_mos'] = round(float(np.mean(mos_vals)), 4)
+        # Phase 2f: prob_permanent_loss = P(IV < 0.5 × Price)
+        result['prob_permanent_loss'] = round(float(np.mean(iv < 0.5 * price)), 4)
     else:
         result['prob_undervalued'] = None
         result['expected_mos'] = None
+        result['prob_permanent_loss'] = None
 
     return result
 
@@ -1829,11 +1861,20 @@ def _compute_sensitivity(revenue, fcf_margin, discount_rate, terminal_growth,
                                   growth_rates, shares, net_debt)
     dIV_dTerminalG = (iv_up - iv_dn) / (tg_up - tg_dn) if (tg_up - tg_dn) > 0 else 0
 
+    # Phase 2f: Cross-sensitivity (WACC×Growth interaction)
+    iv_wg_up = _evaluate_dcf_single(revenue, fcf_margin, discount_rate + dw, terminal_growth,
+                                     gr_up, shares, net_debt)
+    iv_wg_dn = _evaluate_dcf_single(revenue, fcf_margin, discount_rate - dw, terminal_growth,
+                                     gr_dn, shares, net_debt)
+    # Mixed partial: ∂²IV/(∂WACC ∂Growth)
+    cross_wacc_growth = ((iv_wg_up - iv_up) - (iv_wg_dn - iv_dn)) / (4 * dw * dg) if base_iv > 0 else 0.0
+
     sensitivities = {
         'dIV_dWACC': round(dIV_dWACC, 2),
         'dIV_dGrowth': round(dIV_dGrowth, 2),
         'dIV_dMargin': round(dIV_dMargin, 2),
         'dIV_dTerminalG': round(dIV_dTerminalG, 2),
+        'cross_wacc_growth': round(cross_wacc_growth, 2),
     }
 
     # Identify most sensitive parameter (by absolute magnitude per unit)
@@ -1853,12 +1894,13 @@ def _compute_sensitivity(revenue, fcf_margin, discount_rate, terminal_growth,
 # DCF MODEL
 # ============================================================================
 
-def _build_dcf(info, financials, sector=None, ticker=None, price=None):
+def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_variance_mult=1.0):
     """
     DCF fair value estimate with full audit trail.
 
     Discounts UNLEVERED free cash flow at WACC.
     Produces EV, then subtracts net debt to arrive at equity value per share.
+    regime_variance_mult: WACC sigma scaling from engine regime (1.0 = no scaling).
     """
     _disabled = {'bear': 0, 'base': 0, 'bull': 0, '_dcf_disabled': True}
     try:
@@ -2023,6 +2065,7 @@ def _build_dcf(info, financials, sector=None, ticker=None, price=None):
                 sector=_sector, ticker_seed=seed,
                 cash_flow_source=cash_flow_source,
                 price=_price, n_simulations=CONFIG.monte_carlo.n_simulations,
+                regime_variance_mult=regime_variance_mult,
             )
 
             sensitivity_result = _compute_sensitivity(
