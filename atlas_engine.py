@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-ATLAS V12+ — 11-Layer Hierarchical Trading Engine
+ATLAS V12+ Phase 3 — 11-Layer Hierarchical Trading Engine
 Importable Module with Regime-Aware Execution + Probabilistic Framework
+Phase 1: Regime-conditioned interactions, half-Kelly, CVaR gate, fat-tailed growth, WACC regime scaling
+Phase 2: Soft GMM regime, EMA smoothing, improved variance, regime correlations, dynamic risk blend
+Phase 3: EWMA tracking, realized correlations, dynamic thresholds, cold-start inflation, shrinkage
 
 Layers:
   0: Data Integrity Check

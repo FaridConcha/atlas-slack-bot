@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-ATLAS V12+ — Extended Data Fetcher + Monte Carlo DCF
+ATLAS V12+ Phase 3 — Extended Data Fetcher + Monte Carlo DCF
 Fetches additional data beyond what the ATLAS engine needs.
 Used by v8_report.py to generate the full 10-section report.
 V12+: Added Monte Carlo DCF (N=1000), sensitivity analysis, DCF kernel extraction.
+Phase 1: Fat-tailed growth (Student's t, sector-specific ν), WACC σ regime scaling.
+Phase 2: prob_permanent_loss, cross-sensitivity ∂²IV/(∂WACC×∂Growth).
 
 Data sources:
   - yfinance: Company info, financials, earnings, peers, news, technicals

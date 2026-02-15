@@ -1068,6 +1068,8 @@ if(DCF && DCF.monte_carlo){
   var mcRows = [['Mean','$'+f(MC.iv_mean,2)],['Median (P50)','$'+f(MC.iv_median,2)],['Std Dev','$'+f(MC.iv_std,2)],
     ['P5 (Bear)','$'+f(MC.iv_p5,2)],['P25','$'+f(MC.iv_p25,2)],['P50','$'+f(MC.iv_p50,2)],
     ['P75','$'+f(MC.iv_p75,2)],['P95 (Bull)','$'+f(MC.iv_p95,2)]];
+  if(MC.skewness!=null) mcRows.push(['Skewness',f(MC.skewness,3)]);
+  if(MC.kurtosis!=null) mcRows.push(['Excess Kurtosis',f(MC.kurtosis,3)]);
   for(var mi=0;mi<mcRows.length;mi++){
     h += '<tr style="border-bottom:1px solid var(--border)"><td style="padding:3px 6px">'+mcRows[mi][0]+'</td><td style="text-align:right;padding:3px 6px" class="mono">'+mcRows[mi][1]+'</td></tr>';
   }
@@ -1079,7 +1081,17 @@ if(DCF && DCF.monte_carlo){
     if(MC.expected_mos!=null) h += ' &middot; E[MoS]: '+f(MC.expected_mos*100,1)+'%';
     h += '</div>';
   }
-  h += '<div style="margin-top:4px;font-size:9px;color:var(--t3)">N='+MC.n_simulations+' simulations &middot; '+f(MC.elapsed_ms,0)+'ms &middot; Seed='+MC.seed+'</div>';
+  if(MC.prob_permanent_loss!=null){
+    var plPct = f(MC.prob_permanent_loss*100,1);
+    var plPill = MC.prob_permanent_loss>0.15?'pill-neg':MC.prob_permanent_loss>0.05?'pill-warn':'pill-pos';
+    h += '<div style="margin-top:4px;font-size:11px;color:var(--t2)">P(Permanent Loss): <span class="pill '+plPill+'" style="font-size:10px">'+plPct+'%</span>';
+    h += ' <span style="font-size:9px;color:var(--t3)">(IV &lt; 50% of Price)</span></div>';
+  }
+  h += '<div style="margin-top:6px;font-size:9px;color:var(--t3)">';
+  h += 'N='+MC.n_simulations+' &middot; '+f(MC.elapsed_ms,0)+'ms &middot; Seed='+MC.seed;
+  if(MC.tail_df!=null) h += ' &middot; \u03BD='+MC.tail_df+' (Student\'s t)';
+  if(MC.regime_variance_mult!=null && MC.regime_variance_mult!=1.0) h += ' &middot; Regime \u03C3\u00D7'+f(MC.regime_variance_mult,2);
+  h += '</div>';
 } else {
   h += '<div class="empty">Monte Carlo DCF not available</div>';
 }
@@ -1101,6 +1113,10 @@ if(DCF && DCF.sensitivity){
     h += '<td style="padding:4px 8px">'+senRows[si][0]+(_isMost?' \u2190 most sensitive':'')+'</td>';
     h += '<td style="text-align:right;padding:4px 8px" class="mono">$'+senRows[si][1]+'</td></tr>';
   }
+  if(SEN.cross_wacc_growth!=null){
+    h += '<tr style="border-bottom:1px solid var(--border);font-style:italic"><td style="padding:4px 8px">\u2202\u00B2IV / \u2202WACC\u2202Growth</td>';
+    h += '<td style="text-align:right;padding:4px 8px" class="mono">$'+f(SEN.cross_wacc_growth*0.01*0.01,2)+'</td></tr>';
+  }
   h += '</tbody></table>';
 } else {
   h += '<div class="empty">Sensitivity data not available</div>';
@@ -1119,6 +1135,19 @@ if(_s2C!=null){
   h += '<div><span style="font-weight:600;color:var(--t3)">C (confidence-adj):</span> <span class="mono hl">'+fS(_cConf,2)+'</span></div>';
   h += '<div><span style="font-weight:600;color:var(--t3)">P(Signal > 0):</span> <span class="mono">'+f(_pPos*100,1)+'%</span> &middot; <span style="font-weight:600;color:var(--t3)">Confidence Ratio:</span> <span class="mono">'+f(_confR,4)+'</span></div>';
   h += '<div><span style="font-weight:600;color:var(--t3)">Linear:</span> <span class="mono">'+fS(_cLinear,4)+'</span> &middot; <span style="font-weight:600;color:var(--t3)">Quadratic:</span> <span class="mono">'+fS(_cQuad,4)+'</span></div>';
+  // CVaR Gate
+  if(S.cvar_value!=null){
+    var _cvPill = S.cvar_pass?'pill-pos':'pill-neg';
+    h += '<div><span style="font-weight:600;color:var(--t3)">CVaR\u2085%:</span> <span class="mono">'+fS(S.cvar_value,2)+'</span> &middot; Gate: <span class="pill '+_cvPill+'" style="font-size:10px">'+(S.cvar_pass?'PASS':'FAIL (\u03B8=\u221230)')+'</span></div>';
+  }
+  // Regime entropy
+  if(S.regime_entropy!=null){
+    var _reH = S.regime_entropy;
+    var _reHMax = Math.log(5);
+    var _reHNorm = _reH / _reHMax;
+    var _entPill = _reHNorm>0.7?'pill-warn':_reHNorm>0.4?'pill-muted':'pill-pos';
+    h += '<div><span style="font-weight:600;color:var(--t3)">Regime Entropy:</span> <span class="mono">'+f(_reH,3)+'</span> / '+f(_reHMax,3)+' <span class="pill '+_entPill+'" style="font-size:9px">H/H\u2098\u2090\u2093='+f(_reHNorm,2)+'</span></div>';
+  }
   h += '</div>';
 } else {
   h += '<div class="empty">Probabilistic data not available</div>';
@@ -1130,15 +1159,80 @@ h += '<div class="card"><h2>Kelly Position Sizing</h2>';
 var _kFrac = S.kelly_fraction; var _kClip = S.kelly_clipped; var _kPos = S.kelly_position; var _kPct = S.kelly_pct;
 if(_kFrac!=null){
   h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
-  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly f* (raw):</span> <span class="mono">'+f(_kFrac,6)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly f* (raw):</span> <span class="mono">'+f(_kFrac,6)+'</span>';
+  if(S.kelly_lambda!=null) h += ' <span style="font-size:9px;color:var(--t3)">(half-Kelly, \u03BB='+f(S.kelly_lambda,1)+')</span>';
+  h += '</div>';
   h += '<div><span style="font-weight:600;color:var(--t3)">Kelly f* (clipped):</span> <span class="mono">'+f(_kClip,6)+'</span></div>';
-  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly Position:</span> <span class="mono hl">$'+fN(_kPos)+'</span> (<span class="mono">'+f(_kPct,2)+'%</span>)</div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly Position:</span> <span class="mono hl">$'+fN(_kPos)+'</span> (<span class="mono">'+f(_kPct,2)+'%</span>)';
+  if(S.cvar_pass===false) h += ' <span class="pill pill-neg" style="font-size:9px">CVaR GATED \u2192 $0</span>';
+  h += '</div>';
   h += '<div><span style="font-weight:600;color:var(--t3)">Smooth Verdict:</span> <span class="mono">'+(S.verdict_smooth||'N/A')+'</span></div>';
   h += '<div><span style="font-weight:600;color:var(--t3)">P(Buy):</span> <span class="mono">'+(_pBuy!=null?f(_pBuy*100,1)+'%':'N/A')+'</span> &middot; <span style="font-weight:600;color:var(--t3)">P(Sell):</span> <span class="mono">'+(_pSell!=null?f(_pSell*100,1)+'%':'N/A')+'</span> &middot; <span style="font-weight:600;color:var(--t3)">\u03C4:</span> <span class="mono">'+(S.tau_effective!=null?f(S.tau_effective,2):'N/A')+'</span></div>';
   h += '</div>';
 } else {
   h += '<div class="empty">Kelly data not available</div>';
 }
+h += '</div>';
+h += '</div>';
+
+// ════════════════════════════════════════════════════
+// V12+ PHASE 2-3: REGIME INTELLIGENCE & MODEL DIAGNOSTICS
+// ════════════════════════════════════════════════════
+
+// Regime Probability Distribution (Soft GMM)
+h += '<div class="g2">';
+h += '<div class="card"><h2>Regime Probability Distribution</h2>';
+var _rProbs = S.regime_probs;
+if(_rProbs){
+  var _regNames = ['Calm','Chop','Tightening Shock','Crisis Trend','Credit Stress'];
+  var _regColors = ['var(--pos)','var(--warn)','var(--acc)','var(--neg)','var(--neg)'];
+  h += '<div style="font-size:11px;color:var(--t2)">';
+  for(var ri=0;ri<_regNames.length;ri++){
+    var _rn = _regNames[ri];
+    var _rp = _rProbs[_rn];
+    if(_rp==null) continue;
+    var _rpPct = (_rp*100);
+    var _barW = Math.max(2, _rpPct);
+    var _isHard = (S.regime_label_hard===_rn);
+    h += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0">';
+    h += '<span style="width:120px;font-size:10px;color:'+(_isHard?'var(--t1);font-weight:600':'var(--t3)')+'">'+_rn+(_isHard?' \u2190':'')+'</span>';
+    h += '<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden"><div style="width:'+f(_barW,0)+'%;height:100%;background:'+_regColors[ri]+';border-radius:3px"></div></div>';
+    h += '<span class="mono" style="width:40px;text-align:right;font-size:10px">'+f(_rpPct,1)+'%</span>';
+    h += '</div>';
+  }
+  h += '</div>';
+  h += '<div style="margin-top:8px;font-size:9px;color:var(--t3)">Soft GMM classification with 5 centroids in 10D feature space. \u03C0\u2096 = softmax(log-likelihoods + log-priors).</div>';
+} else {
+  h += '<div class="empty">Regime probabilities not available</div>';
+}
+h += '</div>';
+
+// Model Diagnostics
+h += '<div class="card"><h2>Model Diagnostics</h2>';
+h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
+if(S.cold_start_mult!=null){
+  var _csm = S.cold_start_mult;
+  var _csPill = _csm>1.5?'pill-warn':_csm>1.0?'pill-muted':'pill-pos';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Cold-Start \u03C3 Mult:</span> <span class="mono">'+f(_csm,2)+'\u00D7</span> <span class="pill '+_csPill+'" style="font-size:9px">'+(_csm>1.0?'inflated':'converged')+'</span></div>';
+}
+if(S.shrinkage_weight!=null){
+  h += '<div><span style="font-weight:600;color:var(--t3)">Shrinkage \u03BB:</span> <span class="mono">'+f(S.shrinkage_weight,3)+'</span> <span style="font-size:9px;color:var(--t3)">(0=fully learned, 1=structural prior)</span></div>';
+}
+if(S.risk_blend_alpha!=null){
+  h += '<div><span style="font-weight:600;color:var(--t3)">Risk Blend \u03B1:</span> <span class="mono">'+f(S.risk_blend_alpha,2)+'</span> <span style="font-size:9px;color:var(--t3)">(structural='+f(S.risk_blend_alpha,2)+', tactical='+f(1-S.risk_blend_alpha,2)+')</span></div>';
+}
+if(S.regime_entropy!=null){
+  h += '<div><span style="font-weight:600;color:var(--t3)">Decision \u03B8 Factor:</span> <span class="mono">\u00D7'+f(1+0.3*S.regime_entropy/Math.log(5),3)+'</span> <span style="font-size:9px;color:var(--t3)">(entropy-adjusted threshold widening)</span></div>';
+}
+// Engine variance summary
+var _ev = S.engine_variances;
+if(_ev){
+  var _evMax = 0, _evMaxN = '';
+  for(var ek in _ev){ if(_ev[ek]>_evMax){_evMax=_ev[ek];_evMaxN=ek;} }
+  h += '<div><span style="font-weight:600;color:var(--t3)">Max Engine \u03C3\u00B2:</span> <span class="mono">'+f(_evMax,1)+'</span> ('+_evMaxN+')</div>';
+}
+h += '</div>';
+h += '<div style="margin-top:6px;font-size:9px;color:var(--t3)">Phase 2+3 adaptive learning: EWMA variance tracking (\u03B4=0.94), realized correlation shrinkage toward structural prior, cold-start \u03C3 inflation (2\u00D7, quadratic decay).</div>';
 h += '</div>';
 h += '</div>';
 
@@ -2449,18 +2543,33 @@ h += '<table class="def-tbl"><thead><tr><th>Symbol</th><th>Definition</th><th>Do
 var _defs = [
   ['w\u1D62', 'Dynamic weight for engine i, learned via meta-learning', '0 to 1, \u03A3w\u1D62 = 1'],
   ['S\u1D62', 'Raw score from engine i (trend, valuation, etc.)', '\u2212100 to +100'],
-  ['C_raw', 'Composite raw score = \u03A3(w\u1D62 \u00D7 S\u1D62)', '\u2212100 to +100'],
-  ['Gate', 'Risk governor multiplier from regime analysis', '0 to 1'],
-  ['C_adj', 'Risk-adjusted composite = C_raw \u00D7 Gate', '\u2212100 to +100'],
+  ['e\u1D62', 'Normalized score = tanh(S\u1D62 / scale\u1D62)', '\u22121 to +1'],
+  ['C_raw', 'Composite: w\u1D40e + e\u1D40A(r)e (linear + quadratic)', '\u2212100 to +100'],
+  ['A(r)', 'Regime-conditioned 8\u00D78 interaction matrix, \u2016A\u2016\u2082 \u2264 0.05', 'Matrix'],
+  ['\u03C3\u00B2\u1D62', 'Engine variance = \u03C3\u00B2_base \u00D7 f_data \u00D7 f_extremity \u00D7 f_agreement \u00D7 f_regime', '\u211D\u207A'],
+  ['\u03A3', 'Engine covariance matrix: \u03A3[i,j] = \u03C1[i,j] \u00D7 \u03C3\u1D62 \u00D7 \u03C3\u2C7C', '8\u00D78 PSD'],
+  ['\u03C3\u00B2_C', 'Composite variance = w\u1D40\u03A3w', '\u211D\u207A'],
+  ['C_conf', 'Confidence-adjusted composite = C_raw \u00D7 (2\u03A6(\u03BC/\u03C3) \u2212 1)', '\u2212100 to +100'],
+  ['\u03C0\u2096', 'Soft GMM regime probability for regime k', '0 to 1, \u03A3\u03C0\u2096 = 1'],
+  ['H(\u03C0)', 'Regime entropy = \u2212\u03A3 \u03C0\u2096 ln(\u03C0\u2096)', '0 to ln(5)'],
+  ['Gate', 'Risk governor = \u03B1\u00D7Gate_struct + (1\u2212\u03B1)\u00D7Gate_tact', '0 to 1'],
+  ['\u03B1(r)', 'Dynamic risk blend = \u03A3 \u03C0\u2096 \u00D7 \u03B1\u2096', '0 to 1'],
+  ['C_adj', 'Risk-adjusted composite = C_raw \u00D7 Gate \u00D7 DC_cap', '\u2212100 to +100'],
   ['DC', 'Data confidence (% of required data available)', '0 to 100%'],
   ['Reliability', 'Regime classification confidence', '0 to 1'],
   ['TQ', 'Trade quality = signal strength \u00D7 data quality', '0 to 1'],
-  ['IV', 'Intrinsic value from DCF model', 'USD'],
+  ['P(Buy)', 'Buy probability = \u03C3(C_adj / \u03C4)', '0 to 1'],
+  ['\u03C4', 'Decision threshold = \u03C4_base \u00D7 r_mult \u00D7 (1+k\u2081\u03C3_C) \u00D7 (1+k\u2082 H/H_max)', '\u211D\u207A'],
+  ['CVaR\u2085%', 'Conditional Value-at-Risk: \u03BC \u2212 \u03C3\u00D7\u03C6(z\u2090)/\u03B1', '\u211D'],
+  ['f*', 'Half-Kelly fraction: \u03BC_C / (\u03BB \u00D7 \u03C3\u00B2_C), \u03BB=2.0', '\u211D'],
+  ['IV', 'Intrinsic value from Monte Carlo DCF (P50)', 'USD'],
   ['MOS', 'Margin of safety = (IV \u2212 Price) / IV', '%'],
+  ['\u03BD', 'Student\'s t degrees of freedom (sector-specific, 4\u201310)', '\u2124\u207A'],
   ['BQ', 'Business quality score', '0 to 5'],
   ['Moat', 'Moat durability score', '0 to 5'],
   ['CA', 'Capital allocation score', '0 to 5'],
   ['RiskAdj', 'Risk adjustment factor in conviction calc', 'Internal'],
+  ['\u03BB_shrink', 'Uncertainty shrinkage weight = 0.8 \u00D7 exp(\u2212n/50)', '0 to 0.8'],
 ];
 for(var i=0;i<_defs.length;i++){
   h += '<tr><td>'+_defs[i][0]+'</td><td>'+_defs[i][1]+'</td><td style="color:var(--t3)">'+_defs[i][2]+'</td></tr>';
@@ -2500,6 +2609,38 @@ if(cRaw!=null && Math.abs(_xCR - cRaw) > 0.5){
   h += '<div class="recon">\u26A0 Computed C_raw diverges from reported by '+f(Math.abs(_xCR - cRaw),2)+'. Causes: intermediate rounding, normalization clamps after weighted sum, or float accumulation. Reported value reflects engine internal float.</div>';
 }
 h += '<div class="mnote">Engine definitions: <strong>trend</strong> = price momentum vs SMAs; <strong>valuation</strong> = relative/absolute multiples; <strong>consensus</strong> = analyst revisions; <strong>volatility</strong> = VIX regime; <strong>macro</strong> = rates/spreads/yield curve; <strong>liquidity</strong> = volume and flow; <strong>global</strong> = cross-market stress; <strong>correlation</strong> = inter-asset divergence. Raw scores are engine outputs; Norm. = tanh(Raw/scale) in [\u22121, +1]; Contribution = Weight \u00D7 Norm. \u00D7 100.</div>';
+
+// ── B2) Quadratic Interaction Terms ──
+h += '<div class="mhdr">QUADRATIC INTERACTION TERMS \u2014 REGIME-CONDITIONED</div>';
+h += '<div class="mnote">Phase 1a introduced regime-conditioned interaction matrices A(r) that capture nonlinear engine cross-effects. The composite becomes C = 100 \u00D7 (w\u1D40e + e\u1D40A(r)e). Each regime has different interaction strengths calibrated to empirical cross-engine dynamics.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  C_raw = 100 \u00D7 (w\u1D40e + e\u1D40 A(r) e)\n\n';
+h += '  where A(r) = \u03A3\u2096 \u03C0\u2096 \u00D7 A\u2096  (probability-weighted over regimes)\n';
+h += '  Spectral bound: \u2016A(r)\u2016\u2082 \u2264 \u03B1_max = 0.05\n';
+h += '  PSD enforcement via eigenvalue clipping if violated\n\n';
+h += '<span class="hl">INTERACTION PAIRS</span>\n';
+h += '  Each A(r) encodes 6 signed interaction pairs:\n\n';
+h += '    Pair                    Calm    Chop    Tight.  Crisis  Credit\n';
+h += '  '+'\u2500'.repeat(68)+'\n';
+h += '  trend \u00D7 volatility      \u22120.003  \u22120.006  \u22120.004  \u22120.008  \u22120.005\n';
+h += '  valuation \u00D7 macro       \u22120.002  \u22120.003  \u22120.005  \u22120.003  \u22120.004\n';
+h += '  consensus \u00D7 correlation \u22120.002  \u22120.004  \u22120.003  \u22120.005  \u22120.003\n';
+h += '  trend \u00D7 liquidity       +0.002  +0.001  +0.001  +0.000  +0.001\n';
+h += '  valuation \u00D7 consensus   +0.001  +0.001  +0.000  +0.000  +0.000\n';
+h += '  macro \u00D7 global          \u22120.001  \u22120.002  \u22120.003  \u22120.004  \u22120.003\n\n';
+h += '<span class="hl">INTERPRETATION</span>\n';
+h += '  Negative A[i,j]: engine pair i,j dampens composite when both extreme\n';
+h += '  (e.g. high trend momentum in high volatility \u2192 dampened signal)\n';
+h += '  Positive A[i,j]: engine pair reinforces signal\n';
+h += '  Crisis regime amplifies dampening for herding/contagion risk\n';
+if(S.composite_linear!=null && S.composite_quadratic!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  Linear component:    '+fS(S.composite_linear,4)+'\n';
+  h += '  Quadratic component: '+fS(S.composite_quadratic,4)+'\n';
+  h += '  Quadratic impact:    '+f(Math.abs(S.composite_quadratic)/Math.max(0.001,Math.abs(S.composite_linear))*100,1)+'% of linear\n';
+}
+h += '</div>';
 
 // ── C) Risk Governor Deep Dive ──
 h += '<div class="mhdr">RISK GOVERNOR \u2014 GATE MECHANISM</div>';
@@ -2547,6 +2688,21 @@ if(gate!=null){
   h += '  DC = '+f(dc,0)+'% \u2192 DC_cap = min(1.0, '+f(dc,0)+'/100) = '+f(_dcCap,4)+'\n';
   if(_dcCap < 1.0) h += '  <span class="warn">DC < 100% \u2192 composite further reduced by '+f((1-_dcCap)*100,0)+'%</span>\n';
   else h += '  <span class="pos">DC \u2265 100% \u2192 no additional reduction</span>\n';
+
+  // Dynamic Risk Blend
+  h += '\n  <span class="hl">DYNAMIC RISK BLEND (Phase 2e)</span>\n';
+  h += '  Gate = \u03B1 \u00D7 Gate_structural + (1 \u2212 \u03B1) \u00D7 Gate_tactical\n';
+  h += '  where \u03B1 = \u03A3\u2096 \u03C0\u2096 \u00D7 \u03B1\u2096  (regime-probability-weighted blend)\n\n';
+  h += '  Blend coefficients by regime:\n';
+  h += '    Calm = 0.60 (more structural)\n';
+  h += '    Chop = 0.50 (balanced)\n';
+  h += '    Tightening Shock = 0.40 (more tactical)\n';
+  h += '    Crisis Trend = 0.30 (tactical dominates)\n';
+  h += '    Credit Stress = 0.35 (mostly tactical)\n';
+  if(S.risk_blend_alpha!=null){
+    h += '\n  This report: \u03B1 = <span class="hl">'+f(S.risk_blend_alpha,3)+'</span>\n';
+    h += '  \u2192 Gate = '+f(S.risk_blend_alpha,2)+' \u00D7 structural + '+f(1-S.risk_blend_alpha,2)+' \u00D7 tactical\n';
+  }
 } else {
   h += '  Gate value not available in payload.\n';
 }
@@ -2779,13 +2935,372 @@ h += '<div style="margin:4px 0">\u2022 <strong>Secondary adjustments</strong> \u
 h += '<div style="margin:4px 0">\u2022 <strong>Presentation rounding</strong> \u2014 Report rounds for display (e.g., C_adjusted to 1 decimal) while internal state carries 6+ decimal places.</div>';
 h += '</div>';
 
+// ═══════════════════════════════════════════════════════════
+// PHASE 1-3 ADVANCED MATHEMATICAL SPECIFICATIONS
+// ═══════════════════════════════════════════════════════════
+
+// ── J) Soft GMM Regime Classification ──
+h += '<div class="mhdr">SOFT GMM REGIME CLASSIFICATION (Phase 2a)</div>';
+h += '<div class="mnote">Replaces hard regime labels with a probabilistic mixture model. The regime vector (10 features: VIX level/stress, trend, choppiness, correlation instability, rates shock, credit stress, global risk, bad mix, bond-equity flip) is soft-classified against 5 Gaussian centroids. This yields a full probability distribution over regimes, enabling smooth transitions and uncertainty-aware downstream decisions.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">MODEL</span>\n';
+h += '  5-component Gaussian Mixture Model (GMM) in \u211D\u00B9\u2070\n\n';
+h += '  Regimes k \u2208 {Calm, Chop, Tightening Shock, Crisis Trend, Credit Stress}\n\n';
+h += '<span class="hl">KERNEL DENSITY</span>\n';
+h += '  log p(x | k) = \u2212\u2016x \u2212 \u03BC\u2096\u2016\u00B2 / (2 \u00D7 h\u2096\u00B2)\n\n';
+h += '  where:\n';
+h += '    x   = 10D regime feature vector (normalized to [0,1])\n';
+h += '    \u03BC\u2096  = centroid for regime k (pre-calibrated)\n';
+h += '    h\u2096  = bandwidth for regime k\n\n';
+h += '<span class="hl">CENTROIDS (\u03BC\u2096) \u2014 10D FEATURE SPACE</span>\n';
+h += '  Feature       Calm   Chop   Tight. Crisis Credit\n';
+h += '  '+'\u2500'.repeat(56)+'\n';
+h += '  TS  (Trend)   0.80   0.45   0.50   0.20   0.35\n';
+h += '  CH  (Chop)    0.20   0.70   0.50   0.60   0.55\n';
+h += '  VL  (VIX Lv)  0.15   0.40   0.35   0.75   0.60\n';
+h += '  VS  (VIX Str) 0.10   0.30   0.25   0.70   0.55\n';
+h += '  CI  (Corr In) 0.15   0.35   0.30   0.65   0.50\n';
+h += '  RS  (Rates)   0.10   0.20   0.70   0.40   0.45\n';
+h += '  CS  (Credit)  0.10   0.20   0.30   0.50   0.80\n';
+h += '  GR  (Global)  0.10   0.25   0.25   0.60   0.50\n';
+h += '  BM  (Bad Mix) 0.10   0.35   0.40   0.65   0.55\n';
+h += '  BEI (B-E Flp) 0.10   0.25   0.55   0.40   0.45\n\n';
+h += '<span class="hl">BANDWIDTHS AND PRIORS</span>\n';
+h += '  h\u2096  = [0.20, 0.25, 0.25, 0.30, 0.25]\n';
+h += '  \u03C0\u2096\u2070 = [0.45, 0.20, 0.15, 0.10, 0.10]  (prior probabilities)\n\n';
+h += '<span class="hl">POSTERIOR (SOFTMAX)</span>\n';
+h += '  \u03C0\u2096 = softmax(log p(x | k) + log \u03C0\u2096\u2070)\n';
+h += '     = exp(s\u2096) / \u03A3\u2C7C exp(s\u2C7C)  where s\u2096 = log p(x|k) + log \u03C0\u2096\u2070\n\n';
+h += '  Numerical stability: subtract max(s) before exponentiation\n\n';
+h += '<span class="hl">EMA SMOOTHING (Phase 2b)</span>\n';
+h += '  \u03C0\u2096(t) = \u03B1 \u00D7 \u03C0\u2096_new + (1 \u2212 \u03B1) \u00D7 \u03C0\u2096(t\u22121),  \u03B1 = 0.3\n';
+h += '  Prevents abrupt regime switches between consecutive runs.\n';
+h += '  State persisted in meta-learning JSON.\n';
+if(S.regime_probs){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  var _rpKeys = ['Calm','Chop','Tightening Shock','Crisis Trend','Credit Stress'];
+  for(var ri=0;ri<_rpKeys.length;ri++){
+    var _rpv = S.regime_probs[_rpKeys[ri]];
+    if(_rpv!=null) h += '  \u03C0('+_rpKeys[ri]+') = <span class="hl">'+f(_rpv,4)+'</span> ('+f(_rpv*100,1)+'%)\n';
+  }
+  if(S.regime_entropy!=null) h += '  H(\u03C0) = '+f(S.regime_entropy,4)+' / '+f(Math.log(5),4)+' (normalized: '+f(S.regime_entropy/Math.log(5),3)+')\n';
+  h += '  Hard label: '+regime+' | Soft dominant: '+(S.regime_label_hard||regime)+'\n';
+}
+h += '</div>';
+
+// ── K) Engine Variance Model ──
+h += '<div class="mhdr">ENGINE VARIANCE MODEL (Phase 1 P1 + Phase 2c)</div>';
+h += '<div class="mnote">Each engine\'s score carries uncertainty that depends on data availability, score extremity, ensemble agreement, and the prevailing regime. Engine variances feed the covariance matrix and ultimately determine composite confidence.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  \u03C3\u00B2\u1D62 = \u03C3\u00B2_base\u1D62 \u00D7 f_data \u00D7 f_extremity \u00D7 f_agreement \u00D7 f_regime \u00D7 f_cold\n\n';
+h += '<span class="hl">COMPONENT DEFINITIONS</span>\n\n';
+h += '  \u03C3\u00B2_base\u1D62: Engine-specific base variance\n';
+h += '    {trend:100, valuation:25, consensus:50, volatility:40,\n';
+h += '     macro:40, liquidity:50, global:50, correlation:50}\n\n';
+h += '  f_data: Product of penalties for missing data dependencies\n';
+h += '    Each missing dependency multiplies by 1.2\u20132.0\u00D7\n';
+h += '    If DC < 70: additional \u00D7 (100 / max(DC, 10))\n\n';
+h += '  f_extremity: Score distance from midpoint\n';
+h += '    = 1 + 0.5 \u00D7 ((score \u2212 mid) / (range/2))\u00B2\n';
+h += '    Ranges from 1.0 (at midpoint) to 1.5 (at extremes)\n\n';
+h += '  f_agreement (Phase 2c): Ensemble sign disagreement\n';
+h += '    = 1.5 if sign(score\u1D62) \u2260 sign(ensemble_mean), else 1.0\n';
+h += '    Wider uncertainty when engine disagrees with majority\n\n';
+h += '  f_regime (Phase 2c): Regime-conditioned multiplier\n';
+h += '    {Calm:1.0, Chop:1.3, Tightening Shock:1.2,\n';
+h += '     Crisis Trend:1.5, Credit Stress:1.4}\n\n';
+h += '  f_cold (Phase 3d): Cold-start inflation\n';
+h += '    = 1 + (M\u22121) \u00D7 max(0, 1 \u2212 (n/N)\u00B2)\n';
+h += '    where M = 2.0 (max multiplier), N = 20 (threshold runs)\n';
+h += '    Decays quadratically from 2.0\u00D7 to 1.0\u00D7 over first 20 runs\n\n';
+h += '<span class="hl">COVARIANCE MATRIX</span>\n';
+h += '  \u03A3[i,j] = \u03C1_eff[i,j] \u00D7 \u03C3\u1D62 \u00D7 \u03C3\u2C7C\n\n';
+h += '  where \u03C1_eff combines:\n';
+h += '    1. Structural correlations (pre-calibrated 8\u00D78 matrix)\n';
+h += '    2. Regime-conditioned shifts (Phase 2d):\n';
+h += '       contagion pairs increase by +0.10 to +0.25 in stress\n';
+h += '    3. Realized correlations (Phase 3b):\n';
+h += '       EWMA tracking with shrinkage toward structural prior\n';
+h += '       \u03C1_final = \u03BB \u00D7 \u03C1_structural + (1\u2212\u03BB) \u00D7 \u03C1_realized\n\n';
+h += '  PSD enforcement: eigenvalue floor at 1e\u22126\n\n';
+h += '<span class="hl">COMPOSITE VARIANCE</span>\n';
+h += '  \u03C3\u00B2_C = w\u1D40 \u03A3 w\n\n';
+if(S.sigma2_C!=null){
+  h += '<span class="hl">THIS REPORT</span>\n';
+  h += '  \u03C3\u00B2_C = <span class="hl">'+f(S.sigma2_C,4)+'</span>  \u2192  \u03C3_C = '+f(S.sigma_C,4)+'\n';
+}
+if(S.engine_variances){
+  h += '\n  Engine variances:\n';
+  var _evKeys = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
+  for(var vi=0;vi<_evKeys.length;vi++){
+    var _evK = _evKeys[vi];
+    if(S.engine_variances[_evK]!=null) h += '    '+_evK.padEnd(14)+'\u03C3\u00B2 = '+f(S.engine_variances[_evK],1).padStart(8)+'\n';
+  }
+}
+h += '</div>';
+
+// ── L) Confidence-Adjusted Composite ──
+h += '<div class="mhdr">CONFIDENCE-ADJUSTED COMPOSITE (Phase 1 P3)</div>';
+h += '<div class="mnote">When composite uncertainty is high, the raw signal is dampened proportionally. This implements the statistical intuition that a noisy signal carries less information. The confidence ratio approaches 0 when uncertainty is comparable to signal magnitude, and approaches 1 when the signal is statistically strong.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  \u03BC_C = C_raw / 100\n';
+h += '  \u03C3_C = \u221A(\u03C3\u00B2_C)\n\n';
+h += '  P(C > 0) = \u03A6(\u03BC_C / \u03C3_C)\n';
+h += '           = 0.5 \u00D7 (1 + erf(\u03BC_C / (\u03C3_C \u00D7 \u221A2)))\n\n';
+h += '  confidence_ratio = 2 \u00D7 P(C > 0) \u2212 1\n';
+h += '                   \u2208 [\u22121, +1]\n\n';
+h += '  C_conf = \u03BC_C \u00D7 confidence_ratio \u00D7 100\n\n';
+h += '<span class="hl">BEHAVIOR</span>\n';
+h += '  \u03C3_C \u2192 0:  confidence_ratio \u2192 sign(\u03BC_C)  (full signal)\n';
+h += '  \u03C3_C \u2192 \u221E:  confidence_ratio \u2192 0          (signal erased)\n';
+h += '  Informational in Phase 1; does not modify existing verdict logic.\n';
+if(S.composite_confidence_adjusted!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  C_raw = '+fS(cRaw,2)+' \u2192 \u03BC_C = '+fS((cRaw||0)/100,4)+'\n';
+  h += '  \u03C3_C = '+f(S.sigma_C,4)+'\n';
+  h += '  P(C > 0) = '+f(S.p_positive_signal*100,1)+'%\n';
+  h += '  confidence_ratio = '+f(_confR,4)+'\n';
+  h += '  C_conf = <span class="hl">'+fS(S.composite_confidence_adjusted,2)+'</span>\n';
+}
+h += '</div>';
+
+// ── M) Smooth Decision Mapping ──
+h += '<div class="mhdr">SMOOTH DECISION MAPPING (Phase 1 P5 + Phase 3c)</div>';
+h += '<div class="mnote">Replaces hard \u00B120 thresholds with a sigmoid decision function. The effective threshold \u03C4 widens under uncertainty (high \u03C3_C), unfamiliar regimes (high entropy), and volatile regimes. This produces continuous buy/sell probabilities rather than binary verdicts.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  P(Buy)  = \u03C3(C_adj / \u03C4)\n';
+h += '  P(Sell) = 1 \u2212 P(Buy)\n\n';
+h += '  where \u03C3(x) = 1 / (1 + exp(\u2212x))  (logistic sigmoid)\n\n';
+h += '<span class="hl">EFFECTIVE THRESHOLD \u03C4</span>\n';
+h += '  \u03C4 = \u03C4_base \u00D7 r_mult \u00D7 (1 + k\u2081 \u00D7 \u03C3_C) \u00D7 (1 + k\u2082 \u00D7 H(\u03C0) / H_max)\n\n';
+h += '  Parameters:\n';
+h += '    \u03C4_base = 15.0\n';
+h += '    k\u2081 = 0.5 (uncertainty sensitivity)\n';
+h += '    k\u2082 = 0.3 (entropy sensitivity, Phase 3c)\n';
+h += '    H_max = ln(5) \u2248 1.609\n\n';
+h += '  Regime multiplier r_mult:\n';
+h += '    Calm:1.0  Chop:1.5  Tight:1.3  Crisis:0.8  Credit:1.4\n\n';
+h += '<span class="hl">VERDICT CATEGORIES</span>\n';
+h += '  P(Buy) > 0.70       \u2192 BUY / STRONG BUY\n';
+h += '  0.55 < P(Buy) < 0.70 \u2192 LEAN BUY\n';
+h += '  0.45 < P(Buy) < 0.55 \u2192 NEUTRAL\n';
+h += '  0.30 < P(Buy) < 0.45 \u2192 LEAN SELL\n';
+h += '  P(Buy) < 0.30       \u2192 SELL / STRONG SELL\n\n';
+h += '  Note: verdict field uses legacy \u00B120 thresholds for backward compat.\n';
+h += '  verdict_smooth uses the sigmoid mapping above.\n';
+if(S.tau_effective!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  \u03C4 = <span class="hl">'+f(S.tau_effective,2)+'</span>\n';
+  h += '  P(Buy) = '+(_pBuy!=null?f(_pBuy,4):'N/A')+' ('+(_pBuy!=null?f(_pBuy*100,1)+'%':'N/A')+')\n';
+  h += '  P(Sell) = '+(_pSell!=null?f(_pSell,4):'N/A')+'\n';
+  h += '  Smooth verdict: '+(S.verdict_smooth||'N/A')+'\n';
+}
+h += '</div>';
+
+// ── N) CVaR Tail-Risk Gate ──
+h += '<div class="mhdr">CVaR TAIL-RISK GATE (Phase 1c)</div>';
+h += '<div class="mnote">Conditional Value-at-Risk (CVaR) measures the expected loss in the worst \u03B1% of outcomes under a Gaussian signal model. If the expected tail loss exceeds the threshold \u03B8, the Kelly position is zeroed as a circuit breaker. This prevents capital deployment when the downside tail is unacceptable.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">FORMULA</span>\n';
+h += '  CVaR\u2090 = \u03BC_C \u2212 \u03C3_C \u00D7 \u03C6(z\u2090) / \u03B1\n\n';
+h += '  where:\n';
+h += '    \u03BC_C  = C_raw / 100 (composite in natural units)\n';
+h += '    \u03C3_C  = \u221A(\u03C3\u00B2_C) (composite std dev)\n';
+h += '    \u03B1    = 0.05 (5% tail)\n';
+h += '    z\u2090   = \u03A6\u207B\u00B9(0.05) = \u22121.6449\n';
+h += '    \u03C6(z\u2090) = \u03C6(\u22121.6449) = 0.10314 (Gaussian PDF)\n\n';
+h += '<span class="hl">GATE LOGIC</span>\n';
+h += '  If CVaR\u2090 < \u2212\u03B8 (i.e., tail loss exceeds threshold):\n';
+h += '    Kelly position \u2192 0 (circuit breaker activated)\n';
+h += '  Else:\n';
+h += '    Kelly position proceeds normally\n\n';
+h += '  Threshold \u03B8 = 30 (in composite score units, i.e. \u22120.30)\n';
+if(S.cvar_value!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  CVaR\u2085% = <span class="hl">'+fS(S.cvar_value,2)+'</span>\n';
+  h += '  Gate: '+(S.cvar_pass?'<span class="pos">PASS (CVaR \u2265 \u2212\u03B8)</span>':'<span class="neg">FAIL (CVaR < \u2212\u03B8 = \u221230) \u2192 Kelly zeroed</span>')+'\n';
+}
+h += '</div>';
+
+// ── O) Half-Kelly Position Sizing ──
+h += '<div class="mhdr">HALF-KELLY POSITION SIZING (Phase 1 P6 + Phase 1b)</div>';
+h += '<div class="mnote">The Kelly criterion determines the optimal fraction of capital to risk based on the signal-to-noise ratio. Full Kelly is known to be over-aggressive for parameter-estimated distributions, so a risk-aversion parameter \u03BB=2.0 halves the position (half-Kelly). The position is further constrained by regime-specific caps, data confidence, and CVaR gating.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">KELLY CRITERION</span>\n';
+h += '  f*_full = \u03BC_C / \u03C3\u00B2_C          (full Kelly)\n';
+h += '  f*      = \u03BC_C / (\u03BB \u00D7 \u03C3\u00B2_C)  (fractional Kelly)\n\n';
+h += '  where \u03BB = 2.0 (risk aversion \u2192 half-Kelly)\n\n';
+h += '<span class="hl">REGIME CAPS (f_max)</span>\n';
+h += '  Calm:            15%\n';
+h += '  Chop:             8%\n';
+h += '  Tightening Shock: 10%\n';
+h += '  Crisis Trend:      5%\n';
+h += '  Credit Stress:     6%\n\n';
+h += '<span class="hl">CLIPPING & SCALING</span>\n';
+h += '  f*_clipped = clip(f*, \u2212f_max, +f_max)\n';
+h += '  position   = capital \u00D7 |f*_clipped| \u00D7 Gate \u00D7 DC/100\n\n';
+h += '<span class="hl">CVaR GATE INTERACTION</span>\n';
+h += '  If cvar_pass == False: position = 0 regardless of Kelly output\n';
+h += '  This is a hard circuit breaker for tail risk.\n';
+if(S.kelly_fraction!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  f*_full \u2248 '+f(S.kelly_fraction*2,6)+' (estimated)\n';
+  h += '  f*_half = <span class="hl">'+f(S.kelly_fraction,6)+'</span> (after \u03BB=2.0)\n';
+  h += '  f*_clipped = '+f(S.kelly_clipped,6)+'\n';
+  h += '  Position = $'+fN(S.kelly_position)+' ('+f(S.kelly_pct,2)+'% of capital)\n';
+  if(S.cvar_pass===false) h += '  <span class="neg">\u26A0 CVaR gate FAILED \u2192 position zeroed</span>\n';
+}
+h += '</div>';
+
+// ── P) Monte Carlo DCF — Advanced Specification ──
+h += '<div class="mhdr">MONTE CARLO DCF \u2014 ADVANCED SPECIFICATION (Phase 2f + Phase 1d/1e)</div>';
+h += '<div class="mnote">The Monte Carlo DCF replaces deterministic bear/base/bull scenarios with N=1000 correlated simulations. Growth paths use fat-tailed Student\'s t distributions (sector-specific \u03BD), WACC uncertainty scales with regime stress, and all 4 random factors are Cholesky-decorrelated. The output is a full probability distribution of intrinsic value.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">SIMULATION ARCHITECTURE</span>\n';
+h += '  N = 1000 simulations, fully vectorized (numpy)\n';
+h += '  Forecast horizon = 5 years + terminal value\n';
+h += '  Reproducible via ticker-seeded RNG (CRC32)\n\n';
+h += '<span class="hl">CORRELATED RANDOM DRAWS</span>\n';
+h += '  z ~ N(0, I\u2084)       (4 independent standard normals)\n';
+h += '  u = z \u00D7 L\u1D40        (Cholesky decorrelation)\n';
+h += '  where L = cholesky(R) and R is the 4\u00D74 correlation matrix:\n\n';
+h += '             Growth  Margin   WACC    Term.g\n';
+h += '  Growth    [ 1.00    0.30    0.15    0.00 ]\n';
+h += '  Margin    [ 0.30    1.00    0.00    0.00 ]\n';
+h += '  WACC      [ 0.15    0.00    1.00    0.10 ]\n';
+h += '  Term.g    [ 0.00    0.00    0.10    1.00 ]\n\n';
+h += '<span class="hl">GROWTH PATHS — FAT-TAILED AR(1) (Phase 1d)</span>\n';
+h += '  \u03B5\u209C ~ Student\'s t(\u03BD) \u00D7 \u03C3_growth\n';
+h += '  g\u209C = \u03C1 \u00D7 g\u209C\u208B\u2081 + (1 \u2212 \u03C1) \u00D7 g_base + \u03B5\u209C\n';
+h += '  where \u03C1 = 0.5 (AR(1) persistence)\n\n';
+h += '  Student\'s t conversion: t_sample = N(0,1) \u00D7 \u221A(\u03BD / \u03C7\u00B2(\u03BD))\n\n';
+h += '  Sector-specific \u03BD (degrees of freedom):\n';
+h += '    Technology:4  Energy:4  Cyclical:5  Materials:5\n';
+h += '    Financials:5  Industrials:6  Healthcare:6\n';
+h += '    Comm.Svcs:6  Real Estate:6  Defensive:8  Utilities:10\n\n';
+h += '  Sector-specific \u03C3_growth:\n';
+h += '    Technology:0.08  Energy:0.09  Cyclical:0.07  Materials:0.07\n';
+h += '    Financials:0.06  Industrials:0.05  Healthcare:0.06\n';
+h += '    Comm.Svcs:0.06  Real Estate:0.04  Defensive:0.03  Utilities:0.03\n\n';
+h += '  Growth floor: max(g\u209C, \u22120.10)\n\n';
+h += '<span class="hl">WACC REGIME SCALING (Phase 1e)</span>\n';
+h += '  \u03C3_wacc = \u03C3_wacc_base \u00D7 regime_variance_mult\n';
+h += '  where \u03C3_wacc_base = 0.01 (100 bps)\n\n';
+h += '  Regime multipliers:\n';
+h += '    Calm:1.0  Chop:1.4  Tight:1.3  Crisis:1.6  Credit:1.5\n\n';
+h += '<span class="hl">MARGIN UNCERTAINTY</span>\n';
+h += '  \u03C3_margin = max(0.02, CV \u00D7 |base_margin|)\n';
+h += '  where CV = 0.15 (coefficient of variation)\n';
+h += '  Proxy margins (NI/EBITDA): \u03C3 \u00D7 1.5 (wider uncertainty)\n\n';
+h += '<span class="hl">TERMINAL VALUE</span>\n';
+h += '  \u03C3_tg = 0.005 (50 bps)\n';
+h += '  terminal_g = clip(g_base + shock, 0.01, min(0.04, wacc \u2212 0.005))\n';
+h += '  TV = FCF\u2085 \u00D7 (1 + g_terminal) / (wacc \u2212 g_terminal)\n\n';
+h += '<span class="hl">DCF KERNEL (per simulation)</span>\n';
+h += '  Revenue\u209C = Revenue\u209C\u208B\u2081 \u00D7 (1 + g\u209C)    for t = 1..5\n';
+h += '  FCF\u209C = Revenue\u209C \u00D7 margin\n';
+h += '  PV = \u03A3\u209C FCF\u209C / (1 + wacc)^t + TV / (1 + wacc)^5\n';
+h += '  Equity = PV \u2212 Net Debt\n';
+h += '  IV = Equity / Shares\n\n';
+h += '<span class="hl">OUTPUT DISTRIBUTION</span>\n';
+h += '  Bear (P5)  = np.percentile(IVs, 5)\n';
+h += '  Base (P50) = np.percentile(IVs, 50)\n';
+h += '  Bull (P95) = np.percentile(IVs, 95)\n\n';
+h += '  P(Undervalued) = mean(IVs > Price)\n';
+h += '  E[MoS] = mean(max(0, (IVs \u2212 Price) / IVs))\n';
+h += '  P(Permanent Loss) = mean(IVs < 0.5 \u00D7 Price)\n';
+if(DCF && DCF.monte_carlo){
+  var MC2 = DCF.monte_carlo;
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  N = '+MC2.n_simulations+'\n';
+  h += '  Seed = '+MC2.seed+'\n';
+  if(MC2.tail_df!=null) h += '  \u03BD = '+MC2.tail_df+' (Student\'s t df)\n';
+  if(MC2.regime_variance_mult!=null) h += '  Regime \u03C3 mult = '+f(MC2.regime_variance_mult,2)+'\u00D7\n';
+  h += '  IV: P5=$'+f(MC2.iv_p5,2)+' P50=$'+f(MC2.iv_p50,2)+' P95=$'+f(MC2.iv_p95,2)+'\n';
+  h += '  \u03BC=$'+f(MC2.iv_mean,2)+' \u03C3=$'+f(MC2.iv_std,2)+'\n';
+  if(MC2.skewness!=null) h += '  Skewness='+f(MC2.skewness,3)+' Kurtosis='+f(MC2.kurtosis,3)+'\n';
+  if(MC2.prob_undervalued!=null) h += '  P(Undervalued)='+f(MC2.prob_undervalued*100,1)+'%\n';
+  if(MC2.prob_permanent_loss!=null) h += '  P(Permanent Loss)='+f(MC2.prob_permanent_loss*100,1)+'%\n';
+}
+h += '</div>';
+
+// ── Q) Sensitivity Analysis ──
+h += '<div class="mhdr">SENSITIVITY ANALYSIS \u2014 CENTRAL FINITE DIFFERENCES</div>';
+h += '<div class="mnote">Sensitivity measures how much intrinsic value changes per unit change in each input parameter. Computed via central finite differences on the deterministic DCF kernel. The cross-sensitivity \u2202\u00B2IV/(\u2202WACC \u00D7 \u2202Growth) captures the interaction between discount rate and revenue growth assumptions.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">METHOD</span>\n';
+h += '  \u2202IV/\u2202p \u2248 [IV(p + \u03B4) \u2212 IV(p \u2212 \u03B4)] / (2\u03B4)\n\n';
+h += '  Perturbation sizes:\n';
+h += '    WACC:            \u03B4 = 0.005 (50 bps)\n';
+h += '    Revenue growth:  \u03B4 = 0.01  (100 bps)\n';
+h += '    FCF margin:      \u03B4 = 0.01  (100 bps)\n';
+h += '    Terminal growth:  \u03B4 = 0.005 (50 bps)\n\n';
+h += '<span class="hl">CROSS-SENSITIVITY (Phase 2f)</span>\n';
+h += '  \u2202\u00B2IV / (\u2202WACC \u00D7 \u2202Growth) \u2248\n';
+h += '    [IV(w+\u03B4w, g+\u03B4g) \u2212 IV(w+\u03B4w, g\u2212\u03B4g) \u2212 IV(w\u2212\u03B4w, g+\u03B4g) + IV(w\u2212\u03B4w, g\u2212\u03B4g)]\n';
+h += '    / (4 \u00D7 \u03B4w \u00D7 \u03B4g)\n\n';
+h += '  Interpretation: Positive cross-sensitivity means higher growth\n';
+h += '  amplifies the negative impact of higher WACC (and vice versa).\n';
+h += '  This captures the convexity of DCF valuation.\n';
+if(DCF && DCF.sensitivity){
+  var SEN2 = DCF.sensitivity;
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  h += '  \u2202IV/\u2202WACC     = '+fS(SEN2.dIV_dWACC,2)+' per 1pp\n';
+  h += '  \u2202IV/\u2202Growth   = '+fS(SEN2.dIV_dGrowth,2)+' per 1pp\n';
+  h += '  \u2202IV/\u2202Margin   = '+fS(SEN2.dIV_dMargin,2)+' per 1pp\n';
+  h += '  \u2202IV/\u2202Terminal = '+fS(SEN2.dIV_dTerminalG,2)+' per 1pp\n';
+  if(SEN2.cross_wacc_growth!=null) h += '  \u2202\u00B2IV/\u2202W\u2202G    = '+fS(SEN2.cross_wacc_growth,2)+'\n';
+  h += '  Most sensitive to: <span class="hl">'+SEN2.most_sensitive_to+'</span>\n';
+}
+h += '</div>';
+
+// ── R) EWMA Volatility & Realized Correlation Tracking ──
+h += '<div class="mhdr">ADAPTIVE LEARNING SYSTEM (Phase 3)</div>';
+h += '<div class="mnote">Phase 3 introduces online learning: engine variances adapt over time via EWMA tracking, correlations are estimated from realized data with shrinkage toward structural priors, cold-start \u03C3 inflation guards against overconfidence in early runs, and uncertainty shrinkage decays prior dependence as data accumulates.</div>';
+h += '<div class="mblk">';
+h += '<span class="hl">A. EWMA VARIANCE TRACKING (Phase 3a)</span>\n';
+h += '  \u03C3\u00B2_ewma(t) = \u03B4 \u00D7 \u03C3\u00B2_ewma(t\u22121) + (1 \u2212 \u03B4) \u00D7 (S\u1D62 \u2212 \u03BC\u1D62)\u00B2\n';
+h += '  where \u03B4 = 0.94 (decay factor)\n';
+h += '  \u03BC\u1D62 updated similarly: \u03BC(t) = \u03B4 \u00D7 \u03BC(t\u22121) + (1\u2212\u03B4) \u00D7 S\u1D62\n';
+h += '  State: per-engine running mean and variance\n';
+h += '  Usage: engine variance is max(\u03C3\u00B2_model, \u03C3\u00B2_ewma) for robustness\n\n';
+h += '<span class="hl">B. REALIZED CORRELATION TRACKING (Phase 3b)</span>\n';
+h += '  cross(t) = \u03B4 \u00D7 cross(t\u22121) + (1\u2212\u03B4) \u00D7 (e\u1D62 \u2212 \u03BC\u1D62)(e\u2C7C \u2212 \u03BC\u2C7C)\n';
+h += '  \u03C1_realized[i,j] = cross[i,j] / (\u03C3\u1D62 \u00D7 \u03C3\u2C7C)\n\n';
+h += '  Shrinkage toward structural prior:\n';
+h += '  \u03C1_final = \u03BB \u00D7 \u03C1_structural + (1 \u2212 \u03BB) \u00D7 \u03C1_realized\n';
+h += '  where \u03BB = \u03BB_base \u00D7 exp(\u2212n / n_decay)\n';
+h += '    \u03BB_base = 0.80, n_decay = 50\n';
+h += '  Early runs: \u03BB \u2248 0.8 (dominated by structural prior)\n';
+h += '  Many runs:  \u03BB \u2192 0   (dominated by realized data)\n\n';
+h += '<span class="hl">C. COLD-START \u03C3 INFLATION (Phase 3d)</span>\n';
+h += '  mult = 1 + (M \u2212 1) \u00D7 max(0, 1 \u2212 (n / N)\u00B2)\n';
+h += '    M = 2.0 (maximum inflation), N = 20 (threshold runs)\n';
+h += '  Run 0:  mult = 2.0\u00D7 (maximum uncertainty)\n';
+h += '  Run 10: mult = 1.75\u00D7\n';
+h += '  Run 20: mult = 1.0\u00D7  (fully converged)\n\n';
+h += '<span class="hl">D. UNCERTAINTY SHRINKAGE SCHEDULE (Phase 3e)</span>\n';
+h += '  \u03BB(n) = \u03BB_base \u00D7 exp(\u2212n / n_decay)\n';
+h += '    \u03BB_base = 0.80, n_decay = 50\n';
+h += '  Controls the blend between structural priors and learned parameters.\n';
+h += '  Applied to both correlation shrinkage and regime smoothing.\n';
+if(S.cold_start_mult!=null || S.shrinkage_weight!=null){
+  h += '\n<span class="hl">THIS REPORT</span>\n';
+  if(S.cold_start_mult!=null) h += '  Cold-start mult = '+f(S.cold_start_mult,2)+'\u00D7\n';
+  if(S.shrinkage_weight!=null) h += '  Shrinkage \u03BB = '+f(S.shrinkage_weight,3)+'\n';
+}
+h += '</div>';
+
 h += '</div>'; // end syw-expanded
 
 h += '</div></div>'; // end collapse-body and card
 
 // PROVENANCE FOOTER
 h += '<div style="font-size:10px;color:var(--t3);display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding:0 4px">';
-h += '<span>ATLAS V12+</span>';
+h += '<span>ATLAS V12+ (Phase 3)</span>';
 if(rel!=null) h += '<span>Reliability '+f(rel,2)+'</span>';
 h += '<span>'+mode+'</span>';
 if(dc!=null) h += '<span>DC '+f(dc,0)+'%</span>';

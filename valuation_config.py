@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-ATLAS V12+ — Valuation Governance Configuration
+ATLAS V12+ Phase 3 — Valuation Governance Configuration
 
 Single source of truth for all institutional valuation constants.
 Every governance module imports from here. No magic numbers elsewhere.
 V12+: Added MonteCarloConfig, SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX.
+Phase 1: Added SECTOR_TAIL_DF (Student's t df), REGIME_VARIANCE_MULTIPLIER.
 """
 
 from dataclasses import dataclass, field
