@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from unittest.mock import MagicMock, patch
 from v8_data import (
     _safe_num, _safe_pct, _check_fundamental_integrity,
-    _build_financials, _build_dcf, _validate_financials,
+    _build_company_info, _build_financials, _build_dcf, _validate_financials,
     _sanitize_yield, _sanitize_payout,
     _stabilize_beta, _compute_wacc_governed,
 )
@@ -1469,6 +1469,235 @@ class TestNarrativeGating:
         assert -5e9 < 0  # Net cash condition
         # Net debt = 10B means NOT net cash
         assert 10e9 >= 0  # Not net cash
+
+
+# ============================================================================
+# STAGE 5.1: Fundamentals Integrity Regression Tests (Problem A)
+# ============================================================================
+
+class TestFundamentalsIntegrity:
+    """Missing fundamentals must propagate as None, never as 0/1.0/'Unknown'."""
+
+    def test_missing_market_cap_is_none(self):
+        """market_cap=None when yfinance returns no marketCap."""
+        from v8_data import _build_company_info, _safe_num
+        info = {'longName': 'Test Corp'}  # No marketCap
+        co = _build_company_info(info, 'TEST')
+        assert co['market_cap'] is None
+
+    def test_missing_beta_is_none(self):
+        """beta=None when yfinance returns no beta."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp'}  # No beta
+        co = _build_company_info(info, 'TEST')
+        assert co['beta'] is None
+
+    def test_zero_beta_is_none(self):
+        """beta=0 from yfinance treated as missing."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'beta': 0}
+        co = _build_company_info(info, 'TEST')
+        assert co['beta'] is None
+
+    def test_missing_sector_is_none(self):
+        """sector=None when yfinance returns no sector or 'Unknown'."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp'}  # No sector
+        co = _build_company_info(info, 'TEST')
+        assert co['sector'] is None
+
+    def test_unknown_sector_is_none(self):
+        """sector='Unknown' from yfinance treated as missing."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'sector': 'Unknown'}
+        co = _build_company_info(info, 'TEST')
+        assert co['sector'] is None
+
+    def test_valid_sector_preserved(self):
+        """Real sector values are preserved."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'sector': 'Industrials'}
+        co = _build_company_info(info, 'TEST')
+        assert co['sector'] == 'Industrials'
+
+    def test_missing_52w_range_is_none(self):
+        """52-week high/low=None when not reported."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp'}
+        co = _build_company_info(info, 'TEST')
+        assert co['fifty_two_week_high'] is None
+        assert co['fifty_two_week_low'] is None
+
+    def test_zero_52w_range_is_none(self):
+        """52-week high/low=0 treated as missing."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'fiftyTwoWeekHigh': 0, 'fiftyTwoWeekLow': 0}
+        co = _build_company_info(info, 'TEST')
+        assert co['fifty_two_week_high'] is None
+        assert co['fifty_two_week_low'] is None
+
+    def test_valid_data_preserved(self):
+        """All fields present → values preserved."""
+        from v8_data import _build_company_info
+        info = {
+            'longName': 'RTX Corp', 'sector': 'Industrials', 'industry': 'Aerospace & Defense',
+            'marketCap': 150e9, 'fullTimeEmployees': 185000,
+            'beta': 0.42, 'fiftyTwoWeekHigh': 130.0, 'fiftyTwoWeekLow': 90.0,
+            'currentPrice': 115.0,
+        }
+        co = _build_company_info(info, 'RTX')
+        assert co['market_cap'] == 150e9
+        assert co['beta'] == 0.42
+        assert co['sector'] == 'Industrials'
+        assert co['fifty_two_week_high'] == 130.0
+
+    def test_fundamentals_quality_object(self):
+        """_fundamentals_quality tracks which fields are real vs defaulted."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp', 'sector': 'Industrials', 'beta': 1.1}
+        co = _build_company_info(info, 'TEST')
+        fq = co['_fundamentals_quality']
+        assert fq.sector_available is True
+        assert fq.beta_available is True
+        assert fq.market_cap_available is False
+
+    def test_fundamentals_quality_missing_beta(self):
+        """beta_defaulted=True when beta missing."""
+        from v8_data import _build_company_info
+        info = {'longName': 'Test Corp'}
+        co = _build_company_info(info, 'TEST')
+        fq = co['_fundamentals_quality']
+        assert fq.beta_defaulted is True
+
+
+# ============================================================================
+# STAGE 5.1: Canonical Suppression Mode Tests (Problem B)
+# ============================================================================
+
+class TestCanonicalSuppression:
+    """ReportMode and consistent NULL outputs under suppression."""
+
+    def test_report_mode_normal(self):
+        """NORMAL when data is OK."""
+        from valuation_config import FundamentalsQuality, ReportMode
+        fq = FundamentalsQuality(data_status='OK')
+        assert fq.report_mode == ReportMode.NORMAL
+
+    def test_report_mode_suppressed(self):
+        """FUNDAMENTALS_SUPPRESSED when data INVALID."""
+        from valuation_config import FundamentalsQuality, ReportMode
+        fq = FundamentalsQuality(data_status='INVALID')
+        assert fq.report_mode == ReportMode.FUNDAMENTALS_SUPPRESSED
+
+    def test_report_mode_partial(self):
+        """PARTIAL when data DEGRADED."""
+        from valuation_config import FundamentalsQuality, ReportMode
+        fq = FundamentalsQuality(data_status='DEGRADED')
+        assert fq.report_mode == ReportMode.PARTIAL
+
+    def test_invalid_scores_all_zero(self):
+        """Under INVALID, all scores return 0/null consistently."""
+        v8_data = {
+            'financials': {'_data_status': 'INVALID', '_data_reasons': ['market_cap_missing']},
+            'company': {'price': 100, 'sector': None},
+            'dcf': {'bear': 0, 'base': 0, 'bull': 0, '_dcf_disabled': True},
+            'institutional': {},
+            'earnings': [],
+        }
+        summary = {}
+        v9 = _compute_v9_owner_scores(summary, v8_data)
+        assert v9['conviction'] == 0
+        assert v9['business_quality'] == 0
+        assert v9['moat_durability'] == 0
+        assert v9['capital_allocation'] == 0
+        assert v9['mos_pct'] == 0
+        assert v9['v9_decision'] == 'RESEARCH'
+
+
+# ============================================================================
+# STAGE 5.1: TQ Reconciliation Tests (Problem C)
+# ============================================================================
+
+class TestTQReconciliation:
+    """Single canonical TQ formula: (|C_raw|/100) * Rel * Gate * (DC/100)."""
+
+    def test_tq_formula_matches_engine(self):
+        """TQ computed from canonical formula matches engine output."""
+        from atlas_engine import compute_trade_quality
+        import numpy as np
+        # Known inputs
+        c_raw, rel, g, dc = 25.0, 0.85, 0.92, 78.0
+        tq, cat = compute_trade_quality(c_raw, rel, g, dc)
+        # Verify against canonical formula
+        expected = (abs(c_raw) / 100.0) * rel * g * (dc / 100.0)
+        expected = np.clip(expected, 0, 1)
+        assert abs(tq - expected) < 1e-10, f"TQ {tq} != expected {expected}"
+
+    def test_tq_zero_dc(self):
+        """DC=0 produces TQ=0."""
+        from atlas_engine import compute_trade_quality
+        tq, _ = compute_trade_quality(50.0, 0.9, 1.0, 0.0)
+        assert tq == 0.0
+
+    def test_tq_zero_gate(self):
+        """Gate=0 produces TQ=0."""
+        from atlas_engine import compute_trade_quality
+        tq, _ = compute_trade_quality(50.0, 0.9, 0.0, 80.0)
+        assert tq == 0.0
+
+    def test_tq_negative_composite(self):
+        """Negative composite uses absolute value."""
+        from atlas_engine import compute_trade_quality
+        tq_pos, _ = compute_trade_quality(30.0, 0.8, 1.0, 90.0)
+        tq_neg, _ = compute_trade_quality(-30.0, 0.8, 1.0, 90.0)
+        assert abs(tq_pos - tq_neg) < 1e-10
+
+    def test_tq_categories(self):
+        """TQ categories match thresholds."""
+        from atlas_engine import compute_trade_quality
+        _, cat1 = compute_trade_quality(5.0, 0.5, 0.5, 50.0)  # Very small
+        assert cat1 == "CASH"
+        _, cat2 = compute_trade_quality(80.0, 0.9, 0.9, 95.0)  # Large
+        assert cat2 == "STRONG_DIRECTIONAL"
+
+
+# ============================================================================
+# STAGE 5.1: Beta Defaulted Flag Tests (Problem E)
+# ============================================================================
+
+class TestBetaDefaulted:
+    """Beta defaulted flag propagation and governance behavior."""
+
+    def test_dcf_beta_defaulted_flag_set(self):
+        """DCF assumptions include beta_defaulted=True when beta missing."""
+        info = {'totalRevenue': 70e9, 'sharesOutstanding': 1.3e9}
+        financials = {
+            'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 4e9, 'ebitda': 8e9,
+            'revenue_growth': 5.0, 'debt_equity': 0.5, 'net_debt': 10e9,
+            '_data_status': 'OK', '_data_reasons': [],
+        }
+        dcf = _build_dcf(info, financials, sector='Industrials')
+        assert dcf['assumptions']['beta_defaulted'] is True
+
+    def test_dcf_beta_not_defaulted_when_present(self):
+        """DCF assumptions beta_defaulted=False when beta reported."""
+        info = {'beta': 1.15, 'totalRevenue': 70e9, 'sharesOutstanding': 1.3e9}
+        financials = {
+            'revenue_ttm': 70e9, 'shares_outstanding': 1.3e9,
+            'free_cash_flow': 5e9, 'net_income_ttm': 4e9, 'ebitda': 8e9,
+            'revenue_growth': 5.0, 'debt_equity': 0.5, 'net_debt': 10e9,
+            '_data_status': 'OK', '_data_reasons': [],
+        }
+        dcf = _build_dcf(info, financials, sector='Industrials')
+        assert dcf['assumptions']['beta_defaulted'] is False
+
+    def test_unknown_sector_uses_default_governance(self):
+        """Empty sector falls back to DEFAULT_BETA_BOUNDS."""
+        beta, flags = _stabilize_beta(0.42, '')
+        # DEFAULT_BETA_BOUNDS is (0.80, 1.60), so 0.42 → 0.80
+        assert beta == 0.80
+        assert 'BETA_FLOOR_APPLIED' in flags
 
 
 if __name__ == '__main__':

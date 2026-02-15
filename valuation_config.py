@@ -7,7 +7,54 @@ Every governance module imports from here. No magic numbers elsewhere.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+
+# ============================================================================
+# REPORT MODE (Canonical Suppression)
+# ============================================================================
+
+class ReportMode(Enum):
+    """Determines how fundamental-derived outputs are rendered."""
+    NORMAL = 'NORMAL'                             # All data available
+    FUNDAMENTALS_SUPPRESSED = 'FUNDAMENTALS_SUPPRESSED'  # Core fundamentals missing → suppress valuation
+    PARTIAL = 'PARTIAL'                           # Some data degraded → show with caveats
+
+
+# ============================================================================
+# FUNDAMENTALS QUALITY
+# ============================================================================
+
+@dataclass
+class FundamentalsQuality:
+    """Tracks which core fields are real vs defaulted/missing."""
+    market_cap_available: bool = False
+    shares_available: bool = False
+    revenue_available: bool = False
+    beta_available: bool = False      # False means beta was defaulted to 1.0
+    sector_available: bool = False    # False means sector is unknown/defaulted
+    price_available: bool = False
+    high_52w_available: bool = False
+    low_52w_available: bool = False
+    data_status: str = 'OK'          # OK / DEGRADED / INVALID
+    data_reasons: List[str] = field(default_factory=list)
+
+    @property
+    def report_mode(self) -> ReportMode:
+        if self.data_status == 'INVALID':
+            return ReportMode.FUNDAMENTALS_SUPPRESSED
+        elif self.data_status == 'DEGRADED':
+            return ReportMode.PARTIAL
+        return ReportMode.NORMAL
+
+    @property
+    def beta_defaulted(self) -> bool:
+        return not self.beta_available
+
+    @property
+    def sector_defaulted(self) -> bool:
+        return not self.sector_available
 
 
 # ============================================================================
@@ -27,6 +74,9 @@ class FeatureFlags:
     tq_precision: bool = True                # E: 4dp TQ display
     engine_table_x100: bool = True           # F: Contribution column clarity
     ca_evidence: bool = True                 # Capital allocation evidence block
+    fundamentals_integrity: bool = True      # Stage 5.1: Null propagation for missing fundamentals
+    canonical_suppression: bool = True       # Stage 5.1: ReportMode-based output suppression
+    tq_canonical: bool = True                # Stage 5.1: Single canonical TQ formula
     use_institutional_dcf: bool = False      # Part II: NOT YET IMPLEMENTED
 
 

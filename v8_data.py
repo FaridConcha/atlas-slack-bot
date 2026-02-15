@@ -313,6 +313,30 @@ def fetch_v8_data(symbol, fred_api_key=None):
     print(f"[V8]   Building financials...")
     financials = _build_financials(ticker, info, hist=hist)
 
+    # Sync fundamentals quality with financial integrity status and serialize
+    fq = company.get('_fundamentals_quality')
+    if fq:
+        fq.data_status = financials.get('_data_status', 'OK')
+        fq.data_reasons = financials.get('_data_reasons', [])
+        fq.shares_available = financials.get('shares_outstanding') is not None and financials['shares_outstanding'] > 0
+        fq.revenue_available = financials.get('revenue_ttm') is not None and financials['revenue_ttm'] > 0
+        # Serialize to dict for JSON compatibility
+        company['_fundamentals_quality'] = {
+            'market_cap_available': fq.market_cap_available,
+            'shares_available': fq.shares_available,
+            'revenue_available': fq.revenue_available,
+            'beta_available': fq.beta_available,
+            'sector_available': fq.sector_available,
+            'price_available': fq.price_available,
+            'high_52w_available': fq.high_52w_available,
+            'low_52w_available': fq.low_52w_available,
+            'beta_defaulted': fq.beta_defaulted,
+            'sector_defaulted': fq.sector_defaulted,
+            'data_status': fq.data_status,
+            'data_reasons': fq.data_reasons,
+            'report_mode': fq.report_mode.value,
+        }
+
     print(f"[V8]   Building earnings history...")
     earnings = _build_earnings(ticker)
 
@@ -362,19 +386,59 @@ def fetch_v8_data(symbol, fred_api_key=None):
 # ============================================================================
 
 def _build_company_info(info, symbol, hist=None):
-    """Extract company overview from yfinance info."""
+    """Extract company overview from yfinance info.
+
+    Stage 5.1: Missing fields propagate as None, never coerced to 0/1.0/'Unknown'.
+    The _fundamentals_quality object tracks which fields are real vs defaulted.
+    """
+    from valuation_config import FundamentalsQuality, CONFIG
+
     price = resolve_price(info, hist)
+
+    # --- Raw extraction: None if truly missing ---
+    # Beta/52w: treat 0 as missing (yfinance returns 0 for unavailable)
+    raw_beta = _safe_num(info.get('beta'))
+    if raw_beta is not None and raw_beta <= 0:
+        raw_beta = None
+    raw_sector = info.get('sector')
+    raw_industry = info.get('industry')
+    raw_mc = _safe_num(info.get('marketCap'), min_val=0)
+    raw_employees = _safe_num(info.get('fullTimeEmployees'), min_val=0)
+    raw_52h = _safe_num(info.get('fiftyTwoWeekHigh'), min_val=0)
+    if raw_52h is not None and raw_52h <= 0:
+        raw_52h = None
+    raw_52l = _safe_num(info.get('fiftyTwoWeekLow'), min_val=0)
+    if raw_52l is not None and raw_52l <= 0:
+        raw_52l = None
+
+    # Sector: treat empty string or 'Unknown' from yfinance as missing
+    sector_available = bool(raw_sector and raw_sector not in ('', 'Unknown', 'N/A'))
+    industry_available = bool(raw_industry and raw_industry not in ('', 'Unknown', 'N/A'))
+
+    # Build quality tracker
+    fq = FundamentalsQuality(
+        market_cap_available=raw_mc is not None and raw_mc > 0,
+        shares_available=True,  # updated later by _build_financials
+        revenue_available=True,  # updated later by _build_financials
+        beta_available=raw_beta is not None and raw_beta > 0,
+        sector_available=sector_available,
+        price_available=price is not None and price > 0,
+        high_52w_available=raw_52h is not None and raw_52h > 0,
+        low_52w_available=raw_52l is not None and raw_52l > 0,
+    )
+
     return {
         'symbol': symbol,
         'name': info.get('longName', '') or info.get('shortName', symbol),
-        'sector': info.get('sector', 'Unknown'),
-        'industry': info.get('industry', 'Unknown'),
-        'market_cap': info.get('marketCap', 0) or 0,
-        'employees': info.get('fullTimeEmployees', 0) or 0,
-        'beta': info.get('beta', 1.0) or 1.0,
+        'sector': raw_sector if sector_available else None,
+        'industry': raw_industry if industry_available else None,
+        'market_cap': raw_mc,
+        'employees': int(raw_employees) if raw_employees else None,
+        'beta': raw_beta,
         'price': price,
-        'fifty_two_week_high': info.get('fiftyTwoWeekHigh', 0) or 0,
-        'fifty_two_week_low': info.get('fiftyTwoWeekLow', 0) or 0,
+        'fifty_two_week_high': raw_52h,
+        'fifty_two_week_low': raw_52l,
+        '_fundamentals_quality': fq,
     }
 
 
@@ -1498,8 +1562,13 @@ def _build_dcf(info, financials, sector=None):
 
         # ── DISCOUNT RATE DECOMPOSITION (Stage 5 Governance) ──
         cfg = CONFIG.wacc
-        beta_raw = round(info.get('beta', 1.0) or 1.0, 2)
+        _raw_b = _safe_num(info.get('beta'))
+        beta_defaulted = _raw_b is None or _raw_b <= 0
+        beta_raw = round(_raw_b, 2) if _raw_b and _raw_b > 0 else 1.0
         _sector = sector or info.get('sector') or ''
+        # Treat 'Unknown' sector as empty for governance purposes
+        if _sector in ('Unknown', 'N/A', ''):
+            _sector = ''
 
         # Beta stabilization: clamp to sector bounds
         beta, beta_flags = _stabilize_beta(beta_raw, _sector)
@@ -1610,6 +1679,7 @@ def _build_dcf(info, financials, sector=None):
                 'equity_risk_premium': round(erp * 100, 2),
                 'beta': round(beta, 2),
                 'beta_raw': round(beta_raw, 2),
+                'beta_defaulted': beta_defaulted,
                 'beta_flags': beta_flags,
                 'cost_of_equity': round(cost_of_equity * 100, 2),
                 'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),

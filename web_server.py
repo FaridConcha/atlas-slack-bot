@@ -231,6 +231,9 @@ const RV = S.regime_vector||{};
 const ENGINES = ['trend','valuation','consensus','volatility','macro','liquidity','global','correlation'];
 const RF = [['TS','Trend'],['CH','Choppiness'],['VL','VIX Level'],['VS','VIX Stress'],['CI','Corr Instab.'],['RS','Rates Shock'],['CS','Credit Stress'],['GR','Global Risk'],['BM_f','Bad Mix'],['BEI','Bond-Eq Flip']];
 const V9 = V8.v9_scores||{};
+const FQ = CO._fundamentals_quality||{};
+const _reportMode = FQ.report_mode||'NORMAL';
+const _isSuppressed = _reportMode==='FUNDAMENTALS_SUPPRESSED';
 const INST = V8.institutional||{};
 const SECT = V8.sector||{};
 const MKT = V8.market||{};
@@ -379,21 +382,27 @@ if(V9.v9_decision){
   // Star ratings
   function stars(score,max){max=max||5;var s='';for(var i=0;i<max;i++)s+=(i<Math.round(score)?'\u2605':'\u2606');return s;}
   h += '<div style="font-size:13px;line-height:2">';
-  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.business_quality)+'</span> <span style="color:var(--t2)">Business Quality</span> <span class="mono" style="color:var(--t1)">'+f(V9.business_quality)+'/5</span></div>';
-  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.moat_durability)+'</span> <span style="color:var(--t2)">Moat Durability</span> <span class="mono" style="color:var(--t1)">'+f(V9.moat_durability)+'/5</span></div>';
-  h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.capital_allocation)+'</span> <span style="color:var(--t2)">Capital Allocation</span> <span class="mono" style="color:var(--t1)">'+f(V9.capital_allocation)+'/5</span></div>';
+  if(_isSuppressed){
+    h += '<div><span style="color:var(--t3)">Business Quality</span> <span class="mono" style="color:var(--t3)">N/A</span></div>';
+    h += '<div><span style="color:var(--t3)">Moat Durability</span> <span class="mono" style="color:var(--t3)">N/A</span></div>';
+    h += '<div><span style="color:var(--t3)">Capital Allocation</span> <span class="mono" style="color:var(--t3)">N/A</span></div>';
+  } else {
+    h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.business_quality)+'</span> <span style="color:var(--t2)">Business Quality</span> <span class="mono" style="color:var(--t1)">'+f(V9.business_quality)+'/5</span></div>';
+    h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.moat_durability)+'</span> <span style="color:var(--t2)">Moat Durability</span> <span class="mono" style="color:var(--t1)">'+f(V9.moat_durability)+'/5</span></div>';
+    h += '<div><span class="mono" style="color:var(--warn);font-size:14px">'+stars(V9.capital_allocation)+'</span> <span style="color:var(--t2)">Capital Allocation</span> <span class="mono" style="color:var(--t1)">'+f(V9.capital_allocation)+'/5</span></div>';
+  }
   h += '</div>';
 
   // Quality Score Donut
-  h += '<div id="ch-donut" style="height:200px;margin-top:8px"></div>';
+  if(!_isSuppressed) h += '<div id="ch-donut" style="height:200px;margin-top:8px"></div>';
 
-  // Conviction bar
-  var convW = Math.max(4, Math.min(100, V9.conviction||0));
+  // Conviction bar — 0 under suppression, consistent with derivation
+  var convW = _isSuppressed?0:Math.max(4, Math.min(100, V9.conviction||0));
   var convC = convW>=70?'var(--pos)':convW>=40?'var(--warn)':'var(--neg)';
   h += '<div style="margin-top:12px"><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">Conviction</span>';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">';
-  h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+convW+'%;height:100%;background:'+convC+';border-radius:4px"></div></div>';
-  h += '<span class="mono" style="font-size:13px;font-weight:600;color:'+convC+'">'+convW+'</span>';
+  h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+(_isSuppressed?0:convW)+'%;height:100%;background:'+convC+';border-radius:4px"></div></div>';
+  h += '<span class="mono" style="font-size:13px;font-weight:600;color:'+(_isSuppressed?'var(--t3)':convC)+'">'+(_isSuppressed?'N/A':convW)+'</span>';
   h += '</div></div>';
 
   h += '</div>';
@@ -401,15 +410,20 @@ if(V9.v9_decision){
   // Right: Margin of Safety + Intrinsic Value + MOS Band
   h += '<div>';
 
-  // MOS Gauge
+  // MOS Gauge — suppressed under INVALID
   var iv = V9.intrinsic_value_base||0;
   var mos = V9.mos_pct||0;
   var reqMos = (V9.required_mos||0)*100;
-  var mosC = mos>=reqMos?'var(--pos)':mos>=0?'var(--warn)':'var(--neg)';
+  var mosC = _isSuppressed?'var(--t3)':mos>=reqMos?'var(--pos)':mos>=0?'var(--warn)':'var(--neg)';
   h += '<div style="text-align:center;padding:8px 0">';
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Margin of Safety</div>';
-  h += '<div class="mono" style="font-size:32px;font-weight:700;color:'+mosC+'">'+( iv>0?(mos>=0?'+':'')+f(mos,1)+'%':'N/A')+'</div>';
-  h += '<div style="font-size:11px;color:var(--t3);margin-top:4px">Required: '+f(reqMos,0)+'% ('+( V9.business_type||'')+')</div>';
+  if(_isSuppressed){
+    h += '<div class="mono" style="font-size:32px;font-weight:700;color:var(--t3)">N/A</div>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:4px">Fundamentals unavailable</div>';
+  } else {
+    h += '<div class="mono" style="font-size:32px;font-weight:700;color:'+mosC+'">'+( iv>0?(mos>=0?'+':'')+f(mos,1)+'%':'N/A')+'</div>';
+    h += '<div style="font-size:11px;color:var(--t3);margin-top:4px">Required: '+f(reqMos,0)+'% ('+( V9.business_type||'')+')</div>';
+  }
   h += '</div>';
 
   // MOS Band Visualization
@@ -1044,7 +1058,12 @@ if(DCF && DCF.assumptions){
   h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
 
   // Beta governance
-  if(_ga.beta_raw != null){
+  if(_ga.beta_defaulted){
+    h += '<div><span style="font-weight:600;color:var(--t3)">Beta:</span> ';
+    h += '<span class="mono" style="color:var(--t3)">N/A</span> (not reported \u2014 defaulted to 1.00 for WACC calc)';
+    h += ' <span class="pill pill-neg" style="font-size:9px;padding:1px 6px">BETA_DEFAULTED</span>';
+    h += '</div>';
+  } else if(_ga.beta_raw != null){
     var _betaChanged = _ga.beta_raw !== _ga.beta;
     h += '<div><span style="font-weight:600;color:var(--t3)">Beta:</span> ';
     h += '<span class="mono">'+f(_ga.beta_raw,2)+'</span> (raw)';
@@ -1076,6 +1095,7 @@ if(DCF && DCF.assumptions){
     h += 'General floor: '+f(_ga.wacc_general_floor,2)+'%';
     if(_ga.wacc_sector_floor != null) h += ' &middot; Sector floor: '+f(_ga.wacc_sector_floor,2)+'%';
     if(_ga.sector) h += ' &middot; Sector: '+_ga.sector;
+    else if(FQ.sector_defaulted) h += ' &middot; <span style="color:var(--warn)">Sector: unknown (default governance applied)</span>';
     h += '</div>';
   }
 
@@ -1269,24 +1289,36 @@ if(FIN.trailing_pe||FIN.forward_pe||FIN.price_to_book){
 }
 h += '</div>';
 
-// Trade Plan
+// Trade Plan — suppressed when fundamentals unavailable
 if(S.stop_loss||S.entry){
-  h += '<div class="card"><h2>Trade Plan</h2>';
-  h += '<div class="g4" style="font-size:12px">';
-  var tp = [
-    ['Entry',S.entry?fD(S.entry):'N/A'],
-    ['Stop Loss',S.stop_loss?fD(S.stop_loss):'N/A'],
-    ['Target',S.take_profit?fD(S.take_profit[0])+' \u2013 '+fD(S.take_profit[1]):'N/A'],
-    ['Buy Zone',S.buy_zone?fD(S.buy_zone[0])+' \u2013 '+fD(S.buy_zone[1]):'N/A'],
-    ['Mode',mode],
-    ['Position $',S.position_size?fM(S.position_size):'N/A'],
-    ['Position %',S.position_pct!=null?f(S.position_pct,1)+'%':'N/A'],
-    ['TQ Category',S.tq_category||'N/A'],
-  ];
-  for(var i=0;i<tp.length;i++){
-    h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+tp[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+tp[i][1]+'</div></div>';
+  if(_isSuppressed){
+    h += '<div class="card" style="opacity:0.6"><h2>Trade Plan</h2>';
+    h += '<div style="font-size:11px;color:var(--t3);padding:8px 0">';
+    h += '\u26A0 Trade plan suppressed \u2014 fundamental data unavailable. Valuation-dependent entries, targets, and position sizes cannot be computed reliably.';
+    h += '<br><span style="font-size:10px">Technical levels (stop loss) shown for reference only.</span>';
+    h += '</div>';
+    if(S.stop_loss){
+      h += '<div style="font-size:12px;padding:4px 0"><span style="color:var(--t3)">Stop Loss (technical): </span><span class="mono">'+fD(S.stop_loss)+'</span></div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<div class="card"><h2>Trade Plan</h2>';
+    h += '<div class="g4" style="font-size:12px">';
+    var tp = [
+      ['Entry',S.entry?fD(S.entry):'N/A'],
+      ['Stop Loss',S.stop_loss?fD(S.stop_loss):'N/A'],
+      ['Target',S.take_profit?fD(S.take_profit[0])+' \u2013 '+fD(S.take_profit[1]):'N/A'],
+      ['Buy Zone',S.buy_zone?fD(S.buy_zone[0])+' \u2013 '+fD(S.buy_zone[1]):'N/A'],
+      ['Mode',mode],
+      ['Position $',S.position_size?fM(S.position_size):'N/A'],
+      ['Position %',S.position_pct!=null?f(S.position_pct,1)+'%':'N/A'],
+      ['TQ Category',S.tq_category||'N/A'],
+    ];
+    for(var i=0;i<tp.length;i++){
+      h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+tp[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+tp[i][1]+'</div></div>';
+    }
+    h += '</div></div>';
   }
-  h += '</div></div>';
 }
 
 // ════════════════════════════════════════════════════
@@ -1620,7 +1652,7 @@ if(_ivCheck > 0 && price){
   }
 }
 // Beta
-if(CO.beta!=null && CO.beta > 1.3){
+if(CO.beta!=null && CO.beta > 1.3 && !FQ.beta_defaulted){
   _mktSignals.push({name:'Beta',value:f(CO.beta,2),cls:CO.beta>1.8?'neg':'warn',note:'Above-average systematic risk. Price amplifies market moves by '+f((CO.beta-1)*100,0)+'%.'});
 }
 // VIX from engine
@@ -1963,7 +1995,7 @@ if(econInd.length){
 
 // ── Impact on This Ticker ──
 var _tickerSector = CO.sector||'';
-var _tickerBeta = CO.beta||1;
+var _tickerBeta = CO.beta!=null?CO.beta:null;
 h += '<div style="background:var(--bg1);border-radius:var(--r);padding:12px 14px;margin-top:16px;font-size:12px;line-height:1.7;color:var(--t2)">';
 h += '<span style="font-weight:600;color:var(--t1)">Impact on '+D.symbol+':</span> ';
 if(DCF && DCF.assumptions){
@@ -1971,9 +2003,13 @@ if(DCF && DCF.assumptions){
   if(_ffr!=null && _ffr >= 4) h += 'At a '+f(_waccE,1)+'% WACC with the current '+f(_ffr,2)+'% fed funds rate, the DCF valuation carries significant rate sensitivity \u2014 a 100bp rate increase would further compress fair value. ';
   else if(_ffr!=null) h += 'With a '+f(_waccE,1)+'% WACC in a '+f(_ffr,2)+'% rate environment, the DCF model benefits from relatively low discount rates. ';
 }
-if(_tickerBeta > 1.3) h += 'With a beta of '+f(_tickerBeta,2)+', '+D.symbol+' amplifies macro movements \u2014 both upside in favorable conditions and downside during stress. ';
-else if(_tickerBeta < 0.7) h += 'A low beta of '+f(_tickerBeta,2)+' provides relative insulation from macro volatility, making '+D.symbol+' a defensive holding in uncertain environments. ';
-else h += 'Beta of '+f(_tickerBeta,2)+' suggests '+D.symbol+' tracks broad market movements without significant amplification. ';
+if(_tickerBeta!=null && !FQ.beta_defaulted){
+  if(_tickerBeta > 1.3) h += 'With a beta of '+f(_tickerBeta,2)+', '+D.symbol+' amplifies macro movements \u2014 both upside in favorable conditions and downside during stress. ';
+  else if(_tickerBeta < 0.7) h += 'A low beta of '+f(_tickerBeta,2)+' provides relative insulation from macro volatility, making '+D.symbol+' a defensive holding in uncertain environments. ';
+  else h += 'Beta of '+f(_tickerBeta,2)+' suggests '+D.symbol+' tracks broad market movements without significant amplification. ';
+} else {
+  h += 'Beta data is not available for '+D.symbol+'. Systematic risk exposure cannot be assessed from reported data. ';
+}
 var _cyclicals = ['Consumer Cyclical','Technology','Financials','Energy','Industrials','Basic Materials'];
 var _defensives = ['Healthcare','Consumer Defensive','Utilities','Real Estate','Communication Services'];
 if(_cyclicals.indexOf(_tickerSector)>=0) h += 'As a '+_tickerSector+' name, the stock is cyclically sensitive and tends to outperform in expansions but faces earnings headwinds during contractions.';
@@ -2123,15 +2159,19 @@ if(FIN.total_cash||FIN.shares_outstanding||FIN.book_value){
 if(CO.name){
   h += '<div class="card"><h2>Company Profile</h2>';
   h += '<div class="g4" style="font-size:12px">';
+  var _betaLabel = CO.beta!=null?f(CO.beta,2):'N/A';
+  if(FQ.beta_defaulted) _betaLabel = 'N/A <span style="font-size:9px;color:var(--t3)">(not reported)</span>';
+  var _sectorLabel = CO.sector||'N/A';
+  if(FQ.sector_defaulted) _sectorLabel = 'N/A <span style="font-size:9px;color:var(--t3)">(not reported)</span>';
   var cpm = [
     ['Company', CO.name||'N/A'],
-    ['Sector', CO.sector||'N/A'],
+    ['Sector', _sectorLabel],
     ['Industry', CO.industry||'N/A'],
     ['Employees', CO.employees?Number(CO.employees).toLocaleString():'N/A'],
-    ['Market Cap', fM(CO.market_cap)],
-    ['Beta', CO.beta!=null?f(CO.beta,2):'N/A'],
-    ['52W High', CO.fifty_two_week_high!=null?fD(CO.fifty_two_week_high):'N/A'],
-    ['52W Low', CO.fifty_two_week_low!=null?fD(CO.fifty_two_week_low):'N/A'],
+    ['Market Cap', CO.market_cap!=null&&CO.market_cap>0?fM(CO.market_cap):'N/A'],
+    ['Beta', _betaLabel],
+    ['52W High', CO.fifty_two_week_high!=null&&CO.fifty_two_week_high>0?fD(CO.fifty_two_week_high):'N/A'],
+    ['52W Low', CO.fifty_two_week_low!=null&&CO.fifty_two_week_low>0?fD(CO.fifty_two_week_low):'N/A'],
   ];
   for(var i=0;i<cpm.length;i++){
     h+='<div style="padding:4px 0"><div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em">'+cpm[i][0]+'</div><div class="mono" style="font-size:13px;font-weight:500">'+cpm[i][1]+'</div></div>';
@@ -2404,21 +2444,26 @@ h += '<div class="mhdr">TRADE QUALITY \u2014 SIGNAL RELIABILITY</div>';
 h += '<div class="mnote">Trade Quality measures whether the current signal is actionable. It combines: signal magnitude (composite), data backing (data confidence), and regime classification reliability. TQ near 0 means signal too weak or data too thin to act.</div>';
 h += '<div class="mblk">';
 h += '<span class="hl">FORMULA</span>\n';
-h += '  TQ = |C_adjusted| / 100 \u00D7 (DC / 100) \u00D7 Reliability\n\n';
+h += '  TQ = (|C_raw| / 100) \u00D7 Reliability \u00D7 Gate \u00D7 (DC / 100)\n\n';
 h += '<span class="hl">WHY ABSOLUTE VALUE?</span>\n';
-h += '  |C_adjusted| converts both bullish (+) and bearish (\u2212) signals to magnitude.\n';
+h += '  |C_raw| converts both bullish (+) and bearish (\u2212) signals to magnitude.\n';
 h += '  A strong bearish signal is just as tradeable as a strong bullish one.\n\n';
+h += '<span class="hl">COMPONENTS</span>\n';
+h += '  C_raw:       Raw composite score before risk/DC adjustments\n';
+h += '  Reliability:  Regime classification confidence [0\u20131]\n';
+h += '  Gate:        Risk governor dampening factor [0\u20131]\n';
+h += '  DC:          Data confidence percentage\n\n';
 h += '<span class="hl">SUBSTITUTION</span>\n';
-if(cAdj!=null && dc!=null && rel!=null){
-  var _tqC = (Math.abs(cAdj)/100) * (dc/100) * rel;
-  h += '  TQ = |'+fS(cAdj,1)+'| / 100 \u00D7 '+f(dc,0)+' / 100 \u00D7 '+f(rel,2)+'\n';
-  h += '     = '+f(Math.abs(cAdj),1)+' / 100 \u00D7 '+f(dc/100,2)+' \u00D7 '+f(rel,2)+'\n';
-  h += '     = '+f(Math.abs(cAdj)/100,4)+' \u00D7 '+f(dc/100,2)+' \u00D7 '+f(rel,2)+'\n';
+if(cRaw!=null && dc!=null && rel!=null && gate!=null){
+  var _tqC = (Math.abs(cRaw)/100) * rel * gate * (dc/100);
+  h += '  TQ = (|'+fS(cRaw,1)+'| / 100) \u00D7 '+f(rel,2)+' \u00D7 '+f(gate,2)+' \u00D7 ('+f(dc,0)+' / 100)\n';
+  h += '     = '+f(Math.abs(cRaw)/100,4)+' \u00D7 '+f(rel,2)+' \u00D7 '+f(gate,2)+' \u00D7 '+f(dc/100,4)+'\n';
   h += '  TQ (computed) = <span class="hl">'+f(_tqC,4)+'</span>\n';
   if(tq!=null){
     h += '  TQ (reported) = <span class="hl">'+f(tq,4)+'</span>\n';
     var _tqD = Math.abs(_tqC - tq);
     if(_tqD > 0.001) h += '  \u0394 = <span class="warn">'+f(_tqD,4)+'</span>\n';
+    else h += '  \u0394 = <span class="pos">'+f(_tqD,4)+' (reconciled)</span>\n';
   }
   h += '\n  <span class="hl">INTERPRETATION</span>\n';
   var _tqV = tq||_tqC;
@@ -2431,10 +2476,10 @@ if(cAdj!=null && dc!=null && rel!=null){
   h += '  Insufficient data for computation.\n';
 }
 h += '</div>';
-if(tq!=null && cAdj!=null && dc!=null && rel!=null){
-  var _tqC2 = (Math.abs(cAdj)/100) * (dc/100) * rel;
-  if(Math.abs(_tqC2 - tq) > 0.01){
-    h += '<div class="recon">\u26A0 Engine TQ includes additional factors beyond this three-variable approximation (e.g., regime stability bonus, contradiction penalty). The formula captures the primary structure.</div>';
+if(tq!=null && cRaw!=null && dc!=null && rel!=null && gate!=null){
+  var _tqC2 = (Math.abs(cRaw)/100) * rel * gate * (dc/100);
+  if(Math.abs(_tqC2 - tq) > 0.001){
+    h += '<div class="recon">\u26A0 TQ reconciliation \u0394 = '+f(Math.abs(_tqC2 - tq),4)+'. Check for rounding in intermediate steps.</div>';
   }
 }
 
