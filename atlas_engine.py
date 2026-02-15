@@ -887,10 +887,12 @@ def engine_correlation(price_data, vol_data, macro_data):
         for i in range(20, len(returns)):
             if i >= 60:
                 c60 = np.corrcoef(returns[i-60:i], yield_changes[i-60:i])[0, 1]
-                corr_60_spx_yield.append(c60)
+                if not np.isnan(c60):
+                    corr_60_spx_yield.append(c60)
             if i >= 20:
                 c20 = np.corrcoef(returns[i-20:i], yield_changes[i-20:i])[0, 1]
-                corr_20_spx_yield.append(c20)
+                if not np.isnan(c20):
+                    corr_20_spx_yield.append(c20)
 
         if corr_20_spx_yield:
             current_corr_20 = corr_20_spx_yield[-1]
@@ -1471,6 +1473,8 @@ def compute_regime_vector(data, scores_dict, engine_details):
         yield_changes_now = np.diff(yields_now)
 
         corr_now = np.corrcoef(returns_now, yield_changes_now)[0, 1] if len(returns_now) >= 2 else 0.0
+        if np.isnan(corr_now):
+            corr_now = 0.0
 
         if data['price'] and len(data['price']) >= 10 and data['macro'] and len(data['macro']) >= 10:
             closes_old = np.array([safe_float(row['close']) for row in data['price'][-10:-5]])
@@ -1480,6 +1484,8 @@ def compute_regime_vector(data, scores_dict, engine_details):
             yield_changes_old = np.diff(yields_old)
 
             corr_old = np.corrcoef(returns_old, yield_changes_old)[0, 1] if len(returns_old) >= 2 else 0.0
+            if np.isnan(corr_old):
+                corr_old = 0.0
 
             sign_flip = (np.sign(corr_now) != np.sign(corr_old)) and (corr_old != 0)
             regime_vector['BEI'] = 1.0 if sign_flip else 0.8 * (1.0 if 'BEI' in regime_vector else 0.0)
@@ -1549,9 +1555,11 @@ def normalize_engine_scores(scores_dict):
 # SECTION 8: LAYER 3 — META-REGIME LEARNING
 # ============================================================================
 
-def load_meta_state(state_dir):
-    """Load meta-learning state from state_dir/atlas_meta_state.json"""
-    state_path = Path(state_dir) / "atlas_meta_state.json"
+def load_meta_state(state_dir, symbol=None):
+    """Load meta-learning state from state_dir/atlas_meta_state_{symbol}.json.
+    Per-ticker state prevents cross-contamination of learned weights."""
+    suffix = f"_{symbol.upper()}" if symbol else ""
+    state_path = Path(state_dir) / f"atlas_meta_state{suffix}.json"
 
     if state_path.exists():
         try:
@@ -1574,12 +1582,13 @@ def load_meta_state(state_dir):
         'ewma_enorm_mean': None,         # Phase 3b: EWMA of e_norm means
     }
 
-def save_meta_state(state, state_dir):
-    """Save meta-learning state to state_dir/atlas_meta_state.json"""
+def save_meta_state(state, state_dir, symbol=None):
+    """Save meta-learning state to state_dir/atlas_meta_state_{symbol}.json"""
     state_path = Path(state_dir)
     state_path.mkdir(parents=True, exist_ok=True)
 
-    with open(state_path / "atlas_meta_state.json", 'w') as f:
+    suffix = f"_{symbol.upper()}" if symbol else ""
+    with open(state_path / f"atlas_meta_state{suffix}.json", 'w') as f:
         json.dump(state, f, indent=2)
 
 def update_meta_learning(state, e_norm, regime_vector):
@@ -2411,7 +2420,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     regime_probs, regime_label_gmm = compute_soft_regime(regime_vector)
 
     # [Phase 2b] EMA Smoothing for regime transitions
-    state = load_meta_state(state_dir)
+    state = load_meta_state(state_dir, symbol=symbol)
     regime_probs_prev = state.get('regime_probs_prev', None)
     regime_probs = smooth_regime_probs(regime_probs, regime_probs_prev)
     regime_label = max(regime_probs, key=regime_probs.get)  # argmax of smoothed π
@@ -2442,7 +2451,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     shrinkage_w = compute_shrinkage_weight(run_count)
     state, realized_corr = update_realized_correlations(state, e_norm, shrinkage_weight=shrinkage_w)
 
-    save_meta_state(state, state_dir)
+    save_meta_state(state, state_dir, symbol=symbol)
 
     # Layer 4: Dynamic Weights
     w_dynamic = compute_dynamic_weights(state['w0'], regime_vector)
