@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transfix Portfolio Comparison</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --slate: #22282b;
+      --gold: #f2cc57;
+      --white: #ffffff;
+      --light-gray: #e6e6ed;
+      --dark-gray: #697684;
+      --sky-blue: #8fcae9;
+      --green: #56b784;
+
+      --bg: #14181b;
+      --panel: #1b2126;
+      --panel-2: #1f262c;
+      --line: #2a333b;
+      --muted: #a9b2bf;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Nunito", system-ui, sans-serif;
+      color: var(--white);
+      background:
+        linear-gradient(140deg, rgba(242,204,87,0.08), transparent 40%),
+        radial-gradient(1200px 600px at 85% -10%, rgba(143,202,233,0.18), transparent 60%),
+        var(--bg);
+    }
+
+    header {
+      position: relative;
+      overflow: hidden;
+      padding: 28px 24px 20px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(140deg, rgba(34,40,43,0.95), rgba(20,24,27,0.9));
+    }
+
+    header::after {
+      content: "";
+      position: absolute;
+      right: -120px;
+      top: -120px;
+      width: 380px;
+      height: 220px;
+      background: linear-gradient(135deg, rgba(242,204,87,0.35), rgba(143,202,233,0.1));
+      transform: skewX(-18deg);
+      border-radius: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand img {
+      height: 40px;
+      width: auto;
+    }
+
+    .tagline {
+      font-family: "Exo 2", sans-serif;
+      font-size: 13px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-top: 6px;
+    }
+
+    h1 {
+      font-family: "Exo 2", sans-serif;
+      margin: 16px 0 4px;
+      font-size: clamp(24px, 3vw, 40px);
+    }
+
+    .subtitle {
+      color: var(--muted);
+      max-width: 900px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 24px 60px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 18px 0 10px;
+    }
+
+    .pill {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent 60%), var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-family: "Exo 2", sans-serif;
+      font-size: 16px;
+      letter-spacing: 0.02em;
+    }
+
+    .big {
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .muted { color: var(--muted); }
+
+    .bar-wrap {
+      margin-top: 10px;
+      background: var(--panel-2);
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      height: 12px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--gold), var(--sky-blue));
+      width: 0;
+      transition: width 600ms ease;
+    }
+
+    .section {
+      margin-top: 26px;
+    }
+
+    .section h2 {
+      margin: 0 0 10px;
+      font-family: "Exo 2", sans-serif;
+      font-size: 20px;
+    }
+
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .toggle-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .toggle {
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--white);
+      cursor: pointer;
+      font-size: 13px;
+      transition: border 200ms ease;
+    }
+
+    .toggle.active {
+      border-color: var(--gold);
+      box-shadow: inset 0 0 0 1px rgba(242,204,87,0.3);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+    }
+
+    th {
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      background: #0f1418;
+    }
+
+    .expandable {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #141a1f;
+    }
+
+    .expandable button {
+      width: 100%;
+      text-align: left;
+      padding: 12px 14px;
+      border: none;
+      background: transparent;
+      color: var(--white);
+      font-family: "Exo 2", sans-serif;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .expandable-content {
+      padding: 0 14px 14px;
+      color: var(--muted);
+      display: none;
+      line-height: 1.6;
+    }
+
+    .expandable.open .expandable-content { display: block; }
+
+    .chev {
+      transform: rotate(0deg);
+      transition: transform 200ms ease;
+    }
+
+    .expandable.open .chev { transform: rotate(180deg); }
+
+    .pattern {
+      height: 120px;
+      border-radius: 14px;
+      background:
+        repeating-linear-gradient(135deg, rgba(143,202,233,0.15) 0, rgba(143,202,233,0.15) 2px, transparent 2px, transparent 12px),
+        linear-gradient(135deg, rgba(242,204,87,0.12), rgba(34,40,43,0.2));
+      border: 1px solid var(--line);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 10px 0 16px;
+    }
+
+    .tab {
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--white);
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .tab.active {
+      border-color: var(--gold);
+      box-shadow: inset 0 0 0 1px rgba(242,204,87,0.3);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin: 10px 0;
+    }
+
+    .control {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .control label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .control input[type="range"] {
+      width: 100%;
+    }
+
+    .control .value {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    canvas { max-width: 100%; }
+
+    @media (max-width: 700px) {
+      th, td { padding: 10px 8px; }
+      .big { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="./transfix-logo.svg" alt="Transfix logo">
+      <div>
+        <div class="tagline">Tech &amp; Data Solutions</div>
+      </div>
+    </div>
+    <h1>Portfolio vs SPY — Simple, Data‑Driven Comparison</h1>
+    <div class="subtitle">
+      Professional, concise, and transparent summary. Assumption: no cash flows and constant holdings over the 6‑month window (Aug 6, 2025 → Feb 6, 2026).
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="pill-row">
+      <div class="pill">Aggressive WM</div>
+      <div class="pill">Conservative WM</div>
+      <div class="pill">Self‑Managed</div>
+      <div class="pill">SPY</div>
+    </div>
+
+    <div class="grid" id="kpis"></div>
+
+    <div class="section">
+      <h2>Interactive Views</h2>
+      <div class="tabs" id="tabs"></div>
+
+      <div class="card tab-panel" id="panel-compare">
+        <div class="toggle-row" id="viewToggles"></div>
+        <div id="bars"></div>
+        <div class="note">Returns use SPY total return (adjusted close) and portfolio implied returns from your snapshots.</div>
+      </div>
+
+      <div class="card tab-panel" id="panel-graphs">
+        <div class="grid">
+          <div class="card">
+            <h3>Return vs SPY</h3>
+            <canvas id="returnChart" height="220"></canvas>
+          </div>
+          <div class="card">
+            <h3>Income Yield</h3>
+            <canvas id="incomeChart" height="220"></canvas>
+          </div>
+          <div class="card">
+            <h3>Risk Score</h3>
+            <canvas id="riskChart" height="220"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card tab-panel" id="panel-simulator">
+        <div class="controls">
+          <div class="control">
+            <label for="rateSlider">Rate Regime (Cuts ←→ Hikes)</label>
+            <input id="rateSlider" type="range" min="-5" max="5" value="0" step="1">
+            <div class="value" id="rateValue">0</div>
+          </div>
+          <div class="control">
+            <label for="techSlider">Tech Leadership</label>
+            <input id="techSlider" type="range" min="0" max="10" value="5" step="1">
+            <div class="value" id="techValue">5</div>
+          </div>
+          <div class="control">
+            <label for="cycleSlider">Cyclical Strength</label>
+            <input id="cycleSlider" type="range" min="0" max="10" value="5" step="1">
+            <div class="value" id="cycleValue">5</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Projected 2026 Range (Illustrative)</h3>
+          <canvas id="simChart" height="220"></canvas>
+          <div class="note">These are scenario‑based adjustments, not forecasts.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Super Simple Scorecard</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Portfolio</th>
+              <th>6‑Mo Return</th>
+              <th>Income Yield</th>
+              <th>Risk</th>
+              <th>Verdict</th>
+            </tr>
+          </thead>
+          <tbody id="scorecard"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Expandable Detail Panels</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Aggressive WM</h3>
+          <div class="expandable" data-open="true">
+            <button type="button">Key Drivers <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              FBT, FTXO, RDVY, GLW, FTI, B, SPY drove most gains. This portfolio benefited from financials, cyclicals, and materials leadership.
+            </div>
+          </div>
+          <div class="expandable">
+            <button type="button">Risks <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              Rate‑cut cycles can compress bank margins and reduce cyclical momentum. Overlap across sector ETFs increases correlation in drawdowns.
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Conservative WM</h3>
+          <div class="expandable" data-open="true">
+            <button type="button">Purpose <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              Stability and yield. Mix of bond income, hedged equity, and defensive equities to reduce volatility while maintaining moderate upside.
+            </div>
+          </div>
+          <div class="expandable">
+            <button type="button">2026 Sensitivity <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              If rates fall, bond prices can support returns. If markets drop, hedged equity limits drawdown. Risk profile remains low.
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Self‑Managed</h3>
+          <div class="expandable" data-open="true">
+            <button type="button">Concentration <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              GOOGL is ~33% of total value. Tech concentration raises volatility and creates a single‑stock exposure risk.
+            </div>
+          </div>
+          <div class="expandable">
+            <button type="button">What Helped / Hurt <span class="chev">▾</span></button>
+            <div class="expandable-content">
+              PL and GS helped. NFLX, MSFT, AMZN, SOFI dragged. Sector diversification is the main gap versus WM portfolios.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>2026 Scenario Toggles (Illustrative)</h2>
+      <div class="card">
+        <div class="toggle-row" id="scenarioToggles"></div>
+        <div id="scenarioBars"></div>
+        <div class="note">Scenario ranges are directional, based on rate sensitivity and portfolio tilts.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Brand Pattern</h2>
+      <div class="pattern"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    const data = {
+      kpis: [
+        { label: "Aggressive WM", value: "$121,313", sub: "Unrealized +$18,943", returnPct: 18.5 },
+        { label: "Conservative WM", value: "$185,872", sub: "Total return ~11.5% (incl. income)", returnPct: 11.5 },
+        { label: "Self‑Managed", value: "$35,780", sub: "Unrealized +$2,860", returnPct: 8.7 },
+        { label: "SPY", value: "Benchmark", sub: "Total return +9.77%", returnPct: 9.77 },
+      ],
+      scorecard: [
+        { name: "Aggressive WM", ret: "+18.5%", income: "~4–5%", risk: "Medium", verdict: "Best overall" },
+        { name: "Conservative WM", ret: "~+11.5%", income: "~6.5%", risk: "Low", verdict: "Best risk‑adjusted" },
+        { name: "Self‑Managed", ret: "~+8.7%", income: "~0.5%", risk: "High", verdict: "Underperformed" },
+        { name: "SPY", ret: "+9.77%", income: "~1.5%", risk: "Medium", verdict: "Benchmark" },
+      ],
+      views: {
+        "Return %": [
+          { name: "Aggressive WM", value: 18.5 },
+          { name: "Conservative WM", value: 11.5 },
+          { name: "Self‑Managed", value: 8.7 },
+          { name: "SPY", value: 9.77 },
+        ],
+        "Income Yield %": [
+          { name: "Aggressive WM", value: 4.5 },
+          { name: "Conservative WM", value: 6.5 },
+          { name: "Self‑Managed", value: 0.5 },
+          { name: "SPY", value: 1.5 },
+        ],
+        "Risk (1‑10)": [
+          { name: "Aggressive WM", value: 6 },
+          { name: "Conservative WM", value: 3 },
+          { name: "Self‑Managed", value: 8 },
+          { name: "SPY", value: 5 },
+        ]
+      },
+      scenarios: {
+        "Higher for Longer": [
+          { name: "Aggressive WM", value: 20 },
+          { name: "Conservative WM", value: 10 },
+          { name: "Self‑Managed", value: 9 },
+          { name: "SPY", value: 12 },
+        ],
+        "Soft Landing + Cuts": [
+          { name: "Aggressive WM", value: 12 },
+          { name: "Conservative WM", value: 11 },
+          { name: "Self‑Managed", value: 14 },
+          { name: "SPY", value: 13 },
+        ],
+        "Tech‑Led Rally": [
+          { name: "Aggressive WM", value: 8 },
+          { name: "Conservative WM", value: 9 },
+          { name: "Self‑Managed", value: 20 },
+          { name: "SPY", value: 16 },
+        ],
+        "Risk‑Off": [
+          { name: "Aggressive WM", value: 4 },
+          { name: "Conservative WM", value: 6 },
+          { name: "Self‑Managed", value: -2 },
+          { name: "SPY", value: 1 },
+        ],
+      }
+    };
+
+    const kpis = document.getElementById("kpis");
+    data.kpis.forEach(k => {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <h3>${k.label}</h3>
+        <div class="big">${k.value}</div>
+        <div class="muted">${k.sub}</div>
+        <div class="bar-wrap"><div class="bar" style="width: ${Math.min(Math.max(k.returnPct,0),25) * 4}%"></div></div>
+      `;
+      kpis.appendChild(card);
+    });
+
+    const scorecard = document.getElementById("scorecard");
+    data.scorecard.forEach(s => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><span class="tag">${s.name}</span></td>
+        <td>${s.ret}</td>
+        <td>${s.income}</td>
+        <td>${s.risk}</td>
+        <td>${s.verdict}</td>
+      `;
+      scorecard.appendChild(tr);
+    });
+
+    function renderBars(containerId, dataset, unit) {
+      const container = document.getElementById(containerId);
+      container.innerHTML = "";
+      const max = Math.max(...dataset.map(d => Math.abs(d.value)), 1);
+      dataset.forEach(d => {
+        const row = document.createElement("div");
+        row.style.margin = "12px 0";
+        const value = d.value;
+        const width = (Math.abs(value) / max) * 100;
+        row.innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <strong>${d.name}</strong>
+            <span class="muted">${value}${unit}</span>
+          </div>
+          <div class="bar-wrap">
+            <div class="bar" style="width:${width}%; background: ${value >= 0 ? 'linear-gradient(90deg, var(--gold), var(--sky-blue))' : 'linear-gradient(90deg, #ff8a8a, #f6c1c1)'}"></div>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    function initToggles(toggleId, containerId, dataMap, unit) {
+      const toggleRow = document.getElementById(toggleId);
+      const keys = Object.keys(dataMap);
+      keys.forEach((key, i) => {
+        const btn = document.createElement("button");
+        btn.className = "toggle" + (i === 0 ? " active" : "");
+        btn.textContent = key;
+        btn.addEventListener("click", () => {
+          Array.from(toggleRow.children).forEach(c => c.classList.remove("active"));
+          btn.classList.add("active");
+          renderBars(containerId, dataMap[key], unit);
+        });
+        toggleRow.appendChild(btn);
+      });
+      renderBars(containerId, dataMap[keys[0]], unit);
+    }
+
+    function initExpandables() {
+      document.querySelectorAll('.expandable').forEach((el) => {
+        const isOpen = el.getAttribute('data-open') === 'true';
+        if (isOpen) el.classList.add('open');
+        const btn = el.querySelector('button');
+        btn.addEventListener('click', () => {
+          el.classList.toggle('open');
+        });
+      });
+    }
+
+    function initTabs() {
+      const tabs = [
+        { id: 'panel-compare', label: 'Compare' },
+        { id: 'panel-graphs', label: 'Graphs' },
+        { id: 'panel-simulator', label: 'Scenario Simulator' },
+      ];
+      const tabsEl = document.getElementById('tabs');
+      tabs.forEach((t, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'tab' + (i === 0 ? ' active' : '');
+        btn.textContent = t.label;
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+          btn.classList.add('active');
+          document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+          document.getElementById(t.id).classList.add('active');
+        });
+        tabsEl.appendChild(btn);
+      });
+      document.getElementById('panel-compare').classList.add('active');
+    }
+
+    function chartConfig(labels, values, color) {
+      return {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: '',
+            data: values,
+            backgroundColor: color,
+            borderRadius: 6,
+          }]
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { display: false }, ticks: { color: '#a9b2bf' } },
+            y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a9b2bf' } }
+          }
+        }
+      };
+    }
+
+    function initCharts() {
+      const labels = ["Aggressive WM","Conservative WM","Self‑Managed","SPY"];
+      new Chart(
+        document.getElementById('returnChart'),
+        chartConfig(labels, [18.5,11.5,8.7,9.77], 'rgba(242,204,87,0.8)')
+      );
+      new Chart(
+        document.getElementById('incomeChart'),
+        chartConfig(labels, [4.5,6.5,0.5,1.5], 'rgba(143,202,233,0.8)')
+      );
+      new Chart(
+        document.getElementById('riskChart'),
+        chartConfig(labels, [6,3,8,5], 'rgba(86,183,132,0.8)')
+      );
+    }
+
+    let simChart;
+    function initSimulator() {
+      const ctx = document.getElementById('simChart');
+      simChart = new Chart(ctx, chartConfig(
+        ["Aggressive WM","Conservative WM","Self‑Managed","SPY"],
+        [16,10,10,12],
+        'rgba(242,204,87,0.7)'
+      ));
+    }
+
+    function updateSimulator() {
+      const rate = Number(document.getElementById('rateSlider').value);
+      const tech = Number(document.getElementById('techSlider').value);
+      const cycle = Number(document.getElementById('cycleSlider').value);
+
+      document.getElementById('rateValue').textContent = rate;
+      document.getElementById('techValue').textContent = tech;
+      document.getElementById('cycleValue').textContent = cycle;
+
+      // Simple adjustment model
+      const base = { wm: 16, cons: 10, self: 10, spy: 12 };
+      const rateAdj = { wm: rate * 0.8, cons: rate * 0.4, self: -rate * 0.3, spy: -rate * 0.2 };
+      const techAdj = { wm: -tech * 0.2, cons: -tech * 0.1, self: tech * 0.6, spy: tech * 0.4 };
+      const cycAdj = { wm: cycle * 0.4, cons: cycle * 0.1, self: -cycle * 0.1, spy: cycle * 0.2 };
+
+      const values = [
+        base.wm + rateAdj.wm + techAdj.wm + cycAdj.wm,
+        base.cons + rateAdj.cons + techAdj.cons + cycAdj.cons,
+        base.self + rateAdj.self + techAdj.self + cycAdj.self,
+        base.spy + rateAdj.spy + techAdj.spy + cycAdj.spy
+      ].map(v => Math.round(v * 10) / 10);
+
+      simChart.data.datasets[0].data = values;
+      simChart.update();
+    }
+
+    initToggles("viewToggles", "bars", data.views, "%");
+    initToggles("scenarioToggles", "scenarioBars", data.scenarios, "%");
+    initExpandables();
+    initTabs();
+    initCharts();
+    initSimulator();
+
+    document.getElementById('rateSlider').addEventListener('input', updateSimulator);
+    document.getElementById('techSlider').addEventListener('input', updateSimulator);
+    document.getElementById('cycleSlider').addEventListener('input', updateSimulator);
+  </script>
+</body>
+</html>
