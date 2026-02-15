@@ -254,8 +254,10 @@ SHRINKAGE_DECAY_RUNS = 50     # runs to decay shrinkage to near-zero
 
 def safe_float(val, default=0.0):
     """Convert value to float safely."""
+    if val is None or val == '':
+        return default
     try:
-        return float(val) if val else default
+        return float(val)
     except (ValueError, TypeError):
         return default
 
@@ -867,6 +869,7 @@ def engine_correlation(price_data, vol_data, macro_data):
         return risk_score, details
 
     closes = np.array([safe_float(row['close']) for row in price_data])
+    closes = np.maximum(closes, 1e-10)  # D12: prevent log(0) on missing closes
     returns = np.diff(np.log(closes))
 
     if macro_data and len(macro_data) >= 60:
@@ -992,6 +995,40 @@ def compute_all_engine_variances(scores_dict, dc_details, regime_label=None):
     return variances
 
 
+def transform_engine_variances_to_normalized(engine_variances, scores_dict):
+    """
+    D1 FIX: Transform engine variances from raw score space to tanh-normalized space.
+
+    The composite score uses tanh-normalized engines: e_norm = tanh(score/s).
+    Engine variances must be in the same units for σ²_C = wᵀΣw to be
+    dimensionally consistent with μ_C = wᵀe_norm.
+
+    Linear rescaling (delta method at score=0):
+        σ²_norm = σ²_raw / s²
+
+    where s is the normalization scale from ATLAS_CONFIG['normalization'].
+    """
+    norm_scales = ATLAS_CONFIG['normalization']
+    engines_standard = ['trend', 'valuation', 'consensus', 'volatility',
+                        'macro', 'liquidity', 'global']
+
+    transformed = {}
+
+    for eng in engines_standard:
+        s = norm_scales.get(eng, 50)
+        sigma2_raw = engine_variances.get(eng, 50)
+        # σ²_norm = σ²_raw / s²  (linear approximation of delta method)
+        transformed[eng] = sigma2_raw / (s ** 2) if s > 0 else sigma2_raw
+
+    # Correlation engine: signal = -(risk - 50), then tanh(signal/s_corr)
+    # The inversion doesn't affect variance (sign change squares out)
+    s_corr = norm_scales.get('correlation', 50)
+    sigma2_raw = engine_variances.get('correlation', 50)
+    transformed['correlation'] = sigma2_raw / (s_corr ** 2) if s_corr > 0 else sigma2_raw
+
+    return transformed
+
+
 def build_covariance_matrix(engine_variances, correlation_matrix=None):
     """
     Build engine covariance matrix Σ = ρ ⊙ (σσᵀ), PSD-corrected.
@@ -1109,7 +1146,7 @@ def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq, regime_
     }
 
 
-def compute_cvar_gate(mu_C, sigma_C, alpha=0.05, theta=30.0):
+def compute_cvar_gate(mu_C, sigma_C, alpha=0.05, theta=0.30):
     """
     CVaR (Conditional Value at Risk) gate for tail-risk control.
 
@@ -1117,6 +1154,7 @@ def compute_cvar_gate(mu_C, sigma_C, alpha=0.05, theta=30.0):
     where z_α = Φ⁻¹(α) = 1.6449 for α=0.05
     and φ(z_α) = 0.10314 (standard normal PDF at z_α).
 
+    θ is in normalized composite units (0.30 ≡ 30 raw composite points).
     Returns (pass: bool, cvar: float).
     Gate passes when CVaR > -θ (i.e., tail loss is within acceptable bound).
     """
@@ -1401,6 +1439,7 @@ def compute_regime_vector(data, scores_dict, engine_details):
     # CI: Correlation Instability (std of 20d rolling corr over 60d window)
     if data['price'] and len(data['price']) >= 60 and data['macro'] and len(data['macro']) >= 60:
         closes = np.array([safe_float(row['close']) for row in data['price'][-60:]])
+        closes = np.maximum(closes, 1e-10)  # D12: prevent log(0)
         yields = np.array([safe_float(row.get('us_10y', 2.5)) for row in data['macro'][-60:]])
 
         returns = np.diff(np.log(closes))
@@ -1467,6 +1506,7 @@ def compute_regime_vector(data, scores_dict, engine_details):
     # BEI: Bond-Equity correlation flip
     if data['price'] and len(data['price']) >= 5 and data['macro'] and len(data['macro']) >= 5:
         closes_now = np.array([safe_float(row['close']) for row in data['price'][-5:]])
+        closes_now = np.maximum(closes_now, 1e-10)  # D12: prevent log(0)
         yields_now = np.array([safe_float(row.get('us_10y', 2.5)) for row in data['macro'][-5:]])
 
         returns_now = np.diff(np.log(closes_now))
@@ -1478,6 +1518,7 @@ def compute_regime_vector(data, scores_dict, engine_details):
 
         if data['price'] and len(data['price']) >= 10 and data['macro'] and len(data['macro']) >= 10:
             closes_old = np.array([safe_float(row['close']) for row in data['price'][-10:-5]])
+            closes_old = np.maximum(closes_old, 1e-10)  # D12: prevent log(0)
             yields_old = np.array([safe_float(row.get('us_10y', 2.5)) for row in data['macro'][-10:-5]])
 
             returns_old = np.diff(np.log(closes_old))
@@ -1488,7 +1529,7 @@ def compute_regime_vector(data, scores_dict, engine_details):
                 corr_old = 0.0
 
             sign_flip = (np.sign(corr_now) != np.sign(corr_old)) and (corr_old != 0)
-            regime_vector['BEI'] = 1.0 if sign_flip else 0.8 * (1.0 if 'BEI' in regime_vector else 0.0)
+            regime_vector['BEI'] = 1.0 if sign_flip else 0.0
         else:
             regime_vector['BEI'] = 1.0 if (corr_now > 0 and np.sign(corr_now) < 0) else 0.0
     else:
@@ -1583,13 +1624,18 @@ def load_meta_state(state_dir, symbol=None):
     }
 
 def save_meta_state(state, state_dir, symbol=None):
-    """Save meta-learning state to state_dir/atlas_meta_state_{symbol}.json"""
+    """Save meta-learning state to state_dir/atlas_meta_state_{symbol}.json.
+    Uses atomic write (write-tmp-then-rename) for crash safety."""
     state_path = Path(state_dir)
     state_path.mkdir(parents=True, exist_ok=True)
 
     suffix = f"_{symbol.upper()}" if symbol else ""
-    with open(state_path / f"atlas_meta_state{suffix}.json", 'w') as f:
+    target = state_path / f"atlas_meta_state{suffix}.json"
+    tmp = target.with_suffix('.json.tmp')
+
+    with open(tmp, 'w') as f:
         json.dump(state, f, indent=2)
+    tmp.replace(target)  # atomic on POSIX
 
 def update_meta_learning(state, e_norm, regime_vector):
     """
@@ -1676,10 +1722,10 @@ def update_ewma_engine_variances(state, scores_dict, decay=0.94):
         prev_mean = ewma_mean.get(eng, 0.0)
         prev_var = ewma_var.get(eng, 0.0)
 
-        # Update EWMA mean
+        # Update EWMA variance using prev_mean (unbiased estimator)
+        new_var = decay * prev_var + (1 - decay) * (score - prev_mean) ** 2
+        # Update EWMA mean (after variance to use prev_mean)
         new_mean = decay * prev_mean + (1 - decay) * score
-        # Update EWMA variance (running second moment)
-        new_var = decay * prev_var + (1 - decay) * (score - new_mean) ** 2
 
         ewma_mean[eng] = float(new_mean)
         ewma_var[eng] = float(new_var)
@@ -1827,14 +1873,13 @@ def compute_dynamic_weights(w0, regime_vector):
 # SECTION 10: LAYER 5 — COMPOSITE SCORE
 # ============================================================================
 
-def compute_composite(e_norm, w_dynamic, interaction_matrix=None, regime_label=None):
+def compute_composite(e_norm, w_dynamic, interaction_matrix=None, regime_label=None, regime_probs=None):
     """
     Compute composite score from normalized engine scores and dynamic weights.
     C_raw = 100 * (wᵀe + eᵀA(r)e)  where A(r) is regime-conditioned.
 
-    If regime_label is provided, uses REGIME_INTERACTION_MATRICES[regime_label].
-    If interaction_matrix is provided (legacy), uses that directly.
-    If neither, pure linear (no quadratic term).
+    D3 FIX: If regime_probs is provided, uses soft blend A(r) = Σ_k π_k A_k.
+    Falls back to hard argmax (regime_label) or legacy static matrix.
     """
     engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
 
@@ -1844,9 +1889,14 @@ def compute_composite(e_norm, w_dynamic, interaction_matrix=None, regime_label=N
     linear_term = float(np.dot(w_vec, e_vec))
     quadratic_term = 0.0
 
-    # Regime-conditioned matrix takes priority over legacy static matrix
+    # D3: Soft probability-weighted blend A(r) = Σ_k π_k(r) A_k
     A = None
-    if regime_label is not None and regime_label in REGIME_INTERACTION_MATRICES:
+    if regime_probs is not None:
+        A = sum(
+            regime_probs.get(r, 0.0) * REGIME_INTERACTION_MATRICES[r]
+            for r in REGIME_NAMES
+        )
+    elif regime_label is not None and regime_label in REGIME_INTERACTION_MATRICES:
         A = REGIME_INTERACTION_MATRICES[regime_label]
     elif interaction_matrix is not None:
         A = interaction_matrix
@@ -1909,12 +1959,14 @@ def compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm, risk_b
 
     g = 1.0 - 1.0 / (1.0 + np.exp(-(sr - tau) / s))
 
-    # Special regime adjustments
-    if g < 0.35:
+    # Smooth gate attenuation below threshold (D13: no discontinuity)
+    g_floor = 0.35
+    if g < g_floor:
         if regime_label == "Crisis Trend":
-            g = 0.50
+            g = max(g, 0.30)  # crisis trend-following floor
         else:
-            g = 0.0  # Stand aside
+            # Quadratic fade: continuous at g_floor, approaches 0 smoothly
+            g = g * (g / g_floor)
 
     # Data confidence cap
     dc_cap = min(1.0, dc / 100.0)
@@ -2456,14 +2508,18 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 4: Dynamic Weights
     w_dynamic = compute_dynamic_weights(state['w0'], regime_vector)
 
-    # Layer 5: Composite Score [P4: regime-conditioned interaction matrix A(r)]
-    c_raw, comp_details = compute_composite(e_norm, w_dynamic, regime_label=regime_label)
+    # Layer 5: Composite Score [P4: regime-conditioned interaction matrix A(r) = Σ π_k A_k]
+    c_raw, comp_details = compute_composite(e_norm, w_dynamic, regime_label=regime_label, regime_probs=regime_probs)
 
     # [Phase 2d] Regime-conditioned correlation matrix
     regime_corr = build_regime_conditioned_correlations(regime_probs)
 
-    # [P2] Covariance Matrix + Composite Variance (using regime-conditioned correlations)
-    cov_matrix, engine_order = build_covariance_matrix(engine_variances, correlation_matrix=regime_corr)
+    # [D1 FIX] Transform variances to normalized space for probabilistic framework
+    # σ²_norm = σ²_raw / s²  — ensures σ²_C and μ_C are dimensionally consistent
+    engine_variances_norm = transform_engine_variances_to_normalized(engine_variances, scores_dict)
+
+    # [P2] Covariance Matrix + Composite Variance (using normalized variances + regime correlations)
+    cov_matrix, engine_order = build_covariance_matrix(engine_variances_norm, correlation_matrix=regime_corr)
     sigma2_C = compute_composite_variance(w_dynamic, cov_matrix, engine_order)
     sigma_C = np.sqrt(sigma2_C)
 
@@ -2497,7 +2553,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # [P5 + Phase 3c] Smooth Decision Mapping (with regime entropy)
     verdict_data = compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq,
                                           regime_entropy=regime_entropy)
-    verdict = verdict_data['verdict_legacy']  # backward compat
+    verdict = verdict_data['verdict_smooth']  # D10: unified on probabilistic verdict
 
     # Self-Audit
     contradictions = detect_contradictions({
@@ -2552,7 +2608,8 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         'size_final': size_final,
         'contradictions': contradictions,
         # Probabilistic framework fields
-        'engine_variances': engine_variances,
+        'engine_variances': engine_variances,          # raw (diagnostic)
+        'engine_variances_norm': engine_variances_norm, # normalized (used for σ²_C)
         'sigma2_C': sigma2_C,
         'sigma_C': sigma_C,
         'composite_confidence_adjusted': c_conf,
@@ -2636,6 +2693,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
 
     # Probabilistic framework summary fields
     summary['engine_variances'] = {k: round(float(v), 2) for k, v in engine_variances.items()}
+    summary['engine_variances_norm'] = {k: round(float(v), 6) for k, v in engine_variances_norm.items()}
     summary['sigma2_C'] = round(float(sigma2_C), 4)
     summary['sigma_C'] = round(float(sigma_C), 4)
     summary['composite_confidence_adjusted'] = round(float(c_conf), 2)
@@ -2646,6 +2704,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['p_buy'] = round(float(verdict_data['p_buy']), 4)
     summary['p_sell'] = round(float(verdict_data['p_sell']), 4)
     summary['verdict_smooth'] = verdict_data['verdict_smooth']
+    summary['verdict_legacy'] = verdict_data['verdict_legacy']  # diagnostic
     summary['tau_effective'] = round(float(verdict_data['tau_effective']), 2)
     summary['kelly_fraction'] = round(float(kelly_data['kelly_fraction']), 6)
     summary['kelly_clipped'] = round(float(kelly_data['kelly_clipped']), 6)
