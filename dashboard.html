@@ -124,8 +124,8 @@ td{padding:5px 8px;border-bottom:1px solid rgba(33,38,45,.5);white-space:nowrap}
 /* ── Owner Memorandum Narrative ── */
 .memo{font-size:12.5px;line-height:1.85;color:var(--t2)}
 .memo p{margin:0 0 12px}
-.memo-hdr{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--t1);padding:18px 0 6px;border-bottom:1px solid var(--border);margin-bottom:10px}
-.memo-hdr:first-child{padding-top:0}
+.memo-hdr{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--t1);padding:20px 0 6px;border-top:2px solid var(--border);border-bottom:1px solid var(--border);margin-top:16px;margin-bottom:10px}
+.memo-hdr:first-child{padding-top:0;border-top:none;margin-top:0}
 .memo .hl{color:var(--t1);font-weight:500}
 .memo .mono{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums}
 .memo-aside{background:var(--bg2);border-left:3px solid var(--acc);padding:10px 14px;margin:10px 0 14px;font-size:11.5px;line-height:1.7;color:var(--t2);border-radius:0 var(--r) var(--r) 0}
@@ -245,7 +245,7 @@ if(D.created_at) h += ' &middot; '+new Date(D.created_at).toLocaleString('en-US'
 if(P.fallback_mode) h += ' &middot; Data: '+P.fallback_mode;
 h += '</div>';
 
-// METRICS STRIP
+// METRICS STRIP — grouped into 3 clusters: Signal | Context | Decision
 h += '<div class="metrics-row">';
 var _pBuy = S.p_buy; var _pSell = S.p_sell; var _confR = S.confidence_ratio;
 var ms = [
@@ -260,8 +260,14 @@ var ms = [
   ['P(Buy)',_pBuy!=null?f(_pBuy*100,1)+'%':'N/A',_pBuy!=null?(_pBuy>0.7?'pill-pos':_pBuy<0.3?'pill-neg':'pill-muted'):'pill-muted'],
   ['Confidence',_confR!=null?f(_confR,3):'N/A','pill-muted'],
 ];
+var _mGroups = [{label:'Signal',end:3},{label:'Context',end:7},{label:'Decision',end:10}];
+var _gi = 0;
 for(var i=0;i<ms.length;i++){
-  h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'">'+ms[i][1]+'</span></div></div>';
+  if(i===_mGroups[_gi].end){_gi++;h+='<div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>';}
+  if(i===0||i===3||i===7) h+='<div style="display:flex;flex-direction:column;flex:1;min-width:0"><div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">'+_mGroups[_gi].label+'</div><div style="display:flex;gap:8px;flex-wrap:wrap">';
+  var _heroStyle = (i===0)?';font-size:15px':'';
+  h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'" style="'+_heroStyle+'">'+ms[i][1]+'</span></div></div>';
+  if(i===2||i===6||i===9) h+='</div></div>';
 }
 h += '</div>';
 
@@ -327,9 +333,15 @@ if(V9.v9_decision){
   var convC = convW>=70?'var(--pos)':convW>=40?'var(--warn)':'var(--neg)';
   h += '<div style="margin-top:12px"><span style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em">Conviction</span>';
   h += '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">';
-  h += '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+(_isSuppressed?0:convW)+'%;height:100%;background:'+convC+';border-radius:4px"></div></div>';
+  h += '<div style="flex:1;position:relative">';
+  h += '<div style="height:8px;background:var(--bg2);border-radius:4px;overflow:hidden"><div style="width:'+(_isSuppressed?0:convW)+'%;height:100%;background:'+convC+';border-radius:4px"></div></div>';
+  h += '<div style="position:absolute;left:40%;top:0;width:1px;height:8px;background:var(--t3);opacity:0.5"></div>';
+  h += '<div style="position:absolute;left:40%;top:10px;font-size:8px;color:var(--t3);transform:translateX(-50%)">40</div>';
+  h += '<div style="position:absolute;left:70%;top:0;width:1px;height:8px;background:var(--t3);opacity:0.5"></div>';
+  h += '<div style="position:absolute;left:70%;top:10px;font-size:8px;color:var(--t3);transform:translateX(-50%)">70</div>';
+  h += '</div>';
   h += '<span class="mono" style="font-size:13px;font-weight:600;color:'+(_isSuppressed?'var(--t3)':convC)+'">'+(_isSuppressed?'N/A':convW)+'</span>';
-  h += '</div></div>';
+  h += '</div><div style="height:12px"></div></div>';
 
   h += '</div>';
 
@@ -1506,7 +1518,8 @@ var totalCt=0;
 for(var i=0;i<ENGINES.length;i++){
   var e=ENGINES[i],sc=SC[e],sn=SN[e],w=W[e],ct=CT[e];
   if(ct!=null) totalCt+=ct;
-  h += '<tr>';
+  var _zeroRow = (ct==null||Math.abs(ct)<0.005);
+  h += '<tr'+(_zeroRow?' style="opacity:0.4"':'')+'>';
   h += '<td style="font-weight:500">'+e+'</td>';
   h += '<td class="text-r mono '+cls(sc)+'">'+(sc!=null?fS(sc,1):'N/A')+'</td>';
   h += '<td class="text-r mono '+cls(sn)+'">'+(sn!=null?fS(sn,3):'N/A')+'</td>';
@@ -1829,8 +1842,8 @@ if(allSectors.length>0){
   for(var i=0;i<allSectors.length;i++){
     var sec = allSectors[i];
     var isTarget = tgtSect.name&&sec.name===tgtSect.name;
-    h += '<tr'+(isTarget?' class="tr-hl"':'')+'>';
-    h += '<td'+(isTarget?' style="font-weight:600"':'')+'>'+sec.name+'</td>';
+    h += '<tr'+(isTarget?' class="tr-hl" style="background:rgba(56,139,253,0.08);box-shadow:inset 3px 0 0 var(--acc)"':'')+'>';
+    h += '<td'+(isTarget?' style="font-weight:600;color:var(--t1)"':'')+'>'+sec.name+'</td>';
     h += '<td class="text-r mono '+cls(sec['1w'])+'">'+fP(sec['1w'])+'</td>';
     h += '<td class="text-r mono '+cls(sec['1m'])+'">'+fP(sec['1m'])+'</td>';
     h += '<td class="text-r mono '+cls(sec['ytd'])+'">'+fP(sec['ytd'])+'</td>';
@@ -1999,7 +2012,7 @@ h += '</div>';
 if(_y10!=null && _y2!=null){
   h += '<div style="margin-bottom:16px">';
   h += '<div style="font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Yield Curve Snapshot</div>';
-  h += '<div id="ch-yield-curve" style="height:180px"></div>';
+  h += '<div id="ch-yield-curve" style="height:260px"></div>';
   h += '</div>';
 }
 
@@ -3477,9 +3490,10 @@ function initCharts(){
     // Add subject company
     if(FIN.forward_pe&&FIN.revenue_growth!=null){
       allData.push({
-        value:[FIN.forward_pe, FIN.revenue_growth, Math.max(5, Math.min(40, Math.sqrt((FIN.market_cap||CO.market_cap||1e9)/1e9)*4)), FIN.net_margin||0],
+        value:[FIN.forward_pe, FIN.revenue_growth, Math.max(14, Math.min(40, Math.sqrt((FIN.market_cap||CO.market_cap||1e9)/1e9)*4+6)), FIN.net_margin||0],
         name:D.symbol,
-        itemStyle:{color:c.acc,borderColor:c.t1,borderWidth:2}
+        symbolSize:function(d){return Math.max(18, d[2])},
+        itemStyle:{color:c.acc,borderColor:'#fff',borderWidth:3,shadowColor:'rgba(0,0,0,0.3)',shadowBlur:6}
       });
     }
     for(var i=0;i<PEERS.length;i++){
@@ -3649,7 +3663,7 @@ function initCharts(){
       yAxis:{type:'value',axisLine:{show:false},splitLine:{lineStyle:{color:c.border,type:'dashed'}},axisLabel:{color:c.t3,fontSize:9,formatter:function(v){return v.toFixed(1)+'%'}}},
       series:[
         {type:'bar',data:vals.map(function(v,i){return{value:v,itemStyle:{color:barColors[i],borderRadius:[3,3,0,0]}}}),barWidth:'40%',animationDuration:600},
-        {type:'line',data:vals,smooth:true,lineStyle:{color:c.acc,width:2,type:'dashed'},symbol:'circle',symbolSize:6,itemStyle:{color:c.acc},animationDuration:600}
+        {type:'line',data:vals,smooth:true,lineStyle:{color:c.acc,width:3,type:'dashed'},symbol:'circle',symbolSize:8,itemStyle:{color:c.acc},animationDuration:600}
       ]
     });
     window.addEventListener('resize',function(){ch.resize()});
