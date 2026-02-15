@@ -88,9 +88,9 @@ def _compute_v8_scores(summary, v8_data):
     data_status = fin.get('_data_status', 'OK')
 
     # 1. Signal Strength (from engine)
-    c_raw = summary.get('composite_raw', 0)
-    tq = summary.get('trade_quality', 0)
-    gate = summary.get('gate_value', 1)
+    c_raw = _n(summary.get('composite_raw'), 0)
+    tq = _n(summary.get('trade_quality'), 0)
+    gate = _n(summary.get('gate_value'), 1)
     signal = max(0, min(100, 50 + c_raw * 0.5))
     signal = signal * min(1.3, 0.7 + tq * 2)
     signal = max(0, min(100, signal))
@@ -210,10 +210,10 @@ def _compute_v8_scores(summary, v8_data):
     # 6. Risk Score
     risk = 50
     risk += gate * 20
-    rel = summary.get('regime_reliability', 0.5)
+    rel = _n(summary.get('regime_reliability'), 0.5)
     risk += rel * 15
-    risk -= summary.get('risk_structural', 0) * 20
-    risk -= summary.get('risk_tactical', 0) * 15
+    risk -= _n(summary.get('risk_structural'), 0) * 20
+    risk -= _n(summary.get('risk_tactical'), 0) * 15
     risk = max(0, min(100, risk))
 
     # Composite — if fundamental is None (INVALID data), exclude it and reweight

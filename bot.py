@@ -279,8 +279,8 @@ def handle_atlas_mention(event, say, client):
 
         # Derive regime-conditioned WACC scaling from engine summary
         from valuation_config import REGIME_VARIANCE_MULTIPLIER
-        _regime = summary.get('regime_label', 'Calm')
-        _rvm = REGIME_VARIANCE_MULTIPLIER.get(_regime, 1.0)
+        _regime = summary.get('regime_label') or 'Calm'
+        _rvm = REGIME_VARIANCE_MULTIPLIER.get(_regime, 1.0) or 1.0
 
         # Fetch V12extended data (peers, technicals, news, macro, etc.)
         print(f"[BOT] Fetching V12extended data for {symbol} (regime={_regime}, wacc_mult={_rvm})...")

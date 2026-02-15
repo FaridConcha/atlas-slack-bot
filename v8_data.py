@@ -359,6 +359,8 @@ def fetch_v8_data(symbol, fred_api_key=None, regime_variance_mult=1.0):
         dict with keys: company, financials, earnings, technicals,
         peers, news, sector, market, economic, institutional, dcf
     """
+    if regime_variance_mult is None:
+        regime_variance_mult = 1.0
     print(f"[V12] Fetching extended data for {symbol}...")
     ticker = yf.Ticker(symbol)
     info = _safe_info(ticker)
@@ -1693,6 +1695,8 @@ def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
     Fully vectorized Monte Carlo DCF engine.
     Returns distribution statistics for intrinsic value.
     """
+    if regime_variance_mult is None:
+        regime_variance_mult = 1.0
     t0 = time.perf_counter()
     mc_cfg = CONFIG.monte_carlo
     N = n_simulations
@@ -1904,6 +1908,8 @@ def _build_dcf(info, financials, sector=None, ticker=None, price=None, regime_va
     Produces EV, then subtracts net debt to arrive at equity value per share.
     regime_variance_mult: WACC sigma scaling from engine regime (1.0 = no scaling).
     """
+    if regime_variance_mult is None:
+        regime_variance_mult = 1.0
     _disabled = {'bear': 0, 'base': 0, 'bull': 0, '_dcf_disabled': True}
     try:
         # Gate: refuse to run DCF on INVALID fundamentals
