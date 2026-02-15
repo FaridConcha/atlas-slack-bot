@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-ATLAS V12 — Extended Data Fetcher
+ATLAS V12+ — Extended Data Fetcher + Monte Carlo DCF
 Fetches additional data beyond what the ATLAS engine needs.
 Used by v8_report.py to generate the full 10-section report.
+V12+: Added Monte Carlo DCF (N=1000), sensitivity analysis, DCF kernel extraction.
 
 Data sources:
   - yfinance: Company info, financials, earnings, peers, news, technicals
@@ -11,6 +12,8 @@ Data sources:
   - Computed: Technical indicators (RSI, MACD, Bollinger, etc.)
 """
 
+import time
+import zlib
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
@@ -20,6 +23,7 @@ from data_fetcher import resolve_price
 from valuation_config import (
     CONFIG, SECTOR_BETA_BOUNDS, DEFAULT_BETA_BOUNDS, SECTOR_WACC_FLOORS,
     BetaPath, SectorProvenance,
+    SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX, MonteCarloConfig,
 )
 
 
@@ -416,7 +420,9 @@ def fetch_v8_data(symbol, fred_api_key=None):
     institutional = _build_institutional(info)
 
     print(f"[V12]   Computing DCF model...")
-    dcf = _build_dcf(info, financials, sector=info.get('sector'))
+    _price_for_dcf = company.get('price')
+    dcf = _build_dcf(info, financials, sector=info.get('sector'),
+                     ticker=symbol, price=_price_for_dcf)
 
     print(f"[V12] Extended data complete for {symbol}")
 
@@ -1621,10 +1627,233 @@ def _compute_wacc_governed(beta, sector, de, sector_provenance=None):
 
 
 # ============================================================================
+# DCF KERNEL + MONTE CARLO ENGINE
+# ============================================================================
+
+def _evaluate_dcf_single(revenue, fcf_margin, discount_rate, terminal_growth,
+                          growth_rates_array, shares, net_debt, forecast_years=5):
+    """
+    Pure DCF kernel: deterministic IV per share for given parameters.
+    Extracted for reuse by both deterministic and Monte Carlo paths.
+    """
+    r = revenue
+    projected_fcf = []
+    for g in growth_rates_array:
+        r *= (1 + g)
+        projected_fcf.append(r * fcf_margin)
+
+    pv_fcf_sum = sum(
+        f / (1 + discount_rate) ** (i + 1) for i, f in enumerate(projected_fcf)
+    )
+
+    terminal_fcf = projected_fcf[-1] * (1 + terminal_growth)
+    denom = discount_rate - terminal_growth
+    if denom <= 0:
+        denom = 0.001  # prevent div-by-zero
+    terminal_value = terminal_fcf / denom
+    tv_pv = terminal_value / (1 + discount_rate) ** forecast_years
+
+    enterprise_value = pv_fcf_sum + tv_pv
+    equity_value = max(0, enterprise_value - net_debt)
+    iv_per_share = equity_value / shares if shares > 0 else 0
+    return iv_per_share
+
+
+def _ticker_seed(ticker):
+    """Deterministic, reproducible seed from ticker string."""
+    return zlib.crc32(ticker.upper().encode()) & 0xFFFFFFFF
+
+
+def _run_monte_carlo_dcf(revenue, fcf_margin, discount_rate, terminal_growth,
+                          growth_rates, shares, net_debt, sector, ticker_seed,
+                          cash_flow_source='fcf', price=None, n_simulations=1000):
+    """
+    Fully vectorized Monte Carlo DCF engine.
+    Returns distribution statistics for intrinsic value.
+    """
+    t0 = time.perf_counter()
+    mc_cfg = CONFIG.monte_carlo
+    N = n_simulations
+    forecast_years = len(growth_rates)
+
+    rng = np.random.default_rng(ticker_seed)
+
+    # Cholesky decomposition of correlation matrix
+    L = np.linalg.cholesky(MC_CORRELATION_MATRIX)
+
+    # Draw correlated standard normals: (N, 4) → [growth, margin, wacc, terminal_g]
+    z = rng.standard_normal((N, 4))
+    correlated = z @ L.T
+
+    # Sigma multiplier for proxy cash flows
+    proxy_mult = mc_cfg.proxy_sigma_multiplier if cash_flow_source != 'fcf' else 1.0
+
+    # Growth shocks with AR(1) structure across years
+    growth_sigma = SECTOR_GROWTH_SIGMA.get(sector, 0.06) * proxy_mult
+    rho = mc_cfg.growth_ar1_rho
+    growth_base = np.array(growth_rates)  # (forecast_years,)
+
+    # Build growth paths: (N, forecast_years)
+    growth_paths = np.tile(growth_base, (N, 1))  # start from base
+    # Year 1: innovation from correlated draw
+    growth_innovations = rng.standard_normal((N, forecast_years)) * growth_sigma
+    growth_innovations[:, 0] += correlated[:, 0] * growth_sigma  # add correlated component
+    # AR(1) propagation
+    for t in range(forecast_years):
+        if t == 0:
+            growth_paths[:, t] += growth_innovations[:, t]
+        else:
+            growth_paths[:, t] += rho * (growth_paths[:, t-1] - growth_base[t-1]) + (1 - rho) * growth_innovations[:, t]
+    growth_paths = np.maximum(growth_paths, mc_cfg.growth_floor)
+
+    # Margin shocks: (N,)
+    margin_sigma = max(abs(fcf_margin) * mc_cfg.margin_cv * proxy_mult, mc_cfg.margin_sigma_floor)
+    margins = fcf_margin + correlated[:, 1] * margin_sigma
+    margins = np.maximum(margins, 0.01)  # floor at 1%
+
+    # WACC shocks: (N,)
+    wacc_sigma = mc_cfg.wacc_sigma * proxy_mult
+    waccs = discount_rate + correlated[:, 2] * wacc_sigma
+    waccs = np.clip(waccs, 0.03, 0.20)
+
+    # Terminal growth shocks: (N,)
+    tg_sigma = mc_cfg.terminal_growth_sigma
+    term_gs = terminal_growth + correlated[:, 3] * tg_sigma
+    term_gs = np.clip(term_gs, mc_cfg.terminal_growth_floor, mc_cfg.terminal_growth_cap)
+    # Enforce terminal_g < wacc (with buffer)
+    term_gs = np.minimum(term_gs, waccs - 0.005)
+    term_gs = np.maximum(term_gs, 0.005)
+
+    # Vectorized revenue projections: (N, forecast_years)
+    cum_growth = np.cumprod(1 + growth_paths, axis=1)
+    revenues = revenue * cum_growth
+
+    # FCFs = revenues × margins
+    fcfs = revenues * margins[:, np.newaxis]
+
+    # PV factors: 1/(1+wacc)^t for t=1..forecast_years
+    t_arr = np.arange(1, forecast_years + 1)
+    pv_factors = 1.0 / (1 + waccs[:, np.newaxis]) ** t_arr[np.newaxis, :]
+
+    # PV of FCFs
+    pv_sum = np.sum(fcfs * pv_factors, axis=1)
+
+    # Terminal value
+    fcf_last = fcfs[:, -1]
+    terminal_fcf_mc = fcf_last * (1 + term_gs)
+    tv_denom = waccs - term_gs
+    tv_denom = np.maximum(tv_denom, 0.001)
+    terminal_values = terminal_fcf_mc / tv_denom
+    tv_pv_factors = 1.0 / (1 + waccs) ** forecast_years
+    tv_pv = terminal_values * tv_pv_factors
+
+    # Enterprise value → equity → IV per share
+    ev = pv_sum + tv_pv
+    equity = np.maximum(0, ev - net_debt)
+    iv = equity / shares if shares > 0 else np.zeros(N)
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    # Percentile extraction
+    result = {
+        'n_simulations': N,
+        'seed': int(ticker_seed),
+        'elapsed_ms': round(elapsed_ms, 1),
+        'iv_mean': round(float(np.mean(iv)), 2),
+        'iv_median': round(float(np.median(iv)), 2),
+        'iv_std': round(float(np.std(iv)), 2),
+        'iv_p5': round(float(np.percentile(iv, 5)), 2),
+        'iv_p10': round(float(np.percentile(iv, 10)), 2),
+        'iv_p25': round(float(np.percentile(iv, 25)), 2),
+        'iv_p50': round(float(np.percentile(iv, 50)), 2),
+        'iv_p75': round(float(np.percentile(iv, 75)), 2),
+        'iv_p90': round(float(np.percentile(iv, 90)), 2),
+        'iv_p95': round(float(np.percentile(iv, 95)), 2),
+    }
+
+    if price is not None and price > 0:
+        result['prob_undervalued'] = round(float(np.mean(iv > price)), 4)
+        mos_vals = np.maximum(0, (iv - price) / np.where(iv > 0, iv, 1))
+        result['expected_mos'] = round(float(np.mean(mos_vals)), 4)
+    else:
+        result['prob_undervalued'] = None
+        result['expected_mos'] = None
+
+    return result
+
+
+def _compute_sensitivity(revenue, fcf_margin, discount_rate, terminal_growth,
+                          growth_rates, shares, net_debt):
+    """
+    Sensitivity analysis via central finite differences.
+    Returns partial derivatives and identifies most sensitive parameter.
+    """
+    base_iv = _evaluate_dcf_single(
+        revenue, fcf_margin, discount_rate, terminal_growth,
+        growth_rates, shares, net_debt
+    )
+
+    # WACC sensitivity: ±50 bps
+    dw = 0.005
+    iv_up = _evaluate_dcf_single(revenue, fcf_margin, discount_rate + dw, terminal_growth,
+                                  growth_rates, shares, net_debt)
+    iv_dn = _evaluate_dcf_single(revenue, fcf_margin, discount_rate - dw, terminal_growth,
+                                  growth_rates, shares, net_debt)
+    dIV_dWACC = (iv_up - iv_dn) / (2 * dw)
+
+    # Growth sensitivity: ±200 bps on all years
+    dg = 0.02
+    gr_up = [g + dg for g in growth_rates]
+    gr_dn = [g - dg for g in growth_rates]
+    iv_up = _evaluate_dcf_single(revenue, fcf_margin, discount_rate, terminal_growth,
+                                  gr_up, shares, net_debt)
+    iv_dn = _evaluate_dcf_single(revenue, fcf_margin, discount_rate, terminal_growth,
+                                  gr_dn, shares, net_debt)
+    dIV_dGrowth = (iv_up - iv_dn) / (2 * dg)
+
+    # Margin sensitivity: ±200 bps
+    dm = 0.02
+    iv_up = _evaluate_dcf_single(revenue, fcf_margin + dm, discount_rate, terminal_growth,
+                                  growth_rates, shares, net_debt)
+    iv_dn = _evaluate_dcf_single(revenue, fcf_margin - dm, discount_rate, terminal_growth,
+                                  growth_rates, shares, net_debt)
+    dIV_dMargin = (iv_up - iv_dn) / (2 * dm)
+
+    # Terminal growth sensitivity: ±50 bps
+    dt = 0.005
+    tg_up = min(terminal_growth + dt, discount_rate - 0.005)
+    tg_dn = max(terminal_growth - dt, 0.005)
+    iv_up = _evaluate_dcf_single(revenue, fcf_margin, discount_rate, tg_up,
+                                  growth_rates, shares, net_debt)
+    iv_dn = _evaluate_dcf_single(revenue, fcf_margin, discount_rate, tg_dn,
+                                  growth_rates, shares, net_debt)
+    dIV_dTerminalG = (iv_up - iv_dn) / (tg_up - tg_dn) if (tg_up - tg_dn) > 0 else 0
+
+    sensitivities = {
+        'dIV_dWACC': round(dIV_dWACC, 2),
+        'dIV_dGrowth': round(dIV_dGrowth, 2),
+        'dIV_dMargin': round(dIV_dMargin, 2),
+        'dIV_dTerminalG': round(dIV_dTerminalG, 2),
+    }
+
+    # Identify most sensitive parameter (by absolute magnitude per unit)
+    # Normalize: WACC/terminal_g use 100bps, growth/margin use 100bps
+    abs_sens = {
+        'WACC': abs(dIV_dWACC * 0.01),
+        'Growth': abs(dIV_dGrowth * 0.01),
+        'Margin': abs(dIV_dMargin * 0.01),
+        'TerminalG': abs(dIV_dTerminalG * 0.01),
+    }
+    sensitivities['most_sensitive_to'] = max(abs_sens, key=abs_sens.get)
+
+    return sensitivities
+
+
+# ============================================================================
 # DCF MODEL
 # ============================================================================
 
-def _build_dcf(info, financials, sector=None):
+def _build_dcf(info, financials, sector=None, ticker=None, price=None):
     """
     DCF fair value estimate with full audit trail.
 
@@ -1778,10 +2007,45 @@ def _build_dcf(info, financials, sector=None):
         _gen_floor = CONFIG.wacc.wacc_general_floor if CONFIG.flags.wacc_governance else 0.06
         _sec_floor = SECTOR_WACC_FLOORS.get(_sector, _gen_floor) if CONFIG.flags.wacc_governance else _gen_floor
 
-        return {
-            'bear': round(base_fv * bear_mult, 2),
-            'base': round(base_fv, 2),
-            'bull': round(base_fv * bull_mult, 2),
+        # ── MONTE CARLO DCF (V12+) ──
+        mc_result = None
+        sensitivity_result = None
+
+        if CONFIG.flags.monte_carlo_dcf:
+            _ticker = ticker or ''
+            _price = price
+            seed = _ticker_seed(_ticker) if _ticker else 42
+
+            mc_result = _run_monte_carlo_dcf(
+                revenue=revenue, fcf_margin=fcf_margin,
+                discount_rate=discount_rate, terminal_growth=terminal_growth,
+                growth_rates=growth_rates, shares=shares, net_debt=net_debt,
+                sector=_sector, ticker_seed=seed,
+                cash_flow_source=cash_flow_source,
+                price=_price, n_simulations=CONFIG.monte_carlo.n_simulations,
+            )
+
+            sensitivity_result = _compute_sensitivity(
+                revenue=revenue, fcf_margin=fcf_margin,
+                discount_rate=discount_rate, terminal_growth=terminal_growth,
+                growth_rates=growth_rates, shares=shares, net_debt=net_debt,
+            )
+
+        # Replace bear/base/bull with MC percentiles if available
+        bear_fv = round(base_fv * bear_mult, 2)
+        base_fv_final = round(base_fv, 2)
+        bull_fv = round(base_fv * bull_mult, 2)
+
+        if mc_result is not None:
+            bear_fv = mc_result['iv_p5']
+            base_fv_final = mc_result['iv_p50']
+            bull_fv = mc_result['iv_p95']
+
+        result = {
+            'bear': bear_fv,
+            'base': base_fv_final,
+            'bull': bull_fv,
+            'base_deterministic': round(base_fv, 2),
             'cash_flow_source': cash_flow_source,
             'cash_flow_definition': 'unlevered_fcf',
             'forecast_years': forecast_years,
@@ -1840,6 +2104,13 @@ def _build_dcf(info, financials, sector=None):
                 'bridge_warnings': bridge_warnings,
             },
         }
+
+        if mc_result is not None:
+            result['monte_carlo'] = mc_result
+        if sensitivity_result is not None:
+            result['sensitivity'] = sensitivity_result
+
+        return result
     except Exception as e:
         _disabled['_dcf_reason'] = f'exception: {str(e)[:80]}'
         return _disabled

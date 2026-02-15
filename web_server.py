@@ -325,6 +325,7 @@ h += '</div>';
 
 // METRICS STRIP
 h += '<div class="metrics-row">';
+var _pBuy = S.p_buy; var _pSell = S.p_sell; var _confR = S.confidence_ratio;
 var ms = [
   ['Composite',comp!=null?f(comp,1):'N/A',pill(norm(comp))],
   ['Raw Score',cRaw!=null?fS(cRaw,1):'N/A','pill-muted'],
@@ -334,6 +335,8 @@ var ms = [
   ['Data Conf.',dc!=null?f(dc,0)+'%':'N/A',dc!=null?(dc>=70?'pill-pos':dc>=40?'pill-warn':'pill-neg'):'pill-muted'],
   ['Reliability',rel!=null?f(rel,2):'N/A','pill-muted'],
   ['Mode',mode,'pill-muted'],
+  ['P(Buy)',_pBuy!=null?f(_pBuy*100,1)+'%':'N/A',_pBuy!=null?(_pBuy>0.7?'pill-pos':_pBuy<0.3?'pill-neg':'pill-muted'):'pill-muted'],
+  ['Confidence',_confR!=null?f(_confR,3):'N/A','pill-muted'],
 ];
 for(var i=0;i<ms.length;i++){
   h+='<div class="metric"><div class="metric-label">'+ms[i][0]+'</div><div class="metric-value"><span class="pill '+ms[i][2]+'">'+ms[i][1]+'</span></div></div>';
@@ -1043,6 +1046,98 @@ if(DCF && DCF.base && DCF.assumptions && DCF.assumptions.discount_rate && DCF.as
   h += '<div style="font-size:10px;color:var(--t3);margin-top:4px;font-style:italic">Fair value at varying WACC and terminal growth. Highlighted cell = base assumption.</div>';
 } else {
   h += '<div class="empty">DCF assumptions needed for sensitivity analysis</div>';
+}
+h += '</div>';
+h += '</div>';
+
+// ════════════════════════════════════════════════════
+// V12+ PROBABILISTIC FRAMEWORK PANELS
+// ════════════════════════════════════════════════════
+
+// Monte Carlo Distribution
+h += '<div class="g2">';
+h += '<div class="card"><h2>Monte Carlo IV Distribution</h2>';
+if(DCF && DCF.monte_carlo){
+  var MC = DCF.monte_carlo;
+  h += '<div id="ch-mc-dist" class="chart-box" style="height:220px"></div>';
+  h += '<div style="margin-top:8px">';
+  h += '<table style="width:100%;font-size:10px;border-collapse:collapse;color:var(--t2)">';
+  h += '<thead><tr style="border-bottom:1px solid var(--border)">';
+  h += '<th style="text-align:left;padding:3px 6px;color:var(--t3)">Statistic</th>';
+  h += '<th style="text-align:right;padding:3px 6px;color:var(--t3)">Value</th></tr></thead><tbody>';
+  var mcRows = [['Mean','$'+f(MC.iv_mean,2)],['Median (P50)','$'+f(MC.iv_median,2)],['Std Dev','$'+f(MC.iv_std,2)],
+    ['P5 (Bear)','$'+f(MC.iv_p5,2)],['P25','$'+f(MC.iv_p25,2)],['P50','$'+f(MC.iv_p50,2)],
+    ['P75','$'+f(MC.iv_p75,2)],['P95 (Bull)','$'+f(MC.iv_p95,2)]];
+  for(var mi=0;mi<mcRows.length;mi++){
+    h += '<tr style="border-bottom:1px solid var(--border)"><td style="padding:3px 6px">'+mcRows[mi][0]+'</td><td style="text-align:right;padding:3px 6px" class="mono">'+mcRows[mi][1]+'</td></tr>';
+  }
+  h += '</tbody></table></div>';
+  if(MC.prob_undervalued!=null){
+    var puPct = f(MC.prob_undervalued*100,1);
+    var puPill = MC.prob_undervalued>0.6?'pill-pos':MC.prob_undervalued<0.4?'pill-neg':'pill-muted';
+    h += '<div style="margin-top:8px;font-size:11px;color:var(--t2)">P(Undervalued): <span class="pill '+puPill+'" style="font-size:10px">'+puPct+'%</span>';
+    if(MC.expected_mos!=null) h += ' &middot; E[MoS]: '+f(MC.expected_mos*100,1)+'%';
+    h += '</div>';
+  }
+  h += '<div style="margin-top:4px;font-size:9px;color:var(--t3)">N='+MC.n_simulations+' simulations &middot; '+f(MC.elapsed_ms,0)+'ms &middot; Seed='+MC.seed+'</div>';
+} else {
+  h += '<div class="empty">Monte Carlo DCF not available</div>';
+}
+h += '</div>';
+
+// Sensitivity Analysis
+h += '<div class="card"><h2>DCF Sensitivity Analysis</h2>';
+if(DCF && DCF.sensitivity){
+  var SEN = DCF.sensitivity;
+  h += '<table style="width:100%;font-size:11px;border-collapse:collapse;color:var(--t2)">';
+  h += '<thead><tr style="border-bottom:1px solid var(--border)">';
+  h += '<th style="text-align:left;padding:4px 8px;color:var(--t3)">Parameter</th>';
+  h += '<th style="text-align:right;padding:4px 8px;color:var(--t3)">\u2202IV / \u2202Param</th></tr></thead><tbody>';
+  var senRows = [['WACC (+100bps)',f(SEN.dIV_dWACC*0.01,2)],['Revenue Growth (+100bps)',f(SEN.dIV_dGrowth*0.01,2)],
+    ['FCF Margin (+100bps)',f(SEN.dIV_dMargin*0.01,2)],['Terminal Growth (+100bps)',f(SEN.dIV_dTerminalG*0.01,2)]];
+  for(var si=0;si<senRows.length;si++){
+    var _isMost = (si===0&&SEN.most_sensitive_to==='WACC')||(si===1&&SEN.most_sensitive_to==='Growth')||(si===2&&SEN.most_sensitive_to==='Margin')||(si===3&&SEN.most_sensitive_to==='TerminalG');
+    h += '<tr style="border-bottom:1px solid var(--border);'+(_isMost?'font-weight:600;color:var(--accent)':'')+'">';
+    h += '<td style="padding:4px 8px">'+senRows[si][0]+(_isMost?' \u2190 most sensitive':'')+'</td>';
+    h += '<td style="text-align:right;padding:4px 8px" class="mono">$'+senRows[si][1]+'</td></tr>';
+  }
+  h += '</tbody></table>';
+} else {
+  h += '<div class="empty">Sensitivity data not available</div>';
+}
+h += '</div>';
+h += '</div>';
+
+// Probabilistic Engine Confidence
+h += '<div class="g2">';
+h += '<div class="card"><h2>Signal Confidence</h2>';
+var _s2C = S.sigma2_C; var _sC = S.sigma_C; var _cConf = S.composite_confidence_adjusted;
+var _pPos = S.p_positive_signal; var _cLinear = S.composite_linear; var _cQuad = S.composite_quadratic;
+if(_s2C!=null){
+  h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
+  h += '<div><span style="font-weight:600;color:var(--t3)">\u03C3\u00B2(C):</span> <span class="mono">'+f(_s2C,4)+'</span> &middot; <span style="font-weight:600;color:var(--t3)">\u03C3(C):</span> <span class="mono">'+f(_sC,4)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">C (confidence-adj):</span> <span class="mono hl">'+fS(_cConf,2)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">P(Signal > 0):</span> <span class="mono">'+f(_pPos*100,1)+'%</span> &middot; <span style="font-weight:600;color:var(--t3)">Confidence Ratio:</span> <span class="mono">'+f(_confR,4)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Linear:</span> <span class="mono">'+fS(_cLinear,4)+'</span> &middot; <span style="font-weight:600;color:var(--t3)">Quadratic:</span> <span class="mono">'+fS(_cQuad,4)+'</span></div>';
+  h += '</div>';
+} else {
+  h += '<div class="empty">Probabilistic data not available</div>';
+}
+h += '</div>';
+
+// Kelly Sizing
+h += '<div class="card"><h2>Kelly Position Sizing</h2>';
+var _kFrac = S.kelly_fraction; var _kClip = S.kelly_clipped; var _kPos = S.kelly_position; var _kPct = S.kelly_pct;
+if(_kFrac!=null){
+  h += '<div style="font-size:11px;line-height:2.0;color:var(--t2)">';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly f* (raw):</span> <span class="mono">'+f(_kFrac,6)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly f* (clipped):</span> <span class="mono">'+f(_kClip,6)+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Kelly Position:</span> <span class="mono hl">$'+fN(_kPos)+'</span> (<span class="mono">'+f(_kPct,2)+'%</span>)</div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">Smooth Verdict:</span> <span class="mono">'+(S.verdict_smooth||'N/A')+'</span></div>';
+  h += '<div><span style="font-weight:600;color:var(--t3)">P(Buy):</span> <span class="mono">'+(_pBuy!=null?f(_pBuy*100,1)+'%':'N/A')+'</span> &middot; <span style="font-weight:600;color:var(--t3)">P(Sell):</span> <span class="mono">'+(_pSell!=null?f(_pSell*100,1)+'%':'N/A')+'</span> &middot; <span style="font-weight:600;color:var(--t3)">\u03C4:</span> <span class="mono">'+(S.tau_effective!=null?f(S.tau_effective,2):'N/A')+'</span></div>';
+  h += '</div>';
+} else {
+  h += '<div class="empty">Kelly data not available</div>';
 }
 h += '</div>';
 h += '</div>';
@@ -2811,6 +2906,31 @@ function initCharts(){
     if(price) opt.series.push({type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:c.acc,type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'Price $'+f(price,2),color:c.acc,fontSize:10,fontFamily:'JetBrains Mono,monospace'}}]},data:[]});
     opt.animationDuration = 400;
     ch.setOption(opt);
+    window.addEventListener('resize',function(){ch.resize()});
+  })();
+
+  // ── MC Distribution Box Plot ──
+  (function(){
+    var el = document.getElementById('ch-mc-dist');
+    if(!el||!DCF||!DCF.monte_carlo) return;
+    var MC = DCF.monte_carlo;
+    var ex=echarts.getInstanceByDom(el);if(ex)ex.dispose();
+    var ch = echarts.init(el);
+    var pcts = [MC.iv_p5, MC.iv_p25, MC.iv_p50, MC.iv_p75, MC.iv_p95];
+    ch.setOption({
+      tooltip:{trigger:'item',backgroundColor:c.bg1,borderColor:c.border,textStyle:{color:c.t1,fontSize:11}},
+      grid:{left:70,right:30,top:20,bottom:20},
+      xAxis:{type:'category',data:['IV Distribution'],axisLabel:{color:c.t2},axisLine:{lineStyle:{color:c.border}}},
+      yAxis:{type:'value',axisLabel:{formatter:function(v){return'$'+v},color:c.t2,fontSize:10},splitLine:{lineStyle:{color:c.border}},axisLine:{lineStyle:{color:c.border}}},
+      series:[
+        {type:'boxplot',data:[[pcts[0],pcts[1],pcts[2],pcts[3],pcts[4]]],itemStyle:{color:'rgba(99,163,248,0.3)',borderColor:c.acc,borderWidth:2},boxWidth:['40%','60%'],tooltip:{formatter:function(){return'P5: $'+f(pcts[0],2)+'<br>P25: $'+f(pcts[1],2)+'<br>P50: $'+f(pcts[2],2)+'<br>P75: $'+f(pcts[3],2)+'<br>P95: $'+f(pcts[4],2)}}},
+        {type:'scatter',data:[[0,MC.iv_mean]],symbolSize:10,itemStyle:{color:c.warn},tooltip:{formatter:'Mean: $'+f(MC.iv_mean,2)}}
+      ],
+      animationDuration:400
+    });
+    if(price){
+      ch.setOption({series:[{},{},{type:'line',markLine:{silent:true,symbol:'none',lineStyle:{color:c.neg,type:'dashed',width:1},data:[{yAxis:price,label:{formatter:'$'+f(price,2),color:c.neg,fontSize:9}}]},data:[]}]});
+    }
     window.addEventListener('resize',function(){ch.resize()});
   })();
 

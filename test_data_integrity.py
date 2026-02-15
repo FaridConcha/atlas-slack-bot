@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-ATLAS V12 — Data Integrity Regression Tests
+ATLAS V12+ — Data Integrity & Mathematical Redesign Tests
 
 Tests the None-safe data pipeline, fundamental integrity checks,
-DCF gating, and scoring behavior with missing data.
+DCF gating, scoring behavior with missing data, probabilistic
+engine framework (P1-P6), and Monte Carlo DCF simulations.
 
 Run: python3 -m pytest test_data_integrity.py -v
 """
@@ -13,17 +14,26 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from unittest.mock import MagicMock, patch
+import numpy as np
 from v8_data import (
     _safe_num, _safe_pct, _check_fundamental_integrity,
     _build_company_info, _build_financials, _build_dcf, _validate_financials,
     _sanitize_yield, _sanitize_payout,
     _stabilize_beta, _compute_wacc_governed,
+    _evaluate_dcf_single, _ticker_seed, _run_monte_carlo_dcf, _compute_sensitivity,
 )
 from v8_report import (
     _n, _compute_v8_scores, _compute_v9_owner_scores,
     _compute_fragility, _compute_dynamic_mos, _reconciliation_checks,
 )
 from valuation_config import CONFIG, SECTOR_BETA_BOUNDS, INDUSTRY_PRIORS, PRIOR_CAP
+from atlas_engine import (
+    _compute_engine_variance, compute_all_engine_variances,
+    build_covariance_matrix, compute_composite_variance,
+    compute_confidence_adjusted_composite, compute_composite,
+    compute_smooth_verdict, compute_kelly_position,
+    ENGINE_VARIANCE_BASE, INTERACTION_MATRIX, ENGINE_STRUCTURAL_CORRELATIONS,
+)
 
 
 # ============================================================================
@@ -579,11 +589,12 @@ class TestDCFAuditPanel:
         assert abs(a['equity_value'] - expected_equity) < 1  # rounding tolerance
 
     def test_equity_per_share_matches_base(self):
-        """equity_value / shares ≈ base IV."""
+        """equity_value / shares ≈ base_deterministic IV."""
         result = self._run_dcf()
         a = result['assumptions']
         expected_iv = a['equity_value'] / a['shares']
-        assert abs(result['base'] - round(expected_iv, 2)) < 0.01
+        base_det = result.get('base_deterministic', result['base'])
+        assert abs(base_det - round(expected_iv, 2)) < 0.01
 
     def test_terminal_value_pct_present(self):
         """Terminal value % must be reported."""
@@ -870,9 +881,10 @@ class TestRTXRegressionSnapshot:
         assert a['equity_value'] < a['enterprise_value']  # Net debt subtracted
         assert a['equity_value'] > 0
 
-        # IV per share (equity / shares)
+        # IV per share (equity / shares) — check deterministic base
         expected_iv = a['equity_value'] / a['shares']
-        assert abs(result['base'] - round(expected_iv, 2)) < 0.01
+        base_det = result.get('base_deterministic', result['base'])
+        assert abs(base_det - round(expected_iv, 2)) < 0.01
 
         # Bear < Base < Bull
         assert result['bear'] < result['base'] < result['bull']
@@ -1185,9 +1197,10 @@ class TestBridgeReconciliation:
         assert abs((a['pv_fcf_sum'] + a['terminal_value_pv']) - a['enterprise_value']) < 2
         # EV - net_debt = equity_value
         assert abs(a['equity_value'] - max(0, a['enterprise_value'] - a['net_debt_subtracted'])) < 2
-        # equity / shares ≈ base IV
+        # equity / shares ≈ base_deterministic IV
         expected_iv = a['equity_value'] / a['shares']
-        assert abs(result['base'] - round(expected_iv, 2)) < 0.01
+        base_det = result.get('base_deterministic', result['base'])
+        assert abs(base_det - round(expected_iv, 2)) < 0.01
 
 
 # ============================================================================
@@ -2468,6 +2481,522 @@ class TestRangeFirstThreshold:
         v8 = self._make_v8_data(terminal_pct=75.0)
         v9 = _compute_v9_owner_scores({}, v8)
         assert v9['iv_confidence'] == 'NORMAL'
+
+
+# ============================================================================
+# Phase 1 Tests: Probabilistic Engine Framework
+# ============================================================================
+
+class TestEngineVariance:
+    """P1: Engine variance estimates."""
+
+    def test_base_variance_all_engines(self):
+        """Every engine should have a base variance defined."""
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        for e in engines:
+            assert e in ENGINE_VARIANCE_BASE
+
+    def test_zero_score_gives_base_variance(self):
+        """Score=0, full DC → variance ≈ base × 1.0 (f_extremity=1, f_data=1)."""
+        dc_details = {'final_dc': 100}
+        v = _compute_engine_variance('trend', 0, dc_details, 200)
+        assert abs(v - ENGINE_VARIANCE_BASE['trend']) < 1e-6
+
+    def test_extreme_score_increases_variance(self):
+        """Score at edge of range should have higher variance than mid."""
+        dc_details = {'final_dc': 100}
+        v_mid = _compute_engine_variance('trend', 0, dc_details, 200)
+        v_ext = _compute_engine_variance('trend', 100, dc_details, 200)
+        assert v_ext > v_mid
+
+    def test_low_dc_increases_variance(self):
+        """Low data confidence should multiply variance."""
+        dc_high = {'final_dc': 100}
+        dc_low = {'final_dc': 30}
+        v_high = _compute_engine_variance('valuation', 0, dc_high, 80)
+        v_low = _compute_engine_variance('valuation', 0, dc_low, 80)
+        assert v_low > v_high
+
+    def test_missing_data_penalty(self):
+        """Missing data dependency should increase variance."""
+        dc_ok = {'final_dc': 100}
+        dc_missing = {'final_dc': 100, 'price_insufficient': True}
+        v_ok = _compute_engine_variance('trend', 0, dc_ok, 200)
+        v_miss = _compute_engine_variance('trend', 0, dc_missing, 200)
+        assert v_miss > v_ok
+
+    def test_compute_all_returns_dict(self):
+        """compute_all_engine_variances returns dict with 8 entries."""
+        scores = {e: 0 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                                  'macro', 'liquidity', 'global', 'correlation']}
+        dc_details = {'final_dc': 100}
+        variances = compute_all_engine_variances(scores, dc_details)
+        assert len(variances) == 8
+        assert all(v > 0 for v in variances.values())
+
+
+class TestCovarianceMatrix:
+    """P2: Engine covariance matrix."""
+
+    def test_correlation_matrix_symmetric(self):
+        """Structural correlations should be symmetric."""
+        diff = ENGINE_STRUCTURAL_CORRELATIONS - ENGINE_STRUCTURAL_CORRELATIONS.T
+        assert np.allclose(diff, 0, atol=1e-10)
+
+    def test_correlation_matrix_unit_diagonal(self):
+        """Diagonal should be all 1s."""
+        diag = np.diag(ENGINE_STRUCTURAL_CORRELATIONS)
+        assert np.allclose(diag, 1.0)
+
+    def test_build_covariance_psd(self):
+        """Covariance matrix should be positive semi-definite."""
+        variances = {e: 50 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                                      'macro', 'liquidity', 'global', 'correlation']}
+        cov, order = build_covariance_matrix(variances)
+        eigvals = np.linalg.eigvalsh(cov)
+        assert np.all(eigvals >= -1e-10)
+
+    def test_build_covariance_symmetric(self):
+        """Output covariance matrix should be symmetric."""
+        variances = {e: 50 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                                      'macro', 'liquidity', 'global', 'correlation']}
+        cov, order = build_covariance_matrix(variances)
+        assert np.allclose(cov, cov.T)
+
+    def test_composite_variance_positive(self):
+        """σ²_C should always be positive."""
+        variances = {e: 50 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                                      'macro', 'liquidity', 'global', 'correlation']}
+        cov, order = build_covariance_matrix(variances)
+        w = {e: 1/8 for e in order}
+        sigma2 = compute_composite_variance(w, cov, order)
+        assert sigma2 > 0
+
+    def test_higher_variance_engines_increase_composite(self):
+        """Higher individual variances should increase composite variance."""
+        engines = ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']
+        low_var = {e: 10 for e in engines}
+        high_var = {e: 200 for e in engines}
+        cov_low, order = build_covariance_matrix(low_var)
+        cov_high, _ = build_covariance_matrix(high_var)
+        w = {e: 1/8 for e in order}
+        s2_low = compute_composite_variance(w, cov_low, order)
+        s2_high = compute_composite_variance(w, cov_high, order)
+        assert s2_high > s2_low
+
+
+class TestConfidenceAdjusted:
+    """P3: Confidence-adjusted composite."""
+
+    def test_zero_signal_zero_output(self):
+        """Zero raw composite → zero confidence-adjusted."""
+        c_conf, p_pos, cr = compute_confidence_adjusted_composite(0, 1.0)
+        assert abs(c_conf) < 1e-6
+        assert abs(p_pos - 0.5) < 1e-6
+        assert abs(cr) < 1e-6
+
+    def test_positive_signal_positive_output(self):
+        """Positive raw composite → positive confidence-adjusted."""
+        c_conf, p_pos, cr = compute_confidence_adjusted_composite(30, 1.0)
+        assert c_conf > 0
+        assert p_pos > 0.5
+        assert cr > 0
+
+    def test_negative_signal_dampened_output(self):
+        """Negative raw composite → dampened magnitude (μ<0 × cr<0 = positive, dampened)."""
+        c_conf, p_pos, cr = compute_confidence_adjusted_composite(-30, 1.0)
+        # μ = -0.30, cr < 0 → μ × cr > 0: signal magnitude is dampened toward zero
+        assert abs(c_conf) < abs(-30)
+        assert p_pos < 0.5
+        assert cr < 0
+
+    def test_high_uncertainty_dampens_signal(self):
+        """Large σ²_C should dampen the confidence-adjusted composite."""
+        c_conf_low_var, _, _ = compute_confidence_adjusted_composite(30, 0.01)
+        c_conf_high_var, _, _ = compute_confidence_adjusted_composite(30, 100.0)
+        assert abs(c_conf_low_var) > abs(c_conf_high_var)
+
+    def test_p_positive_bounded(self):
+        """P(C>0) must be in [0, 1]."""
+        for raw in [-100, -50, 0, 50, 100]:
+            _, p_pos, _ = compute_confidence_adjusted_composite(raw, 1.0)
+            assert 0 <= p_pos <= 1
+
+
+class TestInteractionMatrix:
+    """P4: Quadratic interaction terms."""
+
+    def test_interaction_matrix_symmetric(self):
+        """Interaction matrix should be symmetric."""
+        assert np.allclose(INTERACTION_MATRIX, INTERACTION_MATRIX.T)
+
+    def test_interaction_matrix_sparse(self):
+        """Should have exactly 6 nonzero entries (3 pairs)."""
+        assert np.count_nonzero(INTERACTION_MATRIX) == 6
+
+    def test_composite_with_interactions(self):
+        """Composite with interactions should differ from without."""
+        e_norm = {f'{e}_norm': 0.5 for e in
+                  ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']}
+        w = {e: 1/8 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                               'macro', 'liquidity', 'global', 'correlation']}
+        c_no_int, _ = compute_composite(e_norm, w, interaction_matrix=None)
+        c_with_int, details = compute_composite(e_norm, w, interaction_matrix=INTERACTION_MATRIX)
+        assert c_no_int != c_with_int
+        assert 'composite_linear' in details
+        assert 'composite_quadratic' in details
+
+    def test_composite_backward_compat(self):
+        """Without interaction_matrix, should match original linear behavior."""
+        e_norm = {f'{e}_norm': 0.3 for e in
+                  ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']}
+        w = {e: 1/8 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                               'macro', 'liquidity', 'global', 'correlation']}
+        c_raw, _ = compute_composite(e_norm, w)
+        expected = 0.3 * 100  # all norms equal, weights sum to 1
+        assert abs(c_raw - expected) < 1e-6
+
+    def test_quadratic_contribution_bounded(self):
+        """Quadratic contribution should be small relative to linear."""
+        e_norm = {f'{e}_norm': 0.8 for e in
+                  ['trend', 'valuation', 'consensus', 'volatility',
+                   'macro', 'liquidity', 'global', 'correlation']}
+        w = {e: 1/8 for e in ['trend', 'valuation', 'consensus', 'volatility',
+                               'macro', 'liquidity', 'global', 'correlation']}
+        _, details = compute_composite(e_norm, w, INTERACTION_MATRIX)
+        assert abs(details['composite_quadratic']) < 2.0  # max ~0.9 pts
+
+
+class TestSmoothVerdict:
+    """P5: Smooth decision mapping."""
+
+    def test_strong_buy_signal(self):
+        """Strong positive signal should give high P(buy)."""
+        result = compute_smooth_verdict(50, 40, 1.0, 'Calm', 0.3)
+        assert result['p_buy'] > 0.70
+        assert result['verdict_smooth'] == "BUY / LONG BIAS"
+
+    def test_strong_sell_signal(self):
+        """Strong negative signal should give high P(sell)."""
+        result = compute_smooth_verdict(-50, -40, 1.0, 'Calm', 0.3)
+        assert result['p_sell'] > 0.70
+        assert result['verdict_smooth'] == "SELL / SHORT BIAS"
+
+    def test_neutral_signal(self):
+        """Zero signal should give P(buy) ≈ 0.50."""
+        result = compute_smooth_verdict(0, 0, 1.0, 'Calm', 0.3)
+        assert abs(result['p_buy'] - 0.5) < 0.05
+
+    def test_legacy_verdict_preserved(self):
+        """Legacy verdict should match old threshold logic exactly."""
+        result = compute_smooth_verdict(30, 15, 1.0, 'Calm', 0.3)
+        assert result['verdict_legacy'] == "BUY / LONG BIAS"
+
+        result = compute_smooth_verdict(-30, -15, 1.0, 'Calm', 0.3)
+        assert result['verdict_legacy'] == "SELL / SHORT BIAS"
+
+        result = compute_smooth_verdict(5, 3, 1.0, 'Calm', 0.05)
+        assert result['verdict_legacy'] == "CASH / STAND ASIDE"
+
+    def test_high_uncertainty_widens_tau(self):
+        """Higher σ_C should increase τ_effective."""
+        r_low = compute_smooth_verdict(30, 20, 0.1, 'Calm', 0.3)
+        r_high = compute_smooth_verdict(30, 20, 10.0, 'Calm', 0.3)
+        assert r_high['tau_effective'] > r_low['tau_effective']
+
+    def test_chop_regime_increases_tau(self):
+        """Chop regime should increase tau (more cautious)."""
+        r_calm = compute_smooth_verdict(30, 20, 1.0, 'Calm', 0.3)
+        r_chop = compute_smooth_verdict(30, 20, 1.0, 'Chop', 0.3)
+        assert r_chop['tau_effective'] > r_calm['tau_effective']
+
+
+class TestKellySizing:
+    """P6: Kelly-inspired position sizing."""
+
+    def test_zero_signal_zero_position(self):
+        """Zero signal → zero Kelly position."""
+        result = compute_kelly_position(0, 1.0, 0.8, 100, 250000, 'Calm')
+        assert result['kelly_position'] == 0
+
+    def test_positive_signal_positive_position(self):
+        """Positive signal → positive Kelly position."""
+        result = compute_kelly_position(30, 1.0, 0.8, 100, 250000, 'Calm')
+        assert result['kelly_position'] > 0
+
+    def test_regime_caps(self):
+        """Kelly fraction should respect regime-specific caps."""
+        result = compute_kelly_position(80, 0.01, 0.8, 100, 250000, 'Calm')
+        assert abs(result['kelly_clipped']) <= 0.15
+
+        result = compute_kelly_position(80, 0.01, 0.8, 100, 250000, 'Crisis Trend')
+        assert abs(result['kelly_clipped']) <= 0.05
+
+    def test_low_dc_reduces_position(self):
+        """Low data confidence should reduce Kelly position."""
+        r_high_dc = compute_kelly_position(30, 1.0, 0.8, 100, 250000, 'Calm')
+        r_low_dc = compute_kelly_position(30, 1.0, 0.8, 40, 250000, 'Calm')
+        assert r_low_dc['kelly_position'] < r_high_dc['kelly_position']
+
+    def test_kelly_pct_bounded(self):
+        """Kelly % should be reasonable."""
+        result = compute_kelly_position(100, 0.01, 1.0, 100, 250000, 'Calm')
+        assert result['kelly_pct'] <= 20  # max 15% cap * 100% gate * 100% DC
+
+
+# ============================================================================
+# Phase 2 Tests: Monte Carlo DCF
+# ============================================================================
+
+class TestDCFKernel:
+    """Extracted DCF kernel: _evaluate_dcf_single."""
+
+    def test_positive_iv(self):
+        """With positive inputs, IV should be positive."""
+        iv = _evaluate_dcf_single(
+            revenue=1e9, fcf_margin=0.10, discount_rate=0.10,
+            terminal_growth=0.03, growth_rates_array=[0.05]*5,
+            shares=1e8, net_debt=0
+        )
+        assert iv > 0
+
+    def test_higher_discount_lower_iv(self):
+        """Higher discount rate → lower IV."""
+        kwargs = dict(revenue=1e9, fcf_margin=0.10, growth_rates_array=[0.05]*5,
+                      shares=1e8, net_debt=0, terminal_growth=0.03)
+        iv_low = _evaluate_dcf_single(discount_rate=0.08, **kwargs)
+        iv_high = _evaluate_dcf_single(discount_rate=0.12, **kwargs)
+        assert iv_low > iv_high
+
+    def test_higher_margin_higher_iv(self):
+        """Higher FCF margin → higher IV."""
+        kwargs = dict(revenue=1e9, discount_rate=0.10, growth_rates_array=[0.05]*5,
+                      shares=1e8, net_debt=0, terminal_growth=0.03)
+        iv_low = _evaluate_dcf_single(fcf_margin=0.05, **kwargs)
+        iv_high = _evaluate_dcf_single(fcf_margin=0.15, **kwargs)
+        assert iv_high > iv_low
+
+    def test_net_debt_reduces_iv(self):
+        """Net debt should reduce IV."""
+        kwargs = dict(revenue=1e9, fcf_margin=0.10, discount_rate=0.10,
+                      growth_rates_array=[0.05]*5, shares=1e8, terminal_growth=0.03)
+        iv_no_debt = _evaluate_dcf_single(net_debt=0, **kwargs)
+        iv_debt = _evaluate_dcf_single(net_debt=5e8, **kwargs)
+        assert iv_no_debt > iv_debt
+
+    def test_zero_shares_zero_iv(self):
+        """Zero shares → zero IV (no division error)."""
+        iv = _evaluate_dcf_single(
+            revenue=1e9, fcf_margin=0.10, discount_rate=0.10,
+            terminal_growth=0.03, growth_rates_array=[0.05]*5,
+            shares=0, net_debt=0
+        )
+        assert iv == 0
+
+
+class TestTickerSeed:
+    """Deterministic ticker seed."""
+
+    def test_deterministic(self):
+        """Same ticker → same seed."""
+        assert _ticker_seed('AAPL') == _ticker_seed('AAPL')
+
+    def test_case_insensitive(self):
+        """Case-insensitive."""
+        assert _ticker_seed('aapl') == _ticker_seed('AAPL')
+
+    def test_different_tickers(self):
+        """Different tickers → different seeds (with high probability)."""
+        assert _ticker_seed('AAPL') != _ticker_seed('MSFT')
+
+
+class TestMonteCarloEngine:
+    """Monte Carlo DCF engine."""
+
+    def _run_mc(self, **overrides):
+        defaults = dict(
+            revenue=1e9, fcf_margin=0.10, discount_rate=0.10,
+            terminal_growth=0.03, growth_rates=[0.05]*5,
+            shares=1e8, net_debt=0, sector='Technology',
+            ticker_seed=42, price=50.0, n_simulations=500,
+        )
+        defaults.update(overrides)
+        return _run_monte_carlo_dcf(**defaults)
+
+    def test_returns_all_fields(self):
+        """MC result should contain all required keys."""
+        result = self._run_mc()
+        required = ['n_simulations', 'seed', 'elapsed_ms',
+                    'iv_mean', 'iv_median', 'iv_std',
+                    'iv_p5', 'iv_p10', 'iv_p25', 'iv_p50',
+                    'iv_p75', 'iv_p90', 'iv_p95',
+                    'prob_undervalued', 'expected_mos']
+        for k in required:
+            assert k in result, f"Missing key: {k}"
+
+    def test_percentile_ordering(self):
+        """Percentiles should be monotonically increasing."""
+        result = self._run_mc()
+        assert result['iv_p5'] <= result['iv_p25']
+        assert result['iv_p25'] <= result['iv_p50']
+        assert result['iv_p50'] <= result['iv_p75']
+        assert result['iv_p75'] <= result['iv_p95']
+
+    def test_mean_near_median(self):
+        """Mean and median should be in same ballpark (within 3x)."""
+        result = self._run_mc()
+        assert result['iv_mean'] > 0
+        assert result['iv_median'] > 0
+        ratio = result['iv_mean'] / result['iv_median']
+        assert 0.3 < ratio < 3.0
+
+    def test_deterministic_with_seed(self):
+        """Same seed → same results."""
+        r1 = self._run_mc(ticker_seed=123)
+        r2 = self._run_mc(ticker_seed=123)
+        assert r1['iv_mean'] == r2['iv_mean']
+        assert r1['iv_p50'] == r2['iv_p50']
+
+    def test_different_seeds_different_results(self):
+        """Different seeds → different results."""
+        r1 = self._run_mc(ticker_seed=123)
+        r2 = self._run_mc(ticker_seed=456)
+        assert r1['iv_mean'] != r2['iv_mean']
+
+    def test_prob_undervalued_with_price(self):
+        """P(undervalued) should be between 0 and 1."""
+        result = self._run_mc(price=50.0)
+        assert 0 <= result['prob_undervalued'] <= 1
+
+    def test_prob_undervalued_without_price(self):
+        """Without price, prob_undervalued should be None."""
+        result = self._run_mc(price=None)
+        assert result['prob_undervalued'] is None
+
+    def test_performance(self):
+        """N=1000 should complete in < 500ms."""
+        import time
+        t0 = time.perf_counter()
+        self._run_mc(n_simulations=1000)
+        elapsed = (time.perf_counter() - t0) * 1000
+        assert elapsed < 500, f"MC took {elapsed:.0f}ms (limit: 500ms)"
+
+    def test_higher_volatility_wider_spread(self):
+        """Higher growth sigma → wider distribution."""
+        r_tech = self._run_mc(sector='Technology')   # sigma=0.08
+        r_util = self._run_mc(sector='Utilities')    # sigma=0.03
+        spread_tech = r_tech['iv_p95'] - r_tech['iv_p5']
+        spread_util = r_util['iv_p95'] - r_util['iv_p5']
+        assert spread_tech > spread_util
+
+
+class TestSensitivity:
+    """DCF sensitivity analysis."""
+
+    def _run_sens(self):
+        return _compute_sensitivity(
+            revenue=1e9, fcf_margin=0.10, discount_rate=0.10,
+            terminal_growth=0.03, growth_rates=[0.05]*5,
+            shares=1e8, net_debt=0,
+        )
+
+    def test_returns_all_fields(self):
+        """Sensitivity should have all 5 fields."""
+        result = self._run_sens()
+        for k in ['dIV_dWACC', 'dIV_dGrowth', 'dIV_dMargin',
+                  'dIV_dTerminalG', 'most_sensitive_to']:
+            assert k in result
+
+    def test_wacc_sensitivity_negative(self):
+        """Higher WACC → lower IV: dIV/dWACC should be negative."""
+        result = self._run_sens()
+        assert result['dIV_dWACC'] < 0
+
+    def test_growth_sensitivity_positive(self):
+        """Higher growth → higher IV: dIV/dGrowth should be positive."""
+        result = self._run_sens()
+        assert result['dIV_dGrowth'] > 0
+
+    def test_margin_sensitivity_positive(self):
+        """Higher margin → higher IV: dIV/dMargin should be positive."""
+        result = self._run_sens()
+        assert result['dIV_dMargin'] > 0
+
+    def test_terminal_growth_sensitivity_positive(self):
+        """Higher terminal growth → higher IV: dIV/dTerminalG should be positive."""
+        result = self._run_sens()
+        assert result['dIV_dTerminalG'] > 0
+
+    def test_most_sensitive_is_valid(self):
+        """most_sensitive_to should be one of the 4 parameters."""
+        result = self._run_sens()
+        assert result['most_sensitive_to'] in ['WACC', 'Growth', 'Margin', 'TerminalG']
+
+
+class TestBuildDCFMonteCarlo:
+    """Integration: _build_dcf with Monte Carlo."""
+
+    def _make_info(self):
+        return {
+            'beta': 1.1,
+            'sector': 'Technology',
+        }
+
+    def _make_financials(self):
+        return {
+            'revenue_ttm': 50e9,
+            'shares_outstanding': 1e9,
+            'free_cash_flow': 5e9,
+            'net_income_ttm': 4e9,
+            'ebitda': 8e9,
+            'revenue_growth': 10.0,
+            'debt_equity': 0.5,
+            'net_debt': 10e9,
+        }
+
+    def test_mc_fields_present(self):
+        """DCF result should contain monte_carlo and sensitivity keys."""
+        result = _build_dcf(self._make_info(), self._make_financials(),
+                           sector='Technology', ticker='AAPL', price=150.0)
+        assert 'monte_carlo' in result
+        assert 'sensitivity' in result
+
+    def test_bear_base_bull_from_mc(self):
+        """bear/base/bull should come from MC percentiles."""
+        result = _build_dcf(self._make_info(), self._make_financials(),
+                           sector='Technology', ticker='AAPL', price=150.0)
+        mc = result['monte_carlo']
+        assert result['bear'] == mc['iv_p5']
+        assert result['base'] == mc['iv_p50']
+        assert result['bull'] == mc['iv_p95']
+
+    def test_deterministic_base_preserved(self):
+        """base_deterministic should be the old deterministic value."""
+        result = _build_dcf(self._make_info(), self._make_financials(),
+                           sector='Technology', ticker='AAPL', price=150.0)
+        assert 'base_deterministic' in result
+        assert result['base_deterministic'] > 0
+
+    def test_disabled_dcf_no_mc(self):
+        """DCF disabled (no revenue) → no MC fields."""
+        bad_fin = self._make_financials()
+        bad_fin['revenue_ttm'] = 0
+        result = _build_dcf(self._make_info(), bad_fin,
+                           sector='Technology', ticker='AAPL', price=150.0)
+        assert result.get('_dcf_disabled') is True
+        assert 'monte_carlo' not in result
+
+    def test_all_existing_fields_preserved(self):
+        """All existing DCF fields should still be present."""
+        result = _build_dcf(self._make_info(), self._make_financials(),
+                           sector='Technology', ticker='AAPL', price=150.0)
+        for key in ['bear', 'base', 'bull', 'cash_flow_source',
+                    'forecast_years', 'projections', 'assumptions']:
+            assert key in result, f"Missing existing field: {key}"
 
 
 if __name__ == '__main__':

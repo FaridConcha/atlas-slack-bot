@@ -1,9 +1,9 @@
 # ATLAS ENGINE — Technical White Paper
 
-**Version:** 3.1
+**Version:** 4.0
 **Date:** February 14, 2026
 **Classification:** Confidential — Internal & Investor Distribution
-**System Version:** ATLAS V12 (Production)
+**System Version:** ATLAS V12+ (Production — Mathematical Redesign)
 
 ---
 
@@ -26,7 +26,7 @@
 
 ### What Atlas Engine Is
 
-Atlas Engine is a capital allocation intelligence platform delivered through Slack messaging. It combines an 11-layer hierarchical quantitative engine with a Buffett-aligned owner intelligence layer, institutional-grade market data collection, and multi-turn conversational AI to generate structured equity research in under 60 seconds. Users invoke it with a single Slack mention — `@atlas AAPL` — and receive an 11-section research report that leads with an Owner Assessment (business quality, moat durability, intrinsic value, margin of safety) followed by quantitative fundamentals, valuation, technicals, sentiment, macro context, and a machine-generated trade verdict with execution parameters.
+Atlas Engine is a capital allocation intelligence platform delivered through Slack messaging. It combines an 11-layer hierarchical quantitative engine with a probabilistic framework (engine variances, covariance matrix, confidence-adjusted composites, quadratic interactions, smooth decision mapping, Kelly position sizing), a Buffett-aligned owner intelligence layer, Monte Carlo DCF valuation (N=1000 simulations with sensitivity analysis), institutional-grade market data collection, and multi-turn conversational AI to generate structured equity research in under 60 seconds. Users invoke it with a single Slack mention — `@atlas AAPL` — and receive an 11-section research report that leads with an Owner Assessment (business quality, moat durability, intrinsic value, margin of safety) followed by quantitative fundamentals, valuation, technicals, sentiment, macro context, and a machine-generated trade verdict with probabilistic confidence metrics and execution parameters.
 
 ### The Problem It Solves
 
@@ -44,17 +44,20 @@ Atlas Engine solves all three. It fetches seven categories of live market data i
 |--------|-------|
 | End-to-end latency | 15–20 seconds (analysis) + Slack posting |
 | Scoring engines | 8 quantitative + V12 owner intelligence layer |
+| V12+ probabilistic framework | Engine variances, covariance matrix, confidence-adjusted composite, quadratic interactions, smooth sigmoid decisions, Kelly sizing |
+| V12+ Monte Carlo DCF | N=1000 simulations, correlated draws, AR(1) growth paths, sensitivity analysis |
 | V12 owner scores | Business Quality, Moat Durability, Capital Allocation (0–5 each) |
 | V12 decision framework | PASS / WATCH / RESEARCH / BUY / HOLD / TRIM / EXIT |
 | Regime features | 10-dimensional vector |
 | Output sections | 11-section structured report (Owner Assessment + 10 engine sections) |
 | Data sources | yfinance (primary), FRED (optional), static CSV fallback |
 | AI Q&A model | Groq Llama 3.3 70B (Buffett-aligned philosophy prompt) |
-| Web dashboard | Institutional-grade HTML report with Owner's View (ECharts, sortable tables, formula derivation) |
+| Web dashboard | Institutional-grade HTML report with Owner's View, MC distribution panel, sensitivity table, confidence metrics (ECharts) |
 | Report persistence | SQLite (WAL mode) with JSON payloads |
 | Web API | FastAPI — `/r/{id}` (HTML), `/api/r/{id}.json` (JSON), `/health` |
 | Cold-start handling | Auto-detect Render spin-up, in-place Slack progress messages |
-| Codebase | 7,316 lines across 8 Python modules |
+| Codebase | 8,600+ lines across 8 Python modules |
+| Test suite | 238 tests (177 existing + 61 V12+ probabilistic/MC tests) |
 | Deployment | Render PaaS, Slack Socket Mode, FastAPI (uvicorn) |
 | Operating cost | $0 at current scale (free-tier APIs) |
 
@@ -110,9 +113,9 @@ Atlas Engine is organized into six distinct layers:
 
 **Persistence Layer** — `web_report.py` (128 lines). SQLite storage layer for full analysis payloads. Generates URL-safe report IDs (`{SYMBOL}-{thread_ts}-{uuid}`), recursively serializes numpy types via `_make_serializable()`, and stores JSON payloads in WAL-mode SQLite. Reports persist across restarts and are served by the web presentation layer.
 
-**Intelligence Layer** — `atlas_engine.py` (1,866 lines). The core analytical engine implementing 8 scoring engines, 10-feature regime classification, meta-learning weight optimization, risk governance, and trade execution parameter generation across 11 sequential layers.
+**Intelligence Layer** — `atlas_engine.py` (2,202 lines). The core analytical engine implementing 8 scoring engines, 10-feature regime classification, meta-learning weight optimization, risk governance, and trade execution parameter generation across 11 sequential layers. V12+ adds a probabilistic framework: engine variance estimates (σ²_i = σ²_base × f_data × f_extremity), 8×8 structural covariance matrix with PSD enforcement, confidence-adjusted composite (Gaussian CDF dampening), quadratic interaction terms (3 sparse nonlinear pairs), smooth sigmoid decision mapping (replacing hard ±20 thresholds), and Kelly-inspired position sizing (f* = μ/σ², regime-capped).
 
-**Report Layer** — `v8_report.py` (1,687 lines) and `v8_data.py` (1,160 lines). Computes V12 owner intelligence scores (business quality, moat durability, capital allocation, intrinsic value, margin of safety, conviction), fetches extended analytics (peer comparison, DCF valuation, institutional ownership, technical indicators, news sentiment), and formats the 11-section output report (Owner Assessment + 10 engine sections).
+**Report Layer** — `v8_report.py` (2,230 lines) and `v8_data.py` (2,137 lines). Computes V12 owner intelligence scores (business quality, moat durability, capital allocation, intrinsic value, margin of safety, conviction), fetches extended analytics (peer comparison, DCF valuation, institutional ownership, technical indicators, news sentiment), and formats the 11-section output report (Owner Assessment + 10 engine sections). V12+ adds Monte Carlo DCF (N=1000 fully vectorized numpy simulations with correlated draws via Cholesky decomposition, AR(1) growth paths, sector-specific volatilities), sensitivity analysis (∂IV/∂WACC, ∂IV/∂Growth, ∂IV/∂Margin, ∂IV/∂TerminalG), P(Undervalued), and expected margin of safety from the IV distribution.
 
 **Conversational Layer** — `gemini_qa.py` (419 lines). Wraps the Groq API (Llama 3.3 70B) with a Buffett-aligned system prompt for multi-turn Q&A. Enforces reasoning order: business durability → moat → capital allocation → intrinsic value → risk → timing. Builds structured context with V12 owner assessment as primary section and engine verdict as secondary overlay. Manages conversation history (last 6 exchanges).
 
@@ -1084,17 +1087,21 @@ The Groq Llama 3.3 70B model has an 8,192-token context window. With system prom
 
 ### 6.4 Model Reasoning Limits
 
-The core engine uses deterministic rules, not learned reasoning. Specific limitations:
+The core engine uses deterministic rules augmented by a probabilistic framework (V12+). Specific limitations:
 - **Affinity matrix is hand-tuned.** The 80-coefficient matrix mapping regime features to engine weights is based on domain intuition, not empirical optimization. Suboptimal weighting is likely.
 - **Valuation timing is intentionally weak.** The valuation engine is capped at [-40, +40] because PE/EV timing is notoriously unreliable. This means the engine will underweight valuation even when it is highly predictive.
 - **No event-driven reasoning.** The engine cannot factor in specific catalysts (FDA approvals, earnings dates, geopolitical events) unless they are reflected in price or volatility data.
 - **Linear regime classification.** The regime classifier uses threshold-based rules, not clustering or neural classification. It may misclassify transitional regimes.
+
+> **Partially addressed (V12+):** The probabilistic framework now adds engine variance estimates, a covariance matrix, confidence-adjusted composites, quadratic interaction terms (capturing 3 key nonlinear regime effects), smooth sigmoid decision mapping, and Kelly-inspired position sizing. The composite score is no longer purely linear, and hard ±20 thresholds are supplemented by smooth probability-based verdicts. However, the probabilistic outputs are informational in this release — the legacy verdict and position sizing remain primary for backward compatibility.
 
 ### 6.5 Numerical Precision Issues
 
 - **DCF model assumptions are approximate.** The V8 DCF uses simplified growth rate and discount rate estimates derived from fundamental data. It does not model segment-level revenue, capex cycles, or working capital dynamics.
 - **Correlation calculations use 20-day rolling windows.** Short lookback periods amplify noise. A spurious 2-week correlation spike can trigger regime changes.
 - **Position sizing assumes uniform risk.** The position sizer uses a fixed capital allocation framework. It does not account for portfolio-level correlation, sector concentration, or liquidity-adjusted sizing.
+
+> **Partially addressed (V12+):** The Monte Carlo DCF now runs N=1000 simulations with correlated parameter draws (growth, margin, WACC, terminal growth), AR(1) growth path persistence, sector-specific volatilities, and proxy cash flow uncertainty multipliers. Bear/Base/Bull scenarios are replaced by P5/P50/P95 percentiles of the IV distribution. Sensitivity analysis identifies the most impactful parameter. Kelly-inspired position sizing uses information-theoretic principles (f* = μ/σ²) with regime-specific caps. However, the covariance structure uses pre-defined structural correlations rather than empirically estimated correlations.
 
 ### 6.6 Dependency Bottlenecks
 
@@ -1935,6 +1942,25 @@ type `@atlas {REQUESTED_TICKER}` in any channel.
     "tactical_risk": 0.35,
     "systemic_risk": 0.22,
     "drivers": ["Valuation premium", "Moderate VIX elevation"]
+  },
+
+  "probabilistic": {
+    "engine_variances": {"trend": 112.5, "valuation": 28.1, "...": "..."},
+    "sigma2_C": 0.8234,
+    "sigma_C": 0.9074,
+    "composite_confidence_adjusted": 28.6,
+    "p_positive_signal": 0.8412,
+    "confidence_ratio": 0.6824,
+    "composite_linear": 42.3000,
+    "composite_quadratic": -0.1200,
+    "p_buy": 0.7856,
+    "p_sell": 0.2144,
+    "verdict_smooth": "BUY / LONG BIAS",
+    "tau_effective": 16.45,
+    "kelly_fraction": 0.051342,
+    "kelly_clipped": 0.051342,
+    "kelly_position": 9640,
+    "kelly_pct": 3.86
   }
 }
 ```
@@ -2013,9 +2039,28 @@ type `@atlas {REQUESTED_TICKER}` in any channel.
   ],
 
   "dcf": {
-    "bear": {"price": 162.00, "growth": 4.0, "discount": 12.0},
-    "base": {"price": 195.00, "growth": 8.0, "discount": 10.0},
-    "bull": {"price": 235.00, "growth": 12.0, "discount": 8.5}
+    "bear": 162.00,
+    "base": 195.00,
+    "bull": 235.00,
+    "base_deterministic": 195.00,
+    "monte_carlo": {
+      "n_simulations": 1000,
+      "iv_mean": 198.42,
+      "iv_median": 195.00,
+      "iv_std": 32.15,
+      "iv_p5": 162.00,
+      "iv_p50": 195.00,
+      "iv_p95": 235.00,
+      "prob_undervalued": 0.6234,
+      "expected_mos": 0.0842
+    },
+    "sensitivity": {
+      "dIV_dWACC": -1842.50,
+      "dIV_dGrowth": 425.30,
+      "dIV_dMargin": 1205.80,
+      "dIV_dTerminalG": 2150.40,
+      "most_sensitive_to": "TerminalG"
+    }
   },
 
   "institutional": {

@@ -135,7 +135,11 @@ Press Ctrl+C to stop.
 | File | Purpose |
 |------|---------|
 | `bot.py` | Slack event handler — the main entry point |
-| `atlas_engine.py` | The ATLAS trading engine (8 engines + regime + sizing) |
+| `atlas_engine.py` | The ATLAS V12+ trading engine (8 engines + regime + probabilistic framework + sizing) |
+| `v8_data.py` | Full-spectrum data fetcher, DCF valuation with Monte Carlo simulations |
+| `valuation_config.py` | Single source of truth for all institutional valuation constants |
+| `web_server.py` | FastAPI web dashboard with interactive charts and MC panels |
+| `test_data_integrity.py` | Regression test suite (238 tests) |
 | `message_formatter.py` | Splits long reports into Slack-friendly chunks |
 | `data/ko_live/` | KO market data (CSV + JSON files) |
 | `.env` | Your Slack tokens (not committed to git) |

@@ -647,7 +647,8 @@ These are surfaced in Message 3 as warnings to the user.
 | V9 | Owner intelligence layer: BQ, Moat, CA, conviction, MOS, decision hierarchy |
 | V10 | Integrated web dashboard, full report platform |
 | V11 | Institutional governance: beta stabilization, WACC clamps, dynamic MOS, fragility scoring, terminal governance, narrative gating, InstitutionalDCF scaffold |
-| V12 (current) | Data resilience: null propagation, canonical suppression mode, TQ reconciliation, fast_info fallback, financial statement fallbacks |
+| V12 | Data resilience: null propagation, canonical suppression mode, TQ reconciliation, fast_info fallback, financial statement fallbacks |
+| V12+ (current) | Mathematical redesign: probabilistic engine framework (engine variances, covariance matrix, confidence-adjusted composite, quadratic interactions, smooth decision mapping, Kelly sizing), Monte Carlo DCF (N=1000 vectorized simulations, sensitivity analysis, P5/P50/P95 percentile scenarios), web dashboard panels for all new outputs |
 
 ---
 

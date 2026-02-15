@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-ATLAS V12 — Valuation Governance Configuration
+ATLAS V12+ — Valuation Governance Configuration
 
 Single source of truth for all institutional valuation constants.
 Every governance module imports from here. No magic numbers elsewhere.
+V12+: Added MonteCarloConfig, SECTOR_GROWTH_SIGMA, MC_CORRELATION_MATRIX.
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 
 # ============================================================================
@@ -101,6 +104,7 @@ class FeatureFlags:
     canonical_suppression: bool = True       # Stage 5.1: ReportMode-based output suppression
     tq_canonical: bool = True                # Stage 5.1: Single canonical TQ formula
     use_institutional_dcf: bool = False      # Part II: NOT YET IMPLEMENTED
+    monte_carlo_dcf: bool = True              # V12+: Monte Carlo DCF simulations
 
 
 # ============================================================================
@@ -289,6 +293,53 @@ PRIOR_CAP = 0.7
 
 
 # ============================================================================
+# MONTE CARLO DCF CONFIGURATION
+# ============================================================================
+
+@dataclass(frozen=True)
+class MonteCarloConfig:
+    """Configuration for Monte Carlo DCF simulations."""
+    n_simulations: int = 1000
+    wacc_sigma: float = 0.01              # 100 bps std dev
+    terminal_growth_sigma: float = 0.005
+    terminal_growth_floor: float = 0.01
+    terminal_growth_cap: float = 0.04
+    margin_cv: float = 0.15              # coefficient of variation
+    margin_sigma_floor: float = 0.02
+    growth_floor: float = -0.10
+    growth_ar1_rho: float = 0.5          # year-to-year persistence
+    proxy_sigma_multiplier: float = 1.5  # wider uncertainty for NI/EBITDA proxies
+    bear_percentile: float = 5.0
+    base_percentile: float = 50.0
+    bull_percentile: float = 95.0
+    monte_carlo_dcf: bool = True         # feature flag
+
+
+# Sector-specific revenue growth volatility
+SECTOR_GROWTH_SIGMA: Dict[str, float] = {
+    'Technology':           0.08,
+    'Consumer Cyclical':    0.07,
+    'Energy':               0.09,
+    'Basic Materials':      0.07,
+    'Financial Services':   0.06,
+    'Industrials':          0.05,
+    'Healthcare':           0.06,
+    'Consumer Defensive':   0.03,
+    'Utilities':            0.03,
+    'Real Estate':          0.04,
+    'Communication Services': 0.06,
+}
+
+# 4×4 correlation matrix for MC draws: [growth, margin, wacc, terminal_g]
+MC_CORRELATION_MATRIX = np.array([
+    [ 1.00,  0.30,  0.15,  0.00],   # growth
+    [ 0.30,  1.00,  0.00,  0.00],   # margin
+    [ 0.15,  0.00,  1.00,  0.10],   # wacc
+    [ 0.00,  0.00,  0.10,  1.00],   # terminal_g
+])
+
+
+# ============================================================================
 # MASTER CONFIG SINGLETON
 # ============================================================================
 
@@ -300,6 +351,7 @@ class ValuationConfig:
     terminal: TerminalGovernance = field(default_factory=TerminalGovernance)
     mos: MOSConfig = field(default_factory=MOSConfig)
     fragility: FragilityConfig = field(default_factory=FragilityConfig)
+    monte_carlo: MonteCarloConfig = field(default_factory=MonteCarloConfig)
 
     def __repr__(self):
         return (
@@ -308,7 +360,8 @@ class ValuationConfig:
             f"  wacc={self.wacc},\n"
             f"  terminal={self.terminal},\n"
             f"  mos={self.mos},\n"
-            f"  fragility={self.fragility}\n"
+            f"  fragility={self.fragility},\n"
+            f"  monte_carlo={self.monte_carlo}\n"
             f")"
         )
 

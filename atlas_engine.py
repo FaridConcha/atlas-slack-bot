@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ATLAS v2 - 11-Layer Hierarchical Trading Engine
-Importable Module with Regime-Aware Execution
+ATLAS V12+ — 11-Layer Hierarchical Trading Engine
+Importable Module with Regime-Aware Execution + Probabilistic Framework
 
 Layers:
   0: Data Integrity Check
@@ -24,6 +24,7 @@ Usage:
 import json
 import csv
 import numpy as np
+from math import erf
 from datetime import datetime
 from pathlib import Path
 
@@ -49,6 +50,71 @@ ATLAS_CONFIG = {
     'meta_learning_ceiling': 0.30,
     'risk_governor_tau': 0.40,
     'risk_governor_s': 0.15,
+    'decision': {
+        'tau_base': 15.0,
+        'uncertainty_sensitivity': 0.5,
+        'regime_tau_multiplier': {
+            'Calm': 1.0, 'Chop': 1.5, 'Tightening Shock': 1.3,
+            'Crisis Trend': 0.8, 'Credit Stress': 1.4,
+        },
+    },
+}
+
+# ============================================================================
+# SECTION 1b: PROBABILISTIC ENGINE CONSTANTS
+# ============================================================================
+
+ENGINE_VARIANCE_BASE = {
+    'trend': 100, 'valuation': 25, 'consensus': 50, 'volatility': 40,
+    'macro': 40, 'liquidity': 50, 'global': 50, 'correlation': 50,
+}
+
+VARIANCE_DATA_PENALTIES = {
+    'price_insufficient': 1.8,
+    'macro_insufficient': 1.5,
+    'vol_insufficient': 1.4,
+    'fundamentals_missing': 1.3,
+    'consensus_missing': 1.2,
+    'global_overnight_missing': 1.2,
+}
+
+ENGINE_DATA_DEPS = {
+    'trend': ['price_insufficient'],
+    'valuation': ['fundamentals_missing'],
+    'consensus': ['consensus_missing'],
+    'volatility': ['vol_insufficient', 'price_insufficient'],
+    'macro': ['macro_insufficient'],
+    'liquidity': ['price_insufficient'],
+    'global': ['global_overnight_missing'],
+    'correlation': ['price_insufficient', 'vol_insufficient', 'macro_insufficient'],
+}
+
+# 8×8 structural correlation matrix (engine order: trend, valuation, consensus,
+# volatility, macro, liquidity, global, correlation)
+ENGINE_STRUCTURAL_CORRELATIONS = np.array([
+    [ 1.00,  0.10,  0.15, -0.30,  0.10,  0.35,  0.15,  0.10],  # trend
+    [ 0.10,  1.00,  0.20,  0.05,  0.30,  0.10,  0.05,  0.05],  # valuation
+    [ 0.15,  0.20,  1.00,  0.05,  0.10,  0.10,  0.10, -0.20],  # consensus (herding)
+    [-0.30,  0.05,  0.05,  1.00,  0.15,  0.10,  0.20,  0.40],  # volatility
+    [ 0.10,  0.30,  0.10,  0.15,  1.00,  0.15,  0.20,  0.15],  # macro
+    [ 0.35,  0.10,  0.10,  0.10,  0.15,  1.00,  0.15,  0.10],  # liquidity
+    [ 0.15,  0.05,  0.10,  0.20,  0.20,  0.15,  1.00,  0.15],  # global
+    [ 0.10,  0.05, -0.20,  0.40,  0.15,  0.10,  0.15,  1.00],  # correlation
+])
+
+# Sparse interaction matrix: only 3 nonzero pairs
+INTERACTION_MATRIX = np.zeros((8, 8))
+INTERACTION_MATRIX[0, 3] = -0.003  # trend × volatility
+INTERACTION_MATRIX[3, 0] = -0.003
+INTERACTION_MATRIX[1, 4] = -0.002  # valuation × macro
+INTERACTION_MATRIX[4, 1] = -0.002
+INTERACTION_MATRIX[2, 7] = -0.002  # consensus × correlation
+INTERACTION_MATRIX[7, 2] = -0.002
+
+# Kelly regime caps
+KELLY_REGIME_CAPS = {
+    'Calm': 0.15, 'Chop': 0.08, 'Tightening Shock': 0.10,
+    'Crisis Trend': 0.05, 'Credit Stress': 0.06,
 }
 
 # ============================================================================
@@ -725,6 +791,183 @@ def engine_correlation(price_data, vol_data, macro_data):
     return risk_score, details
 
 # ============================================================================
+# SECTION 4b: PROBABILISTIC ENGINE FRAMEWORK (P1–P6)
+# ============================================================================
+
+def _compute_engine_variance(engine_name, score, dc_details, score_range):
+    """
+    Compute variance estimate for a single engine.
+    σ²_i = σ²_base × f_data × f_extremity
+    """
+    sigma2_base = ENGINE_VARIANCE_BASE.get(engine_name, 50)
+
+    # f_data: product of penalties for missing data dependencies
+    f_data = 1.0
+    for dep in ENGINE_DATA_DEPS.get(engine_name, []):
+        if dc_details.get(dep, False):
+            f_data *= VARIANCE_DATA_PENALTIES.get(dep, 1.0)
+
+    # Additional penalty if data confidence is low
+    dc = dc_details.get('final_dc', 100)
+    if dc < 70:
+        f_data *= (100.0 / max(dc, 10))
+
+    # f_extremity: higher variance at score extremes
+    mid = 0.0
+    half_range = score_range / 2.0 if score_range > 0 else 1.0
+    f_extremity = 1.0 + 0.5 * ((score - mid) / half_range) ** 2
+
+    return sigma2_base * f_data * f_extremity
+
+
+def compute_all_engine_variances(scores_dict, dc_details):
+    """Compute variance estimates for all 8 engines."""
+    score_ranges = {
+        'trend': 200, 'valuation': 80, 'consensus': 100, 'volatility': 80,
+        'macro': 80, 'liquidity': 100, 'global': 100, 'correlation': 100,
+    }
+    variances = {}
+    for engine_name, score in scores_dict.items():
+        sr = score_ranges.get(engine_name, 100)
+        variances[engine_name] = _compute_engine_variance(engine_name, score, dc_details, sr)
+    return variances
+
+
+def build_covariance_matrix(engine_variances):
+    """
+    Build engine covariance matrix Σ = ρ ⊙ (σσᵀ), PSD-corrected.
+    Returns (Σ, engine_order).
+    """
+    engine_order = ['trend', 'valuation', 'consensus', 'volatility',
+                    'macro', 'liquidity', 'global', 'correlation']
+    n = len(engine_order)
+
+    sigmas = np.array([np.sqrt(engine_variances.get(e, 50)) for e in engine_order])
+
+    # Σ[i,j] = ρ[i,j] × σ_i × σ_j
+    sigma_outer = np.outer(sigmas, sigmas)
+    cov = ENGINE_STRUCTURAL_CORRELATIONS * sigma_outer
+
+    # PSD enforcement: eigenvalue floor at 1e-6
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    eigvals = np.maximum(eigvals, 1e-6)
+    cov = eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+    # Symmetry enforcement
+    cov = (cov + cov.T) / 2.0
+
+    return cov, engine_order
+
+
+def compute_composite_variance(w_dynamic, cov_matrix, engine_order):
+    """
+    Compute composite score variance: σ²_C = wᵀΣw.
+    """
+    w = np.array([w_dynamic.get(e, 1/8) for e in engine_order])
+    sigma2_C = float(w @ cov_matrix @ w)
+    return max(sigma2_C, 1e-6)  # floor for numerical stability
+
+
+def compute_confidence_adjusted_composite(c_raw, sigma2_C):
+    """
+    Confidence-adjusted composite: C_conf = μ × confidence_ratio × 100.
+    Uses Gaussian CDF via math.erf.
+    """
+    mu = c_raw / 100.0
+    sigma_C = np.sqrt(sigma2_C)
+
+    if sigma_C < 1e-10:
+        p_positive = 1.0 if mu > 0 else (0.0 if mu < 0 else 0.5)
+    else:
+        # Φ(x) = 0.5 × (1 + erf(x / √2))
+        p_positive = 0.5 * (1.0 + erf(mu / (sigma_C * np.sqrt(2))))
+
+    confidence_ratio = 2.0 * p_positive - 1.0
+    c_conf = mu * confidence_ratio * 100.0
+
+    return c_conf, p_positive, confidence_ratio
+
+
+def compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq):
+    """
+    Smooth decision mapping with sigmoid probability.
+    Returns both smooth verdict and legacy verdict for backward compatibility.
+    """
+    cfg = ATLAS_CONFIG['decision']
+    tau_base = cfg['tau_base']
+    k = cfg['uncertainty_sensitivity']
+    regime_mult = cfg['regime_tau_multiplier'].get(regime_label, 1.0)
+
+    tau_effective = max(tau_base * regime_mult * (1.0 + k * sigma_C), 1.0)
+
+    # Sigmoid: P_buy = 1 / (1 + exp(-C_adjusted / τ))
+    x = c_adjusted / tau_effective
+    x = np.clip(x, -20, 20)  # prevent overflow
+    p_buy = 1.0 / (1.0 + np.exp(-x))
+    p_sell = 1.0 - p_buy
+
+    # Smooth verdict
+    if p_buy > 0.70:
+        verdict_smooth = "BUY / LONG BIAS"
+    elif p_sell > 0.70:
+        verdict_smooth = "SELL / SHORT BIAS"
+    elif p_buy > 0.55:
+        verdict_smooth = "LONG BIAS (Moderate)"
+    elif p_sell > 0.55:
+        verdict_smooth = "SHORT BIAS (Moderate)"
+    else:
+        verdict_smooth = "NEUTRAL / FLAT"
+
+    # Legacy verdict (exact old threshold logic preserved)
+    if tq < 0.12:
+        verdict_legacy = "CASH / STAND ASIDE"
+    elif c_raw > 20 and c_adjusted > 10:
+        verdict_legacy = "BUY / LONG BIAS"
+    elif c_raw < -20 and c_adjusted < -10:
+        verdict_legacy = "SELL / SHORT BIAS"
+    elif c_raw > 0:
+        verdict_legacy = "LONG BIAS (Moderate)"
+    elif c_raw < 0:
+        verdict_legacy = "SHORT BIAS (Moderate)"
+    else:
+        verdict_legacy = "NEUTRAL / FLAT"
+
+    return {
+        'verdict_smooth': verdict_smooth,
+        'verdict_legacy': verdict_legacy,
+        'p_buy': float(p_buy),
+        'p_sell': float(p_sell),
+        'tau_effective': float(tau_effective),
+    }
+
+
+def compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label):
+    """
+    Kelly-inspired position sizing: f* = μ_C / σ²_C, clipped by regime.
+    Informational only — does not override existing position sizing.
+    """
+    mu = c_raw / 100.0
+
+    if sigma2_C < 1e-10:
+        kelly_raw = 0.0
+    else:
+        kelly_raw = mu / sigma2_C
+
+    f_max = KELLY_REGIME_CAPS.get(regime_label, 0.10)
+    kelly_clipped = float(np.clip(kelly_raw, -f_max, f_max))
+
+    dc_factor = min(1.0, dc / 100.0)
+    position = capital * abs(kelly_clipped) * g * dc_factor
+
+    return {
+        'kelly_fraction': float(kelly_raw),
+        'kelly_clipped': kelly_clipped,
+        'kelly_position': float(position),
+        'kelly_pct': float(position / capital * 100) if capital > 0 else 0.0,
+    }
+
+
+# ============================================================================
 # SECTION 5: LAYER 0 — DATA INTEGRITY
 # ============================================================================
 
@@ -1148,21 +1391,24 @@ def compute_dynamic_weights(w0, regime_vector):
 # SECTION 10: LAYER 5 — COMPOSITE SCORE
 # ============================================================================
 
-def compute_composite(e_norm, w_dynamic):
+def compute_composite(e_norm, w_dynamic, interaction_matrix=None):
     """
     Compute composite score from normalized engine scores and dynamic weights.
-    C_raw = 100 * sum(w_i * e_norm_i)
+    C_raw = 100 * (wᵀe + eᵀAe)  when interaction_matrix is provided.
+    Default None preserves exact old behavior.
     """
     engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
 
-    c_raw = 0.0
-    for engine in engines:
-        norm_key = f'{engine}_norm'
-        e_val = e_norm.get(norm_key, 0.0)
-        w_val = w_dynamic.get(engine, 1/8)
-        c_raw += w_val * e_val
+    e_vec = np.array([e_norm.get(f'{eng}_norm', 0.0) for eng in engines])
+    w_vec = np.array([w_dynamic.get(eng, 1/8) for eng in engines])
 
-    c_raw = c_raw * 100
+    linear_term = float(np.dot(w_vec, e_vec))
+    quadratic_term = 0.0
+
+    if interaction_matrix is not None:
+        quadratic_term = float(e_vec @ interaction_matrix @ e_vec)
+
+    c_raw = (linear_term + quadratic_term) * 100
 
     if c_raw > 0:
         direction = "LONG"
@@ -1176,7 +1422,9 @@ def compute_composite(e_norm, w_dynamic):
     details = {
         'direction': direction,
         'strength': strength,
-        'raw_value': c_raw
+        'raw_value': c_raw,
+        'composite_linear': round(linear_term * 100, 4),
+        'composite_quadratic': round(quadratic_term * 100, 4),
     }
 
     return c_raw, details
@@ -1438,7 +1686,7 @@ def generate_pyramid_report(symbol, all_layers_data):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     report.append("=" * 88)
-    report.append(f"ATLAS v2 — {symbol} | ${price:.2f} | {timestamp}")
+    report.append(f"ATLAS V12+ — {symbol} | ${price:.2f} | {timestamp}")
     report.append("=" * 88)
     report.append("")
 
@@ -1571,6 +1819,29 @@ def generate_pyramid_report(symbol, all_layers_data):
     report.append(f"Position Size:    ${all_layers_data.get('size_final', 0):,.0f}")
     report.append("")
 
+    # PROBABILISTIC FRAMEWORK
+    report.append("── PROBABILISTIC ───────────────────────────────────────────────────────────────────")
+    report.append(f"Composite Variance (σ²_C): {all_layers_data.get('sigma2_C', 0):.4f}")
+    report.append(f"Composite Std Dev (σ_C):   {all_layers_data.get('sigma_C', 0):.4f}")
+    report.append(f"Confidence-Adj Composite:  {all_layers_data.get('composite_confidence_adjusted', 0):+.2f}")
+    report.append(f"P(Signal > 0):             {all_layers_data.get('p_positive_signal', 0.5):.1%}")
+    report.append(f"Confidence Ratio:          {all_layers_data.get('confidence_ratio', 0):.4f}")
+    report.append(f"Linear Component:          {all_layers_data.get('composite_linear', 0):+.4f}")
+    report.append(f"Quadratic Component:       {all_layers_data.get('composite_quadratic', 0):+.4f}")
+    report.append("")
+
+    # SMOOTH VERDICT
+    report.append(f"P(Buy):    {all_layers_data.get('p_buy', 0.5):.1%}  |  P(Sell): {all_layers_data.get('p_sell', 0.5):.1%}")
+    report.append(f"Smooth Verdict: {all_layers_data.get('verdict_smooth', 'N/A')}")
+    report.append(f"Tau Effective:  {all_layers_data.get('tau_effective', 15):.2f}")
+    report.append("")
+
+    # KELLY SIZING
+    report.append(f"Kelly Fraction (raw):    {all_layers_data.get('kelly_fraction', 0):+.6f}")
+    report.append(f"Kelly Fraction (clipped):{all_layers_data.get('kelly_clipped', 0):+.6f}")
+    report.append(f"Kelly Position:          ${all_layers_data.get('kelly_position', 0):,.0f} ({all_layers_data.get('kelly_pct', 0):.2f}%)")
+    report.append("")
+
     # SELF-AUDIT
     report.append("── SELF-AUDIT ──────────────────────────────────────────────────────────────────────")
 
@@ -1693,6 +1964,9 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 0: Data Integrity
     dc, dc_details = compute_data_confidence(data)
 
+    # [P1] Engine Variance Estimates
+    engine_variances = compute_all_engine_variances(scores_dict, dc_details)
+
     # Layer 1: Regime Vector
     regime_vector, rel, regime_label = compute_regime_vector(data, scores_dict, engine_details)
 
@@ -1707,8 +1981,16 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 4: Dynamic Weights
     w_dynamic = compute_dynamic_weights(state['w0'], regime_vector)
 
-    # Layer 5: Composite Score
-    c_raw, comp_details = compute_composite(e_norm, w_dynamic)
+    # Layer 5: Composite Score [P4: with interaction matrix]
+    c_raw, comp_details = compute_composite(e_norm, w_dynamic, INTERACTION_MATRIX)
+
+    # [P2] Covariance Matrix + Composite Variance
+    cov_matrix, engine_order = build_covariance_matrix(engine_variances)
+    sigma2_C = compute_composite_variance(w_dynamic, cov_matrix, engine_order)
+    sigma_C = np.sqrt(sigma2_C)
+
+    # [P3] Confidence-Adjusted Composite
+    c_conf, p_positive, confidence_ratio = compute_confidence_adjusted_composite(c_raw, sigma2_C)
 
     # Layer 6: Risk Governor
     c_adjusted, g, risk_details = compute_risk_governor(regime_vector, c_raw, regime_label, dc, e_norm)
@@ -1719,8 +2001,15 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     # Layer 8: Portfolio Policy
     policy, mu, b = compute_portfolio_policy(regime_label, tq, c_adjusted, capital)
 
+    # [P6] Kelly-Inspired Position Sizing
+    kelly_data = compute_kelly_position(c_raw, sigma2_C, g, dc, capital, regime_label)
+
     # Layer 9: Execution Microstructure
     exec_params, size_final = compute_execution_micro(data, regime_vector, regime_label, c_adjusted, tq, b, engine_details)
+
+    # [P5] Smooth Decision Mapping
+    verdict_data = compute_smooth_verdict(c_raw, c_adjusted, sigma_C, regime_label, tq)
+    verdict = verdict_data['verdict_legacy']  # backward compat
 
     # Self-Audit
     contradictions = detect_contradictions({
@@ -1734,20 +2023,6 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
 
     # Prepare data for report
     current_price = safe_float(data['price'][-1].get('close', 0))
-
-    # Determine verdict
-    if tq < 0.12:
-        verdict = "CASH / STAND ASIDE"
-    elif c_raw > 20 and c_adjusted > 10:
-        verdict = "BUY / LONG BIAS"
-    elif c_raw < -20 and c_adjusted < -10:
-        verdict = "SELL / SHORT BIAS"
-    elif c_raw > 0:
-        verdict = "LONG BIAS (Moderate)"
-    elif c_raw < 0:
-        verdict = "SHORT BIAS (Moderate)"
-    else:
-        verdict = "NEUTRAL / FLAT"
 
     direction = comp_details.get('direction', 'FLAT')
 
@@ -1788,6 +2063,23 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         'g_exec': exec_params.get('g_exec', 0),
         'size_final': size_final,
         'contradictions': contradictions,
+        # Probabilistic framework fields
+        'engine_variances': engine_variances,
+        'sigma2_C': sigma2_C,
+        'sigma_C': sigma_C,
+        'composite_confidence_adjusted': c_conf,
+        'p_positive_signal': p_positive,
+        'confidence_ratio': confidence_ratio,
+        'composite_linear': comp_details.get('composite_linear', c_raw),
+        'composite_quadratic': comp_details.get('composite_quadratic', 0),
+        'p_buy': verdict_data['p_buy'],
+        'p_sell': verdict_data['p_sell'],
+        'verdict_smooth': verdict_data['verdict_smooth'],
+        'tau_effective': verdict_data['tau_effective'],
+        'kelly_fraction': kelly_data['kelly_fraction'],
+        'kelly_clipped': kelly_data['kelly_clipped'],
+        'kelly_position': kelly_data['kelly_position'],
+        'kelly_pct': kelly_data['kelly_pct'],
     }
 
     # Layer 10: Generate Report
@@ -1844,6 +2136,24 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['vix'] = round(safe_float(data['vol'][-1].get('vix', 20)) if data.get('vol') else 20.0, 1)
     summary['contradictions'] = contradictions
     summary['risk_drivers'] = risk_details.get('risk_drivers', [])
+
+    # Probabilistic framework summary fields
+    summary['engine_variances'] = {k: round(float(v), 2) for k, v in engine_variances.items()}
+    summary['sigma2_C'] = round(float(sigma2_C), 4)
+    summary['sigma_C'] = round(float(sigma_C), 4)
+    summary['composite_confidence_adjusted'] = round(float(c_conf), 2)
+    summary['p_positive_signal'] = round(float(p_positive), 4)
+    summary['confidence_ratio'] = round(float(confidence_ratio), 4)
+    summary['composite_linear'] = round(float(comp_details.get('composite_linear', c_raw)), 4)
+    summary['composite_quadratic'] = round(float(comp_details.get('composite_quadratic', 0)), 4)
+    summary['p_buy'] = round(float(verdict_data['p_buy']), 4)
+    summary['p_sell'] = round(float(verdict_data['p_sell']), 4)
+    summary['verdict_smooth'] = verdict_data['verdict_smooth']
+    summary['tau_effective'] = round(float(verdict_data['tau_effective']), 2)
+    summary['kelly_fraction'] = round(float(kelly_data['kelly_fraction']), 6)
+    summary['kelly_clipped'] = round(float(kelly_data['kelly_clipped']), 6)
+    summary['kelly_position'] = round(float(kelly_data['kelly_position']), 0)
+    summary['kelly_pct'] = round(float(kelly_data['kelly_pct']), 2)
 
     # Composite adjustment chain — full auditability
     dc_cap = min(1.0, dc / 100.0)
