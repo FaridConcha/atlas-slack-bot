@@ -17,6 +17,10 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 
 from data_fetcher import resolve_price
+from valuation_config import (
+    CONFIG, SECTOR_BETA_BOUNDS, DEFAULT_BETA_BOUNDS, SECTOR_WACC_FLOORS,
+)
+
 
 
 # ============================================================================
@@ -334,7 +338,7 @@ def fetch_v8_data(symbol, fred_api_key=None):
     institutional = _build_institutional(info)
 
     print(f"[V8]   Computing DCF model...")
-    dcf = _build_dcf(info, financials)
+    dcf = _build_dcf(info, financials, sector=info.get('sector'))
 
     print(f"[V8] Extended data complete for {symbol}")
 
@@ -1335,10 +1339,122 @@ def _build_institutional(info):
 
 
 # ============================================================================
+# BETA STABILIZATION + WACC GOVERNANCE (Stage 5)
+# ============================================================================
+
+def _stabilize_beta(raw_beta, sector):
+    """
+    Clamp raw beta to sector-appropriate bounds.
+
+    Returns:
+        (beta_used, flags: list[str])
+    """
+    if not CONFIG.flags.beta_stabilization:
+        return (raw_beta, [])
+
+    bounds = SECTOR_BETA_BOUNDS.get(sector, DEFAULT_BETA_BOUNDS)
+    flags = []
+
+    if raw_beta < 0.5:
+        flags.append('LOW_BETA_WARNING')
+
+    beta_used = raw_beta
+    if raw_beta < bounds.floor:
+        beta_used = bounds.floor
+        flags.append('BETA_FLOOR_APPLIED')
+    elif raw_beta > bounds.cap:
+        beta_used = bounds.cap
+        flags.append('BETA_CAP_APPLIED')
+
+    return (round(beta_used, 2), flags)
+
+
+def _compute_wacc_governed(beta, sector, de):
+    """
+    Multi-layer WACC computation with sector and general floors.
+
+    Returns:
+        (discount_rate, wacc_raw, reason_codes: list[str], audit: dict)
+    """
+    cfg = CONFIG.wacc
+    reason_codes = []
+
+    # CAPM: Ke = Rf + beta * ERP
+    cost_of_equity = cfg.risk_free_rate + beta * cfg.equity_risk_premium
+
+    # After-tax cost of debt
+    after_tax_cost_of_debt = cfg.pre_tax_cost_of_debt * (1 - cfg.tax_rate)
+
+    # Capital structure weights from D/E
+    cap_structure_warning = None
+    if de > 0:
+        debt_weight = de / (1 + de)
+        equity_weight = 1 - debt_weight
+        wacc_raw = equity_weight * cost_of_equity + debt_weight * after_tax_cost_of_debt
+    else:
+        debt_weight = 0.0
+        equity_weight = 1.0
+        wacc_raw = cost_of_equity
+
+    # Guard: weights must be in [0,1] and sum to ~1.0
+    if equity_weight < 0 or equity_weight > 1.0 or debt_weight < 0 or debt_weight > 1.0:
+        cap_structure_warning = 'WEIGHT_OUT_OF_BOUNDS'
+    if abs(equity_weight + debt_weight - 1.0) > 1e-3:
+        cap_structure_warning = 'CAP_STRUCTURE_NOT_NORMALIZED'
+
+    if not CONFIG.flags.wacc_governance:
+        # Legacy behavior: simple floor/ceiling
+        clamp_floor = 0.06
+        clamp_ceiling = 0.15
+        if wacc_raw < clamp_floor:
+            discount_rate = clamp_floor
+            reason_codes.append('FLOOR_ABSOLUTE')
+        elif wacc_raw > clamp_ceiling:
+            discount_rate = clamp_ceiling
+            reason_codes.append('CEILING_ABSOLUTE')
+        else:
+            discount_rate = wacc_raw
+    else:
+        # Multi-layer governance clamp
+        general_floor = cfg.wacc_general_floor
+        sector_floor = SECTOR_WACC_FLOORS.get(sector, general_floor)
+        ceiling = cfg.wacc_ceiling
+
+        discount_rate = wacc_raw
+
+        # Apply floors (take the highest)
+        if discount_rate < general_floor:
+            reason_codes.append('FLOOR_GENERAL')
+        if discount_rate < sector_floor:
+            reason_codes.append(f'FLOOR_SECTOR_{sector.upper().replace(" ", "_")}' if sector else 'FLOOR_SECTOR_DEFAULT')
+
+        effective_floor = max(general_floor, sector_floor)
+        if discount_rate < effective_floor:
+            discount_rate = effective_floor
+
+        # Apply ceiling
+        if discount_rate > ceiling:
+            discount_rate = ceiling
+            reason_codes.append('CEILING_ABSOLUTE')
+
+    audit = {
+        'cost_of_equity': round(cost_of_equity, 6),
+        'after_tax_cost_of_debt': round(after_tax_cost_of_debt, 6),
+        'equity_weight': round(equity_weight, 4),
+        'debt_weight': round(debt_weight, 4),
+        'cap_structure_warning': cap_structure_warning,
+        'wacc_general_floor': round(cfg.wacc_general_floor * 100, 2) if CONFIG.flags.wacc_governance else None,
+        'wacc_sector_floor': round(SECTOR_WACC_FLOORS.get(sector, cfg.wacc_general_floor) * 100, 2) if CONFIG.flags.wacc_governance else None,
+    }
+
+    return (round(discount_rate, 6), round(wacc_raw, 6), reason_codes, audit)
+
+
+# ============================================================================
 # DCF MODEL
 # ============================================================================
 
-def _build_dcf(info, financials):
+def _build_dcf(info, financials, sector=None):
     """
     DCF fair value estimate with full audit trail.
 
@@ -1380,50 +1496,34 @@ def _build_dcf(info, financials):
 
         fcf_margin = cash_proxy / revenue
 
-        # ── DISCOUNT RATE DECOMPOSITION ──
-        # Beta rounded to 2dp at source so displayed CAPM arithmetic
-        # (β × ERP = Ke) is always internally consistent.
-        beta = round(info.get('beta', 1.0) or 1.0, 2)
-        risk_free = 0.04       # 10Y treasury proxy
-        erp = 0.05             # equity risk premium
+        # ── DISCOUNT RATE DECOMPOSITION (Stage 5 Governance) ──
+        cfg = CONFIG.wacc
+        beta_raw = round(info.get('beta', 1.0) or 1.0, 2)
+        _sector = sector or info.get('sector') or ''
+
+        # Beta stabilization: clamp to sector bounds
+        beta, beta_flags = _stabilize_beta(beta_raw, _sector)
+
+        risk_free = cfg.risk_free_rate
+        erp = cfg.equity_risk_premium
         cost_of_equity = risk_free + beta * erp  # CAPM: Ke = Rf + β×ERP
 
         # Cost of debt
-        pre_tax_cost_of_debt = 0.05  # ~5% proxy
-        tax_rate = 0.25              # effective corporate tax proxy
+        pre_tax_cost_of_debt = cfg.pre_tax_cost_of_debt
+        tax_rate = cfg.tax_rate
         after_tax_cost_of_debt = pre_tax_cost_of_debt * (1 - tax_rate)
 
         # Capital structure weights from D/E — stored as decimals in [0,1]
         de = financials.get('debt_equity') or 0
-        cap_structure_warning = None
-        if de > 0:
-            debt_weight = de / (1 + de)      # D/V decimal
-            equity_weight = 1 - debt_weight  # E/V decimal
-            wacc = equity_weight * cost_of_equity + debt_weight * after_tax_cost_of_debt
-        else:
-            debt_weight = 0.0
-            equity_weight = 1.0
-            wacc = cost_of_equity
 
-        # Guard: weights must be in [0,1] and sum to ~1.0
-        if equity_weight < 0 or equity_weight > 1.0 or debt_weight < 0 or debt_weight > 1.0:
-            cap_structure_warning = 'WEIGHT_OUT_OF_BOUNDS'
-        if abs(equity_weight + debt_weight - 1.0) > 1e-3:
-            cap_structure_warning = 'CAP_STRUCTURE_NOT_NORMALIZED'
+        # WACC governance: multi-layer clamp
+        discount_rate, wacc, wacc_clamp_codes, wacc_audit = _compute_wacc_governed(beta, _sector, de)
+        equity_weight = wacc_audit['equity_weight']
+        debt_weight = wacc_audit['debt_weight']
+        cap_structure_warning = wacc_audit['cap_structure_warning']
 
-        # The model discounts unlevered FCF → discount at WACC
         discount_rate_type = 'WACC'
-        clamp_floor = 0.06
-        clamp_ceiling = 0.15
-        clamp_rule = None
-        if wacc < clamp_floor:
-            discount_rate = clamp_floor
-            clamp_rule = 'FLOOR_ABSOLUTE'
-        elif wacc > clamp_ceiling:
-            discount_rate = clamp_ceiling
-            clamp_rule = 'CEILING_ABSOLUTE'
-        else:
-            discount_rate = wacc
+        clamp_rule = wacc_clamp_codes[0] if wacc_clamp_codes else None
 
         terminal_growth = 0.03
         forecast_years = 5
@@ -1483,6 +1583,18 @@ def _build_dcf(info, financials):
         bear_mult = 0.70 if cash_flow_source != 'fcf' else 0.80
         bull_mult = 1.30 if cash_flow_source != 'fcf' else 1.25
 
+        # Terminal governance: haircut bear_mult if terminal dependence is severe
+        terminal_flags = []
+        if CONFIG.flags.terminal_governance and terminal_pct >= CONFIG.terminal.severe_threshold:
+            bear_mult *= CONFIG.terminal.bear_mult_haircut
+            terminal_flags.append('BEAR_MULT_HAIRCUT')
+        if terminal_pct >= CONFIG.terminal.extreme_threshold:
+            terminal_flags.append('IV_CONFIDENCE_LOW')
+
+        # Effective clamp floors for audit
+        _gen_floor = CONFIG.wacc.wacc_general_floor if CONFIG.flags.wacc_governance else 0.06
+        _sec_floor = SECTOR_WACC_FLOORS.get(_sector, _gen_floor) if CONFIG.flags.wacc_governance else _gen_floor
+
         return {
             'bear': round(base_fv * bear_mult, 2),
             'base': round(base_fv, 2),
@@ -1497,6 +1609,8 @@ def _build_dcf(info, financials):
                 'risk_free_rate': round(risk_free * 100, 2),
                 'equity_risk_premium': round(erp * 100, 2),
                 'beta': round(beta, 2),
+                'beta_raw': round(beta_raw, 2),
+                'beta_flags': beta_flags,
                 'cost_of_equity': round(cost_of_equity * 100, 2),
                 'pre_tax_cost_of_debt': round(pre_tax_cost_of_debt * 100, 2),
                 'tax_rate': round(tax_rate * 100, 1),
@@ -1510,8 +1624,12 @@ def _build_dcf(info, financials):
                 'discount_rate': round(discount_rate * 100, 2),
                 # Clamp details — fully explicit
                 'clamp_rule': clamp_rule,
-                'clamp_floor': round(clamp_floor * 100, 1),
-                'clamp_ceiling': round(clamp_ceiling * 100, 1),
+                'wacc_clamp_codes': wacc_clamp_codes,
+                'clamp_floor': round(_gen_floor * 100, 1),
+                'clamp_ceiling': round(CONFIG.wacc.wacc_ceiling * 100, 1),
+                'wacc_general_floor': round(_gen_floor * 100, 2),
+                'wacc_sector_floor': round(_sec_floor * 100, 2),
+                'sector': _sector,
                 # Growth & margin
                 'revenue_growth_y1': round(growth_rates[0] * 100, 1),
                 'fcf_margin': round(fcf_margin * 100, 1),
@@ -1521,6 +1639,7 @@ def _build_dcf(info, financials):
                 'terminal_value': round(terminal_value, 0),
                 'terminal_value_pv': round(tv_pv, 0),
                 'terminal_value_pct': round(terminal_pct, 1),
+                'terminal_flags': terminal_flags,
                 # EV → Equity bridge
                 'enterprise_value': round(enterprise_value, 0),
                 'pv_fcf_sum': round(pv_fcf_sum, 0),
