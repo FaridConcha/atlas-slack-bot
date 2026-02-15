@@ -1069,20 +1069,19 @@ class TestEVBridgeLabel:
 
     def test_label_contains_en_dash(self):
         """Verify the string uses subscript-1 + en-dash + subscript-5."""
-        # The web_server.py line uses: PV(FCF\\u2081\\u2013\\u2085)
+        # dashboard.html JS uses: PV(FCF\\u2081\\u2013\\u2085)
         # \\u2081 = ₁, \\u2013 = –, \\u2085 = ₅
         correct_label = 'PV(FCF\u2081\u2013\u2085)'
         wrong_label = 'PV(FCF\u2081\u2085)'
         assert '\u2013' in correct_label  # en-dash present
         assert correct_label != wrong_label  # different from wrong version
-        # Verify the actual web_server.py file contains the correct label
-        import re
-        with open('web_server.py', 'r') as f:
+        # Label moved from web_server.py to dashboard.html during template extraction
+        with open('dashboard.html', 'r') as f:
             content = f.read()
         assert 'PV(FCF\\u2081\\u2013\\u2085)' in content, \
-            "web_server.py must contain PV(FCF₁–₅) with en-dash"
+            "dashboard.html must contain PV(FCF₁–₅) with en-dash"
         assert 'PV(FCF\\u2081\\u2085)' not in content, \
-            "web_server.py must NOT contain PV(FCF₁₅) without en-dash"
+            "dashboard.html must NOT contain PV(FCF₁₅) without en-dash"
 
 
 # ============================================================================
