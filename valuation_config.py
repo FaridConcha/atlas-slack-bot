@@ -104,7 +104,6 @@ class FeatureFlags:
     fundamentals_integrity: bool = True      # Stage 5.1: Null propagation for missing fundamentals
     canonical_suppression: bool = True       # Stage 5.1: ReportMode-based output suppression
     tq_canonical: bool = True                # Stage 5.1: Single canonical TQ formula
-    use_institutional_dcf: bool = False      # Part II: NOT YET IMPLEMENTED
     monte_carlo_dcf: bool = True              # V12+: Monte Carlo DCF simulations
 
 

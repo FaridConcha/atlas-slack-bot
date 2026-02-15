@@ -35,7 +35,6 @@ from data_fetcher import fetch_live_data
 from v8_data import fetch_v8_data
 from v8_report import format_v8_report
 from web_report import generate_and_store_report
-import gemini_qa
 
 # Load environment variables (don't override existing — Render sets them via dashboard)
 load_dotenv(override=False)
@@ -306,6 +305,7 @@ def handle_atlas_mention(event, say, client):
         v9_scores = v8_extended.get('v9_scores', {}) if v8_extended else {}
         if GROQ_API_KEY and v9_scores.get('v9_decision'):
             try:
+                import gemini_qa
                 print(f"[BOT] Generating V12 narrative for {symbol}...")
                 v9_narrative = gemini_qa.generate_v9_narrative(v9_scores, summary, v8_extended)
                 if v9_narrative:
@@ -463,6 +463,7 @@ def handle_message_events(event, say, client, logger):
 
     # Call Groq
     try:
+        import gemini_qa
         answer = gemini_qa.ask(
             question=question,
             symbol=symbol,
@@ -511,6 +512,7 @@ if __name__ == "__main__":
 
     # Initialize Groq AI (optional)
     if GROQ_API_KEY:
+        import gemini_qa
         groq_ok = gemini_qa.init_groq(GROQ_API_KEY)
         print(f"Groq AI:    {'Connected (follow-up Q&A enabled)' if groq_ok else 'FAILED (Q&A disabled)'}")
     else:
