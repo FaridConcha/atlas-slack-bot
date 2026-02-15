@@ -1695,13 +1695,13 @@ def update_realized_correlations(state, e_norm, shrinkage_weight=0.3, decay=0.94
 
     # Load or initialize EWMA cross-product and means
     cross_key = 'ewma_cross'
-    if cross_key in state:
+    if cross_key in state and state[cross_key] is not None:
         cross = np.array(state[cross_key])
     else:
         cross = np.zeros((n, n))
 
     mean_key = 'ewma_enorm_mean'
-    if mean_key in state:
+    if mean_key in state and state[mean_key] is not None:
         means = np.array(state[mean_key])
     else:
         means = np.zeros(n)
