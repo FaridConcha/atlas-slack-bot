@@ -21,7 +21,7 @@ Layers:
 
 Usage:
     from atlas_engine import run_atlas
-    report, summary = run_atlas(symbol='SPY', data_path='./data/live')
+    summary = run_atlas(symbol='SPY', data_path='./data/live')
 """
 
 import json
@@ -2173,13 +2173,14 @@ def compute_execution_micro(data, regime_vector, regime_label, c_adjusted, tq, b
 # SECTION 15: LAYER 10 — PYRAMID REPORT
 # ============================================================================
 
-def generate_pyramid_report(symbol, all_layers_data):
+def generate_pyramid_report(symbol, summary):
     """
-    Generate the complete ATLAS pyramid report.
+    Generate the complete ATLAS pyramid report from summary dict.
+    CLI-only — not called during bot/API execution.
     """
     report = []
 
-    price = all_layers_data.get('price', 0)
+    price = summary.get('price', 0)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     report.append("=" * 88)
@@ -2189,29 +2190,29 @@ def generate_pyramid_report(symbol, all_layers_data):
 
     # TOP SECTION
     report.append("┌─ TOP ──────────────────────────────────────────────────────────────────────────┐")
-    report.append(f"│ Verdict: {all_layers_data.get('verdict', 'N/A'):<78}│")
-    report.append(f"│ Confidence: {all_layers_data.get('tq_category', 'N/A'):<19} | Size: ${all_layers_data.get('size_final', 0):>10,.0f} | Mode: {all_layers_data.get('mode', 'N/A'):<10}│")
-    report.append(f"│ Direction: {all_layers_data.get('direction', 'N/A'):<19} | Gate: {all_layers_data.get('g', 0):.2f}                          │")
+    report.append(f"│ Verdict: {summary.get('verdict', 'N/A'):<78}│")
+    report.append(f"│ Confidence: {summary.get('tq_category', 'N/A'):<19} | Size: ${summary.get('position_size', 0):>10,.0f} | Mode: {summary.get('execution_mode', 'N/A'):<10}│")
+    report.append(f"│ Direction: {summary.get('direction', 'N/A'):<19} | Gate: {summary.get('gate_value', 0):.2f}                          │")
     report.append("└─────────────────────────────────────────────────────────────────────────────────┘")
     report.append("")
 
     # RISK SECTION
     report.append("── RISK ────────────────────────────────────────────────────────────────────────────")
-    report.append(f"Structural Risk (SR_s): {all_layers_data.get('SR_s', 0):.3f}")
-    report.append(f"Tactical Risk (SR_t):   {all_layers_data.get('SR_t', 0):.3f}")
-    report.append(f"Total Risk (SR):        {all_layers_data.get('SR', 0):.3f}")
-    report.append(f"Gate G(t):              {all_layers_data.get('G', 0):.3f}")
-    risk_drivers = all_layers_data.get('risk_drivers', [])
+    report.append(f"Structural Risk (SR_s): {summary.get('risk_structural', 0):.3f}")
+    report.append(f"Tactical Risk (SR_t):   {summary.get('risk_tactical', 0):.3f}")
+    report.append(f"Total Risk (SR):        {summary.get('risk_total', 0):.3f}")
+    report.append(f"Gate G(t):              {summary.get('gate_value', 0):.3f}")
+    risk_drivers = summary.get('risk_drivers', [])
     if risk_drivers:
         report.append(f"Risk Drivers: {', '.join(risk_drivers)}")
     report.append("")
 
     # SIGNAL SECTION
     report.append("── SIGNAL ──────────────────────────────────────────────────────────────────────────")
-    report.append(f"Composite Raw:      {all_layers_data.get('c_raw', 0):+.1f}/100")
-    report.append(f"Composite Adjusted: {all_layers_data.get('c_adjusted', 0):+.1f}/100")
-    report.append(f"Trade Quality:      {all_layers_data.get('tq', 0):.4f} [{all_layers_data.get('tq_category', 'N/A')}]")
-    report.append(f"Data Confidence:    {all_layers_data.get('dc', 0):.1f}%")
+    report.append(f"Composite Raw:      {summary.get('composite_raw', 0):+.1f}/100")
+    report.append(f"Composite Adjusted: {summary.get('composite_adjusted', 0):+.1f}/100")
+    report.append(f"Trade Quality:      {summary.get('trade_quality', 0):.4f} [{summary.get('tq_category', 'N/A')}]")
+    report.append(f"Data Confidence:    {summary.get('data_confidence', 0):.1f}%")
     report.append("")
 
     # FORCES (Engines)
@@ -2220,18 +2221,17 @@ def generate_pyramid_report(symbol, all_layers_data):
     report.append("-" * 88)
 
     engines = ['trend', 'valuation', 'consensus', 'volatility', 'macro', 'liquidity', 'global', 'correlation']
-    w0 = all_layers_data.get('w0', {})
-    w_dyn = all_layers_data.get('w_dynamic', {})
-    scores = all_layers_data.get('scores_dict', {})
-    e_norm = all_layers_data.get('e_norm', {})
+    w0 = summary.get('w0', {})
+    w_dyn = summary.get('w_dynamic', {})
+    scores = summary.get('scores', {})
+    scores_norm = summary.get('scores_norm', {})
 
     for engine in engines:
         w0_val = w0.get(engine, 1/8)
         w_dyn_val = w_dyn.get(engine, 1/8)
         shift = w_dyn_val - w0_val
         score = scores.get(engine, 0)
-        norm_key = f'{engine}_norm'
-        norm_val = e_norm.get(norm_key, 0)
+        norm_val = scores_norm.get(engine, 0)
         contrib = w_dyn_val * norm_val * 100
 
         report.append(f"{engine:<15} {w0_val:>10.3f} {w_dyn_val:>13.3f} {shift:>+8.3f} {score:>+8.1f} {contrib:>+12.2f}")
@@ -2240,11 +2240,11 @@ def generate_pyramid_report(symbol, all_layers_data):
 
     # REGIME
     report.append("── REGIME ──────────────────────────────────────────────────────────────────────────")
-    report.append(f"Classification: {all_layers_data.get('regime_label', 'N/A')}")
-    report.append(f"Reliability:    {all_layers_data.get('rel', 0):.3f}")
+    report.append(f"Classification: {summary.get('regime_label', 'N/A')}")
+    report.append(f"Reliability:    {summary.get('regime_reliability', 0):.3f}")
     report.append("")
 
-    regime_vector = all_layers_data.get('regime_vector', {})
+    regime_vector = summary.get('regime_vector', {})
     feature_labels = {
         'TS': 'Trend Score',
         'CH': 'Choppiness',
@@ -2275,13 +2275,13 @@ def generate_pyramid_report(symbol, all_layers_data):
 
     # META LEARNING
     report.append("── META LEARNING ───────────────────────────────────────────────────────────────────")
-    run_count = all_layers_data.get('run_count', 0)
+    run_count = summary.get('run_count', 0)
     report.append(f"Run Count: {run_count}")
 
     learning_status = "Cold Start" if run_count < 10 else "Learning" if run_count < 50 else "Converged"
     report.append(f"Learning: {learning_status}")
 
-    q_metrics = all_layers_data.get('q_metrics', {})
+    q_metrics = summary.get('q_metrics', {})
     if q_metrics:
         report.append("Engine Utilities (Q):")
         for engine in engines:
@@ -2292,15 +2292,15 @@ def generate_pyramid_report(symbol, all_layers_data):
 
     # EXECUTION
     report.append("── EXECUTION ───────────────────────────────────────────────────────────────────────")
-    report.append(f"Mode:             {all_layers_data.get('mode', 'N/A')}")
-    report.append(f"Entry:            ${all_layers_data.get('entry', 0):.2f}")
-    report.append(f"Stop Loss:        ${all_layers_data.get('stop_loss', 0):.2f}")
-    report.append(f"Take Profit:      ${all_layers_data.get('tp_low', 0):.2f} – ${all_layers_data.get('tp_high', 0):.2f}")
+    report.append(f"Mode:             {summary.get('execution_mode', 'N/A')}")
+    report.append(f"Entry:            ${summary.get('entry', 0):.2f}")
+    report.append(f"Stop Loss:        ${summary.get('stop_loss', 0):.2f}")
+    report.append(f"Take Profit:      ${summary.get('tp_low', 0):.2f} – ${summary.get('tp_high', 0):.2f}")
 
     # Risk/reward
-    entry = all_layers_data.get('entry', 0)
-    tp_mid = (all_layers_data.get('tp_low', 0) + all_layers_data.get('tp_high', 0)) / 2
-    stop = all_layers_data.get('stop_loss', 0)
+    entry = summary.get('entry', 0)
+    tp_mid = (summary.get('tp_low', 0) + summary.get('tp_high', 0)) / 2
+    stop = summary.get('stop_loss', 0)
 
     if entry > stop and entry > 0:
         reward = tp_mid - entry
@@ -2308,41 +2308,41 @@ def generate_pyramid_report(symbol, all_layers_data):
         rr = reward / risk if risk > 0 else 0
         report.append(f"Risk/Reward:      {rr:.1f}:1")
 
-    report.append(f"Continuation P:   {all_layers_data.get('p_cont', 0):.0%}")
-    report.append(f"Exec Penalty:     {all_layers_data.get('exec_pen', 0):.1%}")
-    report.append(f"Liq Window:       {all_layers_data.get('liq_win', 1.0):.2f}")
-    report.append(f"Open Hazard:      {all_layers_data.get('haz_open', 0):.1%}")
-    report.append(f"Exec Gate:        {all_layers_data.get('g_exec', 0):.3f}")
-    report.append(f"Position Size:    ${all_layers_data.get('size_final', 0):,.0f}")
+    report.append(f"Continuation P:   {summary.get('p_cont', 0):.0%}")
+    report.append(f"Exec Penalty:     {summary.get('exec_pen', 0):.1%}")
+    report.append(f"Liq Window:       {summary.get('liq_win', 1.0):.2f}")
+    report.append(f"Open Hazard:      {summary.get('haz_open', 0):.1%}")
+    report.append(f"Exec Gate:        {summary.get('g_exec', 0):.3f}")
+    report.append(f"Position Size:    ${summary.get('position_size', 0):,.0f}")
     report.append("")
 
     # PROBABILISTIC FRAMEWORK
     report.append("── PROBABILISTIC ───────────────────────────────────────────────────────────────────")
-    report.append(f"Composite Variance (σ²_C): {all_layers_data.get('sigma2_C', 0):.4f}")
-    report.append(f"Composite Std Dev (σ_C):   {all_layers_data.get('sigma_C', 0):.4f}")
-    report.append(f"Confidence-Adj Composite:  {all_layers_data.get('composite_confidence_adjusted', 0):+.2f}")
-    report.append(f"P(Signal > 0):             {all_layers_data.get('p_positive_signal', 0.5):.1%}")
-    report.append(f"Confidence Ratio:          {all_layers_data.get('confidence_ratio', 0):.4f}")
-    report.append(f"Linear Component:          {all_layers_data.get('composite_linear', 0):+.4f}")
-    report.append(f"Quadratic Component:       {all_layers_data.get('composite_quadratic', 0):+.4f}")
+    report.append(f"Composite Variance (σ²_C): {summary.get('sigma2_C', 0):.4f}")
+    report.append(f"Composite Std Dev (σ_C):   {summary.get('sigma_C', 0):.4f}")
+    report.append(f"Confidence-Adj Composite:  {summary.get('composite_confidence_adjusted', 0):+.2f}")
+    report.append(f"P(Signal > 0):             {summary.get('p_positive_signal', 0.5):.1%}")
+    report.append(f"Confidence Ratio:          {summary.get('confidence_ratio', 0):.4f}")
+    report.append(f"Linear Component:          {summary.get('composite_linear', 0):+.4f}")
+    report.append(f"Quadratic Component:       {summary.get('composite_quadratic', 0):+.4f}")
     report.append("")
 
     # SMOOTH VERDICT
-    report.append(f"P(Buy):    {all_layers_data.get('p_buy', 0.5):.1%}  |  P(Sell): {all_layers_data.get('p_sell', 0.5):.1%}")
-    report.append(f"Smooth Verdict: {all_layers_data.get('verdict_smooth', 'N/A')}")
-    report.append(f"Tau Effective:  {all_layers_data.get('tau_effective', 15):.2f}")
+    report.append(f"P(Buy):    {summary.get('p_buy', 0.5):.1%}  |  P(Sell): {summary.get('p_sell', 0.5):.1%}")
+    report.append(f"Smooth Verdict: {summary.get('verdict_smooth', 'N/A')}")
+    report.append(f"Tau Effective:  {summary.get('tau_effective', 15):.2f}")
     report.append("")
 
     # KELLY SIZING
-    report.append(f"Kelly Fraction (raw):    {all_layers_data.get('kelly_fraction', 0):+.6f}")
-    report.append(f"Kelly Fraction (clipped):{all_layers_data.get('kelly_clipped', 0):+.6f}")
-    report.append(f"Kelly Position:          ${all_layers_data.get('kelly_position', 0):,.0f} ({all_layers_data.get('kelly_pct', 0):.2f}%)")
+    report.append(f"Kelly Fraction (raw):    {summary.get('kelly_fraction', 0):+.6f}")
+    report.append(f"Kelly Fraction (clipped):{summary.get('kelly_clipped', 0):+.6f}")
+    report.append(f"Kelly Position:          ${summary.get('kelly_position', 0):,.0f} ({summary.get('kelly_pct', 0):.2f}%)")
     report.append("")
 
     # SELF-AUDIT
     report.append("── SELF-AUDIT ──────────────────────────────────────────────────────────────────────")
 
-    contradictions = all_layers_data.get('contradictions', [])
+    contradictions = summary.get('contradictions', [])
     if contradictions:
         report.append("Contradictions Detected:")
         for c in contradictions:
@@ -2353,8 +2353,8 @@ def generate_pyramid_report(symbol, all_layers_data):
     max_w = max(w_dyn.values()) if w_dyn else 0.2
     max_engine = max(w_dyn.items(), key=lambda x: x[1])[0] if w_dyn else "N/A"
     report.append(f"Weight Concentration: Max weight = {max_w:.1%} ({max_engine})")
-    report.append(f"Regime Stability: Reliability = {all_layers_data.get('rel', 0):.2f}")
-    report.append(f"Data Quality: DC = {all_layers_data.get('dc', 0):.0f}%")
+    report.append(f"Regime Stability: Reliability = {summary.get('regime_reliability', 0):.2f}")
+    report.append(f"Data Quality: DC = {summary.get('data_confidence', 0):.0f}%")
 
     report.append("")
     report.append("=" * 88)
@@ -2411,7 +2411,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
         state_dir: Path to state directory for meta-learning
 
     Returns:
-        tuple: (report_text, summary_dict)
+        dict: summary_dict with all engine outputs
     """
 
     # Create state directory if needed
@@ -2574,73 +2574,7 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
 
     direction = comp_details.get('direction', 'FLAT')
 
-    all_layers_data = {
-        'symbol': symbol,
-        'price': current_price,
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'verdict': verdict,
-        'direction': direction,
-        'c_raw': c_raw,
-        'c_adjusted': c_adjusted,
-        'tq': tq,
-        'tq_category': tq_category,
-        'dc': dc,
-        'regime_label': regime_label,
-        'rel': rel,
-        'regime_vector': regime_vector,
-        'scores_dict': scores_dict,
-        'e_norm': e_norm,
-        'w0': state['w0'],
-        'w_dynamic': w_dynamic,
-        'q_metrics': q_metrics,
-        'run_count': state['run_count'],
-        'SR_s': risk_details.get('SR_s', 0),
-        'SR_t': risk_details.get('SR_t', 0),
-        'SR': risk_details.get('SR', 0),
-        'G': g,
-        'risk_drivers': risk_details.get('risk_drivers', []),
-        'mode': exec_params.get('mode', 'N/A'),
-        'entry': exec_params.get('entry', 0),
-        'stop_loss': exec_params.get('stop_loss', 0),
-        'tp_low': exec_params.get('tp_low', 0),
-        'tp_high': exec_params.get('tp_high', 0),
-        'p_cont': exec_params.get('p_continuation', 0),
-        'exec_pen': exec_params.get('exec_penalty', 0),
-        'liq_win': exec_params.get('liq_window', 1.0),
-        'haz_open': exec_params.get('hazard_open', 0),
-        'g_exec': exec_params.get('g_exec', 0),
-        'size_final': size_final,
-        'contradictions': contradictions,
-        # Probabilistic framework fields
-        'engine_variances': engine_variances,          # raw (diagnostic)
-        'engine_variances_norm': engine_variances_norm, # normalized (used for σ²_C)
-        'sigma2_C': sigma2_C,
-        'sigma_C': sigma_C,
-        'composite_confidence_adjusted': c_conf,
-        'p_positive_signal': p_positive,
-        'confidence_ratio': confidence_ratio,
-        'composite_linear': comp_details.get('composite_linear', c_raw),
-        'composite_quadratic': comp_details.get('composite_quadratic', 0),
-        'p_buy': verdict_data['p_buy'],
-        'p_sell': verdict_data['p_sell'],
-        'verdict_smooth': verdict_data['verdict_smooth'],
-        'tau_effective': verdict_data['tau_effective'],
-        'kelly_fraction': kelly_data['kelly_fraction'],
-        'kelly_clipped': kelly_data['kelly_clipped'],
-        'kelly_position': kelly_data['kelly_position'],
-        'kelly_pct': kelly_data['kelly_pct'],
-        'cvar_pass': cvar_pass,
-        'cvar_value': cvar_value,
-        # Phase 2+3 fields
-        'regime_probs': regime_probs,
-        'regime_entropy': regime_entropy,
-        'regime_label_hard': regime_label_hard,
-        'risk_blend_alpha': risk_blend_alpha,
-        'cold_start_mult': cold_start_mult,
-        'shrinkage_weight': shrinkage_w,
-    }
-
-    # Build summary dict (backward compatible)
+    # Build summary dict
     summary = {
         'symbol': symbol,
         'price': current_price,
@@ -2691,6 +2625,16 @@ def run_atlas(symbol='SPY', data_path=None, capital=250000, state_dir=None):
     summary['vix'] = round(safe_float(data['vol'][-1].get('vix', 20)) if data.get('vol') else 20.0, 1)
     summary['contradictions'] = contradictions
     summary['risk_drivers'] = risk_details.get('risk_drivers', [])
+    summary['direction'] = direction
+    summary['risk_total'] = round(risk_details.get('SR', 0), 3)
+    summary['tp_low'] = round(exec_params.get('tp_low', 0), 2)
+    summary['tp_high'] = round(exec_params.get('tp_high', 0), 2)
+    summary['p_cont'] = round(exec_params.get('p_continuation', 0), 4)
+    summary['exec_pen'] = round(exec_params.get('exec_penalty', 0), 4)
+    summary['liq_win'] = round(exec_params.get('liq_window', 1.0), 4)
+    summary['haz_open'] = round(exec_params.get('hazard_open', 0), 4)
+    summary['g_exec'] = round(exec_params.get('g_exec', 0), 4)
+    summary['q_metrics'] = {k: round(float(v), 4) for k, v in q_metrics.items()}
 
     # Probabilistic framework summary fields
     summary['engine_variances'] = {k: round(float(v), 2) for k, v in engine_variances.items()}
